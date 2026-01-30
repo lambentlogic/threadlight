@@ -1019,10 +1019,22 @@ function threadlightApp() {
             } catch (error) {
                 // Revert optimistic update on error
                 this.embeddingsEnabled = oldState;
-                // Extract error message safely - handle both Error objects and plain objects
-                const errorMsg = error instanceof Error ? error.message :
-                                 (typeof error === 'string' ? error :
-                                  (error?.detail || error?.error || error?.message || 'Unknown error'));
+
+                // Debug: log the actual error
+                console.error('Toggle embeddings error:', error);
+                console.error('Error type:', typeof error);
+                console.error('Error keys:', error ? Object.keys(error) : 'N/A');
+
+                // Extract message more robustly
+                let errorMsg = 'Unknown error';
+                if (error instanceof Error) {
+                    errorMsg = error.message;
+                } else if (typeof error === 'string') {
+                    errorMsg = error;
+                } else if (error && typeof error === 'object') {
+                    errorMsg = error.detail || error.error || error.message || JSON.stringify(error);
+                }
+
                 this.showToast('Failed to toggle embeddings: ' + errorMsg, 'error');
             }
         },
@@ -1373,10 +1385,22 @@ function threadlightApp() {
             } catch (error) {
                 // Revert optimistic update on error
                 this.perProfileIsolation = oldValue;
-                // Extract error message safely - handle both Error objects and plain objects
-                const errorMsg = error instanceof Error ? error.message :
-                                 (typeof error === 'string' ? error :
-                                  (error?.detail || error?.error || error?.message || 'Unknown error'));
+
+                // Debug: log the actual error
+                console.error('Toggle isolation error:', error);
+                console.error('Error type:', typeof error);
+                console.error('Error keys:', error ? Object.keys(error) : 'N/A');
+
+                // Extract message more robustly
+                let errorMsg = 'Unknown error';
+                if (error instanceof Error) {
+                    errorMsg = error.message;
+                } else if (typeof error === 'string') {
+                    errorMsg = error;
+                } else if (error && typeof error === 'object') {
+                    errorMsg = error.detail || error.error || error.message || JSON.stringify(error);
+                }
+
                 this.showToast('Failed to toggle isolation: ' + errorMsg, 'error');
             }
         },
@@ -1409,10 +1433,22 @@ function threadlightApp() {
             } catch (error) {
                 // Revert optimistic update on error
                 this.defaultShared = oldValue;
-                // Extract error message safely - handle both Error objects and plain objects
-                const errorMsg = error instanceof Error ? error.message :
-                                 (typeof error === 'string' ? error :
-                                  (error?.detail || error?.error || error?.message || 'Unknown error'));
+
+                // Debug: log the actual error
+                console.error('Toggle default shared error:', error);
+                console.error('Error type:', typeof error);
+                console.error('Error keys:', error ? Object.keys(error) : 'N/A');
+
+                // Extract message more robustly
+                let errorMsg = 'Unknown error';
+                if (error instanceof Error) {
+                    errorMsg = error.message;
+                } else if (typeof error === 'string') {
+                    errorMsg = error;
+                } else if (error && typeof error === 'object') {
+                    errorMsg = error.detail || error.error || error.message || JSON.stringify(error);
+                }
+
                 this.showToast('Failed to update setting: ' + errorMsg, 'error');
             }
         },
