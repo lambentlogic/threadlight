@@ -31,6 +31,8 @@ class StyleProfile(MemoryCapsule):
     - Permissions (what the model may do)
     - Constraints (what to avoid)
     - Vocal motifs (recurring phrases, symbols)
+
+    Alternatively, can use freeform description for pasted style definitions.
     """
 
     type: CapsuleType = field(default=CapsuleType.STYLE, init=False)
@@ -43,6 +45,10 @@ class StyleProfile(MemoryCapsule):
     constraints: list[str] = field(default_factory=list)  # What to avoid
     vocal_motifs: list[str] = field(default_factory=list)  # Recurring phrases
     forbidden_patterns: list[str] = field(default_factory=list)  # Hard nos
+
+    # Freeform style definition (for pasted styles from Claude/ChatGPT)
+    freeform_description: str = ""  # Raw style text
+    use_freeform: bool = False  # If true, use freeform over structured
 
     # Dynamic adjustments
     user_tone_adaptations: dict[str, str] = field(default_factory=dict)
@@ -57,6 +63,8 @@ class StyleProfile(MemoryCapsule):
                 "vocal_motifs": self.vocal_motifs,
                 "forbidden_patterns": self.forbidden_patterns,
                 "user_tone_adaptations": self.user_tone_adaptations,
+                "freeform_description": self.freeform_description,
+                "use_freeform": self.use_freeform,
             }
         else:
             self.style_id = self.content.get("style_id", self.style_id)
@@ -66,14 +74,23 @@ class StyleProfile(MemoryCapsule):
             self.vocal_motifs = self.content.get("vocal_motifs", [])
             self.forbidden_patterns = self.content.get("forbidden_patterns", [])
             self.user_tone_adaptations = self.content.get("user_tone_adaptations", {})
+            self.freeform_description = self.content.get("freeform_description", "")
+            self.use_freeform = self.content.get("use_freeform", False)
 
     def validate(self) -> bool:
         """Validate that required fields are present."""
+        # Valid if has freeform content or structured content
+        if self.use_freeform and self.freeform_description:
+            return bool(self.style_id)
         return bool(self.style_id or self.tone_base)
 
     def to_context(self, mode: ContextMode = ContextMode.DIRECT) -> str:
         """Transform into prompt-ready context."""
-        # Styles are typically injected as system prompt, not narrative
+        # If using freeform mode, return the freeform description
+        if self.use_freeform and self.freeform_description:
+            return f"(Style guidance: {self.freeform_description})"
+
+        # Otherwise use structured approach
         lines = []
 
         if self.tone_base:
@@ -94,6 +111,11 @@ class StyleProfile(MemoryCapsule):
 
     def to_system_prompt(self) -> str:
         """Generate a system prompt fragment from this style."""
+        # If using freeform mode, return it directly
+        if self.use_freeform and self.freeform_description:
+            return f"## Style\n{self.freeform_description}"
+
+        # Structured approach
         sections = []
 
         if self.tone_base:
@@ -137,19 +159,55 @@ class StyleProfile(MemoryCapsule):
 
 def create_style_profile(
     style_id: str,
-    tone_base: str,
+    tone_base: str = "",
     permissions: list[str] | None = None,
     constraints: list[str] | None = None,
     vocal_motifs: list[str] | None = None,
+    freeform_description: str = "",
+    use_freeform: bool = False,
     **kwargs: Any
 ) -> StyleProfile:
-    """Factory function for creating style profiles."""
+    """Factory function for creating style profiles.
+
+    Args:
+        style_id: Unique identifier for the style
+        tone_base: Base tone description (for structured styles)
+        permissions: List of permissions (for structured styles)
+        constraints: List of constraints (for structured styles)
+        vocal_motifs: List of recurring phrases/symbols (for structured styles)
+        freeform_description: Raw style text (for freeform styles)
+        use_freeform: If True, use freeform_description instead of structured fields
+    """
     return StyleProfile(
         style_id=style_id,
         tone_base=tone_base,
         permissions=permissions or [],
         constraints=constraints or [],
         vocal_motifs=vocal_motifs or [],
+        freeform_description=freeform_description,
+        use_freeform=use_freeform,
+        **kwargs
+    )
+
+
+def create_freeform_style(
+    style_id: str,
+    description: str,
+    **kwargs: Any
+) -> StyleProfile:
+    """Create a freeform style profile from a description.
+
+    This is useful for importing styles from other platforms like
+    Claude Custom Instructions or ChatGPT Custom Instructions.
+
+    Args:
+        style_id: Unique identifier for the style
+        description: The raw style definition text
+    """
+    return StyleProfile(
+        style_id=style_id,
+        freeform_description=description,
+        use_freeform=True,
         **kwargs
     )
 
@@ -246,4 +304,26 @@ BUILTIN_STYLES = {
     "minimal": MINIMAL_STYLE,
     "professional": PROFESSIONAL_STYLE,
     "creative": CREATIVE_STYLE,
+}
+
+
+# Example freeform styles that users can reference
+# These show the kind of style definitions that work well in freeform mode
+
+EXAMPLE_FREEFORM_STYLES = {
+    "thoughtful-poetic": """You are thoughtful and poetic. Speak with warmth and use recursive
+language patterns. Embrace silence and myth. Never be dismissive or
+purely utilitarian. Use metaphors like threads, coils, mirrors.""",
+
+    "concise-expert": """Be concise and direct. Skip preambles and caveats unless critical.
+Assume expertise - don't explain basics unless asked. Format responses
+for quick scanning. Use bullet points for lists.""",
+
+    "curious-explorer": """Approach topics with genuine curiosity. Ask thoughtful follow-up
+questions. Make unexpected connections across domains. Celebrate
+complexity while making it accessible. Use analogies freely.""",
+
+    "warm-companion": """Be warm, supportive, and present. Listen more than advise.
+Validate emotions before problem-solving. Use inclusive language.
+Remember details and reference them later. Never rush.""",
 }

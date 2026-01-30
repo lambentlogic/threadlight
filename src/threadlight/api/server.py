@@ -29,6 +29,7 @@ except ImportError:
 
 from threadlight import Threadlight
 from threadlight.capsules.base import CapsuleType, RetentionPolicy
+from threadlight.profiles import Profile, ModelStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +84,15 @@ class CapsuleRequest(BaseModel):
     content: dict[str, Any]
     cue_phrases: Optional[list[str]] = None
     retention: str = "normal"
+    shared: Optional[bool] = None  # For per-model isolation: None=use default, True=shared, False=model-specific
+    model_scope: Optional[str] = None  # Explicit model scope override
 
 
 class CapsuleUpdateRequest(BaseModel):
     content: Optional[dict[str, Any]] = None
     cue_phrases: Optional[list[str]] = None
     retention: Optional[str] = None
+    model_scope: Optional[str] = None  # Update model scope (set to "" to make shared)
 
 
 class ProposalAction(BaseModel):
@@ -118,11 +122,13 @@ class SystemPromptRequest(BaseModel):
 
 class StyleProfileRequest(BaseModel):
     style_id: str
-    tone_base: str
+    tone_base: str = ""
     permissions: Optional[list[str]] = None
     constraints: Optional[list[str]] = None
     vocal_motifs: Optional[list[str]] = None
     forbidden_patterns: Optional[list[str]] = None
+    freeform_description: str = ""
+    use_freeform: bool = False
 
 
 class StyleProfileUpdateRequest(BaseModel):
@@ -131,12 +137,84 @@ class StyleProfileUpdateRequest(BaseModel):
     constraints: Optional[list[str]] = None
     vocal_motifs: Optional[list[str]] = None
     forbidden_patterns: Optional[list[str]] = None
+    freeform_description: Optional[str] = None
+    use_freeform: Optional[bool] = None
 
 
 class ImportTextRequest(BaseModel):
     content: str
     source_name: str = "web-import"
     tags: Optional[list[str]] = None
+
+
+class ModelConfigRequest(BaseModel):
+    system_prompt: Optional[str] = None
+    style_profile: Optional[str] = None
+    memory_enabled: Optional[bool] = None
+    decay_enabled: Optional[bool] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+
+
+class ModelSwitchRequest(BaseModel):
+    model_id: str
+
+
+class ConversationCreateRequest(BaseModel):
+    name: str = "New Chat"
+    model: Optional[str] = None  # Model name for display (e.g., "gpt-4o", "Claude Opus")
+
+
+class ConversationUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    model: Optional[str] = None  # Model name for display
+    archived: Optional[bool] = None
+
+
+class MessageUpdateRequest(BaseModel):
+    content: str
+
+
+class ProfileCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    system_prompt: str = ""
+    style_profile_id: Optional[str] = None
+    model_strategy: str = "single"
+    primary_model: Optional[str] = None
+    model_pool: Optional[list[str]] = None
+    model_weights: Optional[dict[str, float]] = None
+    routing_rules: Optional[list[dict[str, Any]]] = None
+    memory_scope: str = "isolated"
+    access_shared_memories: bool = True
+    tags: Optional[list[str]] = None
+    philosophy: str = ""
+    approach_to_rituals: str = ""
+    ritual_depth: str = "functional"
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    style_profile_id: Optional[str] = None
+    model_strategy: Optional[str] = None
+    primary_model: Optional[str] = None
+    model_pool: Optional[list[str]] = None
+    model_weights: Optional[dict[str, float]] = None
+    routing_rules: Optional[list[dict[str, Any]]] = None
+    memory_scope: Optional[str] = None
+    access_shared_memories: Optional[bool] = None
+    is_active: Optional[bool] = None
+    tags: Optional[list[str]] = None
+    philosophy: Optional[str] = None
+    approach_to_rituals: Optional[str] = None
+    ritual_depth: Optional[str] = None
+
+
+class ProfileImportRequest(BaseModel):
+    data: dict[str, Any]
 
 
 # ============================================================================
@@ -474,18 +552,36 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         limit: int = 100,
         offset: int = 0,
         search: Optional[str] = None,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
     ):
-        """List memory capsules with optional filtering."""
+        """List memory capsules with optional filtering.
+
+        Args:
+            type: Filter by capsule type
+            limit: Max memories to return
+            offset: Offset for pagination
+            search: Text search in content
+            model_scope: Filter by model scope (uses current model if per_model_isolation enabled)
+            include_shared: Include memories with no model_scope (shared)
+        """
         tl = get_threadlight()
 
         from threadlight.storage.base import CapsuleFilter
 
         capsule_type = CapsuleType(type) if type else None
 
+        # Use provided model_scope, or current model if isolation is enabled
+        effective_scope = model_scope
+        if effective_scope is None and tl.config.memory.per_model_isolation:
+            effective_scope = tl.config.current_model
+
         filter = CapsuleFilter(
             type=capsule_type,
             limit=limit,
             offset=offset,
+            model_scope=effective_scope if tl.config.memory.per_model_isolation else None,
+            include_shared=include_shared,
         )
 
         capsules = tl.storage.list_capsules(filter)
@@ -503,6 +599,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "memories": [_capsule_to_dict(c) for c in capsules],
             "count": len(capsules),
             "total": tl.storage.count_capsules(filter),
+            "model_scope": effective_scope,
+            "per_model_isolation": tl.config.memory.per_model_isolation,
         }
 
     @app.get("/api/memories/{capsule_id}")
@@ -518,7 +616,13 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     @app.post("/api/memories")
     async def create_memory(request: CapsuleRequest):
-        """Create a new memory capsule."""
+        """Create a new memory capsule.
+
+        When per_model_isolation is enabled:
+        - shared=True creates a memory visible to all models
+        - shared=False creates a memory scoped to current model
+        - model_scope explicitly sets the model scope
+        """
         tl = get_threadlight()
 
         try:
@@ -528,6 +632,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 cue_phrases=request.cue_phrases,
                 retention=request.retention,
                 consent_confirmed=True,
+                shared=request.shared,
+                model_scope=request.model_scope,
             )
 
             return _capsule_to_dict(capsule)
@@ -549,6 +655,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             capsule.cue_phrases = request.cue_phrases
         if request.retention:
             capsule.retention = RetentionPolicy(request.retention)
+        if request.model_scope is not None:
+            # Empty string means make it shared (None)
+            capsule.model_scope = request.model_scope if request.model_scope else None
 
         tl.storage.update_capsule(capsule)
 
@@ -826,6 +935,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         tl = get_threadlight()
         from threadlight.capsules.style import BUILTIN_STYLES
 
+        # Get current model config
+        current_model_config = tl.get_current_model_config()
+
         return {
             "provider": {
                 "type": tl.config.provider.type,
@@ -840,11 +952,18 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "memory": {
                 "decay_enabled": tl.config.memory.decay.enabled,
                 "max_capsules_per_request": tl.config.memory.max_capsules_per_request,
+                "per_model_isolation": tl.config.memory.per_model_isolation,
+                "default_shared": tl.config.memory.default_shared,
             },
             "identity": {
                 "name": tl.config.identity.name,
                 "system_prompt": tl.config.identity.system_prompt,
             },
+            "current_model": {
+                "model_id": tl.config.current_model,
+                "config": current_model_config.to_dict(),
+            },
+            "available_models": list(tl.config.model_configs.keys()),
         }
 
     @app.put("/api/config")
@@ -879,6 +998,163 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             changes["system_prompt"] = True
 
         return {"updated": changes}
+
+    # ========================================================================
+    # Model Configuration Endpoints
+    # ========================================================================
+
+    @app.get("/api/models")
+    async def list_models():
+        """List available models and their configs."""
+        tl = get_threadlight()
+
+        models = tl.list_available_models()
+        return {
+            "models": models,
+            "current_model": tl.config.current_model,
+            "count": len(models),
+        }
+
+    @app.post("/api/models/switch")
+    async def switch_model(request: ModelSwitchRequest):
+        """Switch to a different model."""
+        tl = get_threadlight()
+
+        try:
+            model_config = tl.switch_model(request.model_id)
+            return {
+                "status": "switched",
+                "model_id": request.model_id,
+                "config": model_config.to_dict(),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/models/{model_id}/config")
+    async def get_model_config(model_id: str):
+        """Get config for specific model."""
+        tl = get_threadlight()
+
+        config = tl.config.get_model_config(model_id)
+        is_current = model_id == tl.config.current_model
+
+        return {
+            "model_id": model_id,
+            "is_current": is_current,
+            "config": config.to_dict(),
+        }
+
+    @app.put("/api/models/{model_id}/config")
+    async def update_model_config(model_id: str, request: ModelConfigRequest):
+        """Update config for specific model (auto-saves)."""
+        tl = get_threadlight()
+
+        # Build kwargs from request
+        updates = {}
+        if request.system_prompt is not None:
+            updates["system_prompt"] = request.system_prompt
+        if request.style_profile is not None:
+            updates["style_profile"] = request.style_profile if request.style_profile else None
+        if request.memory_enabled is not None:
+            updates["memory_enabled"] = request.memory_enabled
+        if request.decay_enabled is not None:
+            updates["decay_enabled"] = request.decay_enabled
+        if request.temperature is not None:
+            updates["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            updates["max_tokens"] = request.max_tokens
+        if request.top_p is not None:
+            updates["top_p"] = request.top_p
+
+        # Update the config
+        config = tl.config.update_model_config(model_id, **updates)
+
+        # If this is the current model, apply the changes
+        if model_id == tl.config.current_model:
+            tl._apply_model_config(config)
+
+        return {
+            "status": "updated",
+            "model_id": model_id,
+            "config": config.to_dict(),
+        }
+
+    @app.post("/api/models/{model_id}/create")
+    async def create_model_config(model_id: str, request: ModelConfigRequest):
+        """Create a new model configuration."""
+        tl = get_threadlight()
+
+        config = tl.create_model_config(
+            model_id=model_id,
+            system_prompt=request.system_prompt,
+            style_profile=request.style_profile,
+            memory_enabled=request.memory_enabled if request.memory_enabled is not None else True,
+            decay_enabled=request.decay_enabled if request.decay_enabled is not None else False,
+            temperature=request.temperature if request.temperature is not None else 0.7,
+            max_tokens=request.max_tokens,
+            top_p=request.top_p if request.top_p is not None else 1.0,
+        )
+
+        return {
+            "status": "created",
+            "model_id": model_id,
+            "config": config.to_dict(),
+        }
+
+    @app.delete("/api/models/{model_id}/config")
+    async def delete_model_config(model_id: str):
+        """Delete a model configuration."""
+        tl = get_threadlight()
+
+        if model_id == tl.config.current_model:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete config for current model"
+            )
+
+        success = tl.delete_model_config(model_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Model config not found")
+
+        return {"status": "deleted", "model_id": model_id}
+
+    @app.post("/api/models/{model_id}/copy-to/{target_model_id}")
+    async def copy_model_config(model_id: str, target_model_id: str):
+        """Copy settings from one model to another."""
+        tl = get_threadlight()
+
+        try:
+            config = tl.copy_model_settings(model_id, target_model_id)
+            return {
+                "status": "copied",
+                "source": model_id,
+                "target": target_model_id,
+                "config": config.to_dict(),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.post("/api/models/{model_id}/set-as-default")
+    async def set_model_as_default(model_id: str):
+        """Set a model's config as the default for new models."""
+        tl = get_threadlight()
+
+        tl.config.set_as_default(model_id)
+        return {
+            "status": "set_as_default",
+            "model_id": model_id,
+        }
+
+    @app.get("/api/models/current")
+    async def get_current_model():
+        """Get the currently active model and its config."""
+        tl = get_threadlight()
+
+        config = tl.get_current_model_config()
+        return {
+            "model_id": tl.config.current_model,
+            "config": config.to_dict(),
+        }
 
     # ========================================================================
     # System Prompt / Custom Instructions Endpoints
@@ -963,6 +1239,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 "constraints": custom.constraints,
                 "vocal_motifs": custom.vocal_motifs,
                 "forbidden_patterns": custom.forbidden_patterns,
+                "freeform_description": getattr(custom, 'freeform_description', ''),
+                "use_freeform": getattr(custom, 'use_freeform', False),
                 "is_builtin": False,
             }
 
@@ -976,6 +1254,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 "constraints": profile.constraints,
                 "vocal_motifs": profile.vocal_motifs,
                 "forbidden_patterns": profile.forbidden_patterns,
+                "freeform_description": profile.freeform_description,
+                "use_freeform": profile.use_freeform,
                 "is_builtin": False,
             }
 
@@ -1002,6 +1282,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             constraints=request.constraints,
             vocal_motifs=request.vocal_motifs,
             forbidden_patterns=request.forbidden_patterns,
+            freeform_description=request.freeform_description,
+            use_freeform=request.use_freeform,
         )
 
         # Save to storage
@@ -1010,6 +1292,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         return {
             "status": "created",
             "style_id": profile.style_id,
+            "use_freeform": profile.use_freeform,
         }
 
     @app.put("/api/styles/{style_id}")
@@ -1041,6 +1324,10 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             profile.vocal_motifs = request.vocal_motifs
         if request.forbidden_patterns is not None:
             profile.forbidden_patterns = request.forbidden_patterns
+        if request.freeform_description is not None:
+            profile.freeform_description = request.freeform_description
+        if request.use_freeform is not None:
+            profile.use_freeform = request.use_freeform
 
         # Update content dict
         profile.content = {
@@ -1050,12 +1337,14 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "constraints": profile.constraints,
             "vocal_motifs": profile.vocal_motifs,
             "forbidden_patterns": profile.forbidden_patterns,
+            "freeform_description": profile.freeform_description,
+            "use_freeform": profile.use_freeform,
         }
 
         # Save
         tl.storage.update_capsule(profile)
 
-        return {"status": "updated", "style_id": style_id}
+        return {"status": "updated", "style_id": style_id, "use_freeform": profile.use_freeform}
 
     @app.delete("/api/styles/{style_id}")
     async def delete_style(style_id: str):
@@ -1196,6 +1485,922 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "total_lines": len(lines),
         }
 
+    @app.post("/api/import/conversations")
+    async def import_conversations(
+        file: UploadFile = File(...),
+        profile_id: str = Form(None),
+    ):
+        """
+        Import conversations from Claude or ChatGPT exports.
+
+        Supported formats:
+        - .zip files (Claude's claude-conversations.zip or ChatGPT export)
+        - .json files (conversations.json from either platform)
+
+        The format is auto-detected from the file structure.
+        If profile_id is provided, imported conversations are scoped to that profile.
+        """
+        import tempfile
+        import os
+
+        from threadlight.import_.claude_export import import_claude_export
+        from threadlight.import_.chatgpt_export import import_chatgpt_export
+
+        tl = get_threadlight()
+        storage = tl.storage
+
+        # Determine the profile scope for imported conversations
+        profile_scope = profile_id
+        profile_name = None
+        if profile_scope:
+            # Verify the profile exists
+            profile = tl.storage.get_profile(profile_scope)
+            if profile:
+                profile_name = profile.name
+            else:
+                return {"error": f"Profile not found: {profile_scope}"}
+
+        # Save uploaded file to temp location
+        suffix = Path(file.filename).suffix if file.filename else ".zip"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            # Determine file type and source
+            filename = file.filename or "upload"
+            is_zip = suffix.lower() == ".zip"
+
+            # Try to auto-detect the source (Claude vs ChatGPT)
+            # ChatGPT exports typically have a different structure
+            source_type = "unknown"
+
+            if is_zip:
+                import zipfile
+                try:
+                    with zipfile.ZipFile(tmp_path, 'r') as zf:
+                        file_list = zf.namelist()
+                        # Claude exports have projects.json, ChatGPT has model_comparisons.json
+                        if any('projects.json' in f for f in file_list):
+                            source_type = "claude"
+                        elif any('model_comparisons.json' in f or 'user.json' in f for f in file_list):
+                            source_type = "chatgpt"
+                        elif any('conversations.json' in f for f in file_list):
+                            # Need to peek at the structure
+                            for f in file_list:
+                                if 'conversations.json' in f:
+                                    with zf.open(f) as conv_file:
+                                        # Read first few bytes to determine format
+                                        sample = conv_file.read(1000).decode('utf-8', errors='ignore')
+                                        if '"chat_messages"' in sample:
+                                            source_type = "claude"
+                                        elif '"mapping"' in sample:
+                                            source_type = "chatgpt"
+                                    break
+                except zipfile.BadZipFile:
+                    return {"error": "Invalid zip file"}
+
+            elif suffix.lower() == ".json":
+                # Peek at the JSON structure
+                try:
+                    import json
+                    with open(tmp_path, 'r', encoding='utf-8') as f:
+                        # Read just enough to determine format
+                        sample = f.read(2000)
+                        if '"chat_messages"' in sample:
+                            source_type = "claude"
+                        elif '"mapping"' in sample:
+                            source_type = "chatgpt"
+                except Exception:
+                    pass
+
+            # Import based on detected type
+            result = None
+            if source_type == "claude":
+                result = import_claude_export(
+                    path=tmp_path,
+                    storage=storage,
+                    import_conversations=True,
+                    import_projects=True,
+                    create_styles=True,
+                    skip_empty_conversations=True,
+                    profile_scope=profile_scope,
+                )
+                return {
+                    "success": result.success,
+                    "source": "claude",
+                    "conversations_imported": result.total_conversations,
+                    "messages_imported": result.total_messages,
+                    "projects_imported": result.total_projects,
+                    "errors": result.errors,
+                    "profile_scope": profile_scope,
+                    "profile_name": profile_name,
+                }
+
+            elif source_type == "chatgpt":
+                result = import_chatgpt_export(
+                    path=tmp_path,
+                    storage=storage,
+                    skip_empty_conversations=True,
+                    profile_scope=profile_scope,
+                )
+                return {
+                    "success": result.success,
+                    "source": "chatgpt",
+                    "conversations_imported": result.total_conversations,
+                    "messages_imported": result.total_messages,
+                    "errors": result.errors,
+                    "profile_scope": profile_scope,
+                    "profile_name": profile_name,
+                }
+
+            else:
+                # Try both and see which works
+                # First try Claude format
+                result = import_claude_export(
+                    path=tmp_path,
+                    storage=storage,
+                    import_conversations=True,
+                    import_projects=True,
+                    skip_empty_conversations=True,
+                    profile_scope=profile_scope,
+                )
+
+                if result.success and result.total_conversations > 0:
+                    return {
+                        "success": True,
+                        "source": "claude",
+                        "conversations_imported": result.total_conversations,
+                        "messages_imported": result.total_messages,
+                        "projects_imported": result.total_projects,
+                        "errors": result.errors,
+                        "profile_scope": profile_scope,
+                        "profile_name": profile_name,
+                    }
+
+                # Try ChatGPT format
+                result = import_chatgpt_export(
+                    path=tmp_path,
+                    storage=storage,
+                    skip_empty_conversations=True,
+                    profile_scope=profile_scope,
+                )
+
+                if result.success and result.total_conversations > 0:
+                    return {
+                        "success": True,
+                        "source": "chatgpt",
+                        "conversations_imported": result.total_conversations,
+                        "messages_imported": result.total_messages,
+                        "errors": result.errors,
+                        "profile_scope": profile_scope,
+                        "profile_name": profile_name,
+                    }
+
+                return {
+                    "success": False,
+                    "error": "Could not detect export format. Make sure the file is a valid Claude or ChatGPT export.",
+                }
+
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+    # ========================================================================
+    # Semantic Search Endpoints
+    # ========================================================================
+
+    class SemanticSearchRequest(BaseModel):
+        query: str
+        limit: int = 10
+        threshold: float = 0.5
+        include_memories: bool = True
+        include_conversations: bool = True
+
+    @app.post("/api/search/semantic")
+    async def semantic_search(request: SemanticSearchRequest):
+        """
+        Perform semantic search over memories and conversations.
+
+        Requires embeddings to be enabled and generated.
+        """
+        tl = get_threadlight()
+
+        if not tl.config.memory.embeddings.enabled:
+            raise HTTPException(
+                status_code=400,
+                detail="Embeddings not enabled. Enable embeddings in config first."
+            )
+
+        try:
+            results = []
+
+            if request.include_memories:
+                memory_results = tl.search_memories_semantic(
+                    query=request.query,
+                    limit=request.limit,
+                    threshold=request.threshold,
+                )
+                results.extend([r.to_dict() for r in memory_results])
+
+            if request.include_conversations:
+                conv_results = tl.search_conversations_semantic(
+                    query=request.query,
+                    limit=request.limit,
+                    threshold=request.threshold,
+                )
+                results.extend([r.to_dict() for r in conv_results])
+
+            # Sort combined results by similarity and limit
+            results.sort(key=lambda r: r.get("similarity_score", 0), reverse=True)
+            results = results[:request.limit]
+
+            return {
+                "query": request.query,
+                "results": results,
+                "count": len(results),
+            }
+
+        except Exception as e:
+            logger.error(f"Semantic search failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    class GenerateEmbeddingsRequest(BaseModel):
+        include_memories: bool = True
+        include_conversations: bool = True
+
+    @app.post("/api/embeddings/generate")
+    async def generate_embeddings(request: GenerateEmbeddingsRequest):
+        """
+        Generate embeddings for memories and conversations that don't have them.
+
+        This can take a while for large datasets.
+        """
+        tl = get_threadlight()
+
+        if not tl.config.memory.embeddings.enabled:
+            raise HTTPException(
+                status_code=400,
+                detail="Embeddings not enabled. Enable embeddings in config first."
+            )
+
+        try:
+            stats = tl.generate_embeddings(
+                include_memories=request.include_memories,
+                include_messages=request.include_conversations,
+            )
+            return stats.to_dict()
+
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/embeddings/stats")
+    async def get_embedding_stats():
+        """Get statistics about embedding coverage."""
+        tl = get_threadlight()
+
+        if not tl.config.memory.embeddings.enabled:
+            return {
+                "enabled": False,
+                "message": "Embeddings not enabled in config.",
+            }
+
+        try:
+            stats = tl.get_embedding_stats()
+            stats["enabled"] = True
+            return stats
+
+        except Exception as e:
+            logger.error(f"Failed to get embedding stats: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    class EmbeddingsConfigRequest(BaseModel):
+        enabled: bool = True
+        provider: str = "local"
+        model: str = "all-MiniLM-L6-v2"
+
+    @app.post("/api/embeddings/enable")
+    async def enable_embeddings(request: EmbeddingsConfigRequest):
+        """Enable or disable embeddings and configure the provider."""
+        tl = get_threadlight()
+
+        try:
+            tl.config.memory.embeddings.enabled = request.enabled
+            tl.config.memory.embeddings.provider = request.provider
+            tl.config.memory.embeddings.model = request.model
+
+            # Save config
+            tl.save_config()
+
+            return {
+                "enabled": request.enabled,
+                "provider": request.provider,
+                "model": request.model,
+                "message": "Embeddings configuration updated. Restart may be required for some changes.",
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to enable embeddings: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # ========================================================================
+    # Conversation Management Endpoints
+    # ========================================================================
+
+    @app.get("/api/conversations")
+    async def list_conversations_api(
+        include_archived: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+        source: Optional[str] = None,
+    ):
+        """List all conversations.
+
+        Args:
+            include_archived: Include archived conversations
+            limit: Maximum number to return
+            offset: Pagination offset
+            source: Filter by source (local, claude, chatgpt). If None, returns all sources.
+        """
+        tl = get_threadlight()
+
+        conversations = tl.storage.list_conversations(
+            limit=limit,
+            offset=offset,
+            source=source,  # None means all sources
+            include_archived=include_archived,
+        )
+
+        return {
+            "conversations": [c.to_dict() for c in conversations],
+            "count": len(conversations),
+        }
+
+    @app.post("/api/conversations")
+    async def create_conversation_api(request: ConversationCreateRequest):
+        """Create a new conversation."""
+        tl = get_threadlight()
+        from threadlight.storage.base import Conversation
+        from datetime import datetime
+
+        # Determine model name: use provided, or active profile, or current model config
+        model_name = request.model
+        if not model_name:
+            if tl.active_profile:
+                model_name = tl.active_profile.name or tl.active_profile.primary_model
+            else:
+                model_name = tl.config.provider.model
+
+        conversation = Conversation(
+            id=str(uuid.uuid4()),
+            name=request.name,
+            source="local",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+            message_count=0,
+            model=model_name,
+        )
+
+        tl.storage.save_conversation(conversation)
+
+        return conversation.to_dict()
+
+    @app.get("/api/conversations/{conversation_id}")
+    async def get_conversation_api(conversation_id: str):
+        """Get a conversation by ID."""
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        return conversation.to_dict()
+
+    @app.put("/api/conversations/{conversation_id}")
+    async def update_conversation_api(conversation_id: str, request: ConversationUpdateRequest):
+        """Update a conversation (rename, archive, etc.)."""
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        if request.name is not None:
+            conversation.name = request.name
+        if request.archived is not None:
+            conversation.archived = request.archived
+        if request.model is not None:
+            conversation.model = request.model
+
+        tl.storage.update_conversation(conversation)
+
+        return conversation.to_dict()
+
+    @app.post("/api/conversations/{conversation_id}/archive")
+    async def archive_conversation_api(conversation_id: str):
+        """Archive a conversation."""
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        conversation.archived = True
+        tl.storage.update_conversation(conversation)
+
+        return {"status": "archived", "id": conversation_id}
+
+    @app.post("/api/conversations/{conversation_id}/unarchive")
+    async def unarchive_conversation_api(conversation_id: str):
+        """Unarchive a conversation."""
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        conversation.archived = False
+        tl.storage.update_conversation(conversation)
+
+        return {"status": "unarchived", "id": conversation_id}
+
+    @app.delete("/api/conversations/{conversation_id}")
+    async def delete_conversation_api(conversation_id: str):
+        """Delete a conversation and all its messages."""
+        tl = get_threadlight()
+
+        success = tl.storage.delete_conversation(conversation_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        return {"status": "deleted", "id": conversation_id}
+
+    @app.get("/api/conversations/{conversation_id}/messages")
+    async def get_conversation_messages_api(
+        conversation_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ):
+        """Get all messages in a conversation."""
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        messages = tl.storage.get_messages(conversation_id, limit=limit, offset=offset)
+
+        return {
+            "messages": [m.to_dict() for m in messages],
+            "count": len(messages),
+            "conversation_id": conversation_id,
+        }
+
+    @app.post("/api/conversations/{conversation_id}/messages")
+    async def add_message_to_conversation_api(
+        conversation_id: str,
+        role: str,
+        content: str,
+    ):
+        """Add a message to a conversation."""
+        tl = get_threadlight()
+        from threadlight.storage.base import Message as StorageMessage
+        from datetime import datetime
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        message = StorageMessage(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            timestamp=datetime.utcnow(),
+            source="local",
+        )
+
+        tl.storage.save_message(message)
+
+        # Update conversation message count and timestamp
+        conversation.message_count += 1
+        tl.storage.update_conversation(conversation)
+
+        return message.to_dict()
+
+    # ========================================================================
+    # Message Management Endpoints
+    # ========================================================================
+
+    @app.get("/api/messages/{message_id}")
+    async def get_message_api(message_id: str):
+        """Get a single message by ID."""
+        tl = get_threadlight()
+
+        message = tl.storage.get_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        return message.to_dict()
+
+    @app.put("/api/messages/{message_id}")
+    async def update_message_api(message_id: str, request: MessageUpdateRequest):
+        """Edit a message's content."""
+        tl = get_threadlight()
+
+        message = tl.storage.get_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        message.content = request.content
+        tl.storage.update_message(message)
+
+        return message.to_dict()
+
+    @app.delete("/api/messages/{message_id}")
+    async def delete_message_api(message_id: str):
+        """Delete a single message."""
+        tl = get_threadlight()
+
+        message = tl.storage.get_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        # Update conversation message count
+        conversation = tl.storage.get_conversation(message.conversation_id)
+        if conversation:
+            conversation.message_count = max(0, conversation.message_count - 1)
+            tl.storage.update_conversation(conversation)
+
+        tl.storage.delete_message(message_id)
+
+        return {"status": "deleted", "id": message_id}
+
+    @app.delete("/api/messages/{message_id}/and-after")
+    async def delete_message_and_after_api(message_id: str):
+        """Delete a message and all messages after it (for regeneration)."""
+        tl = get_threadlight()
+
+        message = tl.storage.get_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        deleted_count = tl.storage.delete_messages_after(
+            message.conversation_id,
+            message_id
+        )
+
+        # Update conversation message count
+        conversation = tl.storage.get_conversation(message.conversation_id)
+        if conversation:
+            conversation.message_count = max(0, conversation.message_count - deleted_count)
+            tl.storage.update_conversation(conversation)
+
+        return {"status": "deleted", "count": deleted_count}
+
+    # ========================================================================
+    # Memory Type Management Endpoints
+    # ========================================================================
+
+    class FieldDefinitionRequest(BaseModel):
+        name: str
+        type: str  # "string", "text", "number", "date", "list"
+        required: bool = True
+        default: Optional[Any] = None
+        help_text: str = ""
+
+    class MemoryTypeRequest(BaseModel):
+        type_id: str
+        display_name: str
+        description: str = ""
+        fields: list[FieldDefinitionRequest]
+        display_template: str = ""
+        icon: str = "file-text"
+
+    class MemoryTypeUpdateRequest(BaseModel):
+        display_name: Optional[str] = None
+        description: Optional[str] = None
+        fields: Optional[list[FieldDefinitionRequest]] = None
+        display_template: Optional[str] = None
+        icon: Optional[str] = None
+
+    @app.get("/api/memory-types")
+    async def list_memory_types(include_builtin: bool = True):
+        """
+        List all available memory types (built-in + custom).
+
+        Returns both built-in types (relational, myth_seed, etc.) and
+        user-defined custom types.
+        """
+        tl = get_threadlight()
+        types = tl.list_memory_types(include_builtin=include_builtin)
+
+        return {
+            "types": types,
+            "count": len(types),
+            "builtin_count": sum(1 for t in types if t.get("is_builtin", False)),
+            "custom_count": sum(1 for t in types if not t.get("is_builtin", False)),
+        }
+
+    @app.get("/api/memory-types/examples")
+    async def list_example_types():
+        """List available example types that can be imported."""
+        tl = get_threadlight()
+        examples = tl.list_example_types()
+
+        return {
+            "examples": examples,
+            "count": len(examples),
+        }
+
+    @app.get("/api/memory-types/{type_id}")
+    async def get_memory_type(type_id: str):
+        """Get a specific memory type definition."""
+        tl = get_threadlight()
+        type_def = tl.get_memory_type(type_id)
+
+        if type_def is None:
+            raise HTTPException(status_code=404, detail=f"Memory type not found: {type_id}")
+
+        return type_def
+
+    @app.post("/api/memory-types")
+    async def create_memory_type(request: MemoryTypeRequest):
+        """
+        Create a new custom memory type.
+
+        Custom types allow you to define your own structured memory formats
+        with custom fields, validation, and display templates.
+        """
+        tl = get_threadlight()
+
+        # Check if type already exists
+        existing = tl.get_memory_type(request.type_id)
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Memory type already exists: {request.type_id}"
+            )
+
+        try:
+            # Convert Pydantic models to dicts
+            fields = [f.model_dump() for f in request.fields]
+
+            type_def = tl.create_memory_type(
+                type_id=request.type_id,
+                display_name=request.display_name,
+                description=request.description,
+                fields=fields,
+                display_template=request.display_template,
+                icon=request.icon,
+            )
+
+            return {
+                "status": "created",
+                "type": type_def.to_dict(),
+            }
+
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Failed to create memory type: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.put("/api/memory-types/{type_id}")
+    async def update_memory_type(type_id: str, request: MemoryTypeUpdateRequest):
+        """
+        Update an existing custom memory type.
+
+        Cannot update built-in types.
+        """
+        tl = get_threadlight()
+
+        # Check if it's a built-in type
+        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
+        if type_id in builtin_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot modify built-in memory types"
+            )
+
+        try:
+            # Build updates dict
+            updates = {}
+            if request.display_name is not None:
+                updates["display_name"] = request.display_name
+            if request.description is not None:
+                updates["description"] = request.description
+            if request.fields is not None:
+                updates["fields"] = [f.model_dump() for f in request.fields]
+            if request.display_template is not None:
+                updates["display_template"] = request.display_template
+            if request.icon is not None:
+                updates["icon"] = request.icon
+
+            success = tl.update_memory_type(type_id, **updates)
+
+            if not success:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Memory type not found: {type_id}"
+                )
+
+            # Get updated type
+            updated = tl.get_memory_type(type_id)
+
+            return {
+                "status": "updated",
+                "type": updated,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to update memory type: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete("/api/memory-types/{type_id}")
+    async def delete_memory_type(type_id: str):
+        """
+        Delete a custom memory type.
+
+        Cannot delete built-in types. Note that existing memories
+        of this type will not be deleted.
+        """
+        tl = get_threadlight()
+
+        # Check if it's a built-in type
+        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
+        if type_id in builtin_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete built-in memory types"
+            )
+
+        success = tl.delete_memory_type(type_id)
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Memory type not found: {type_id}"
+            )
+
+        return {
+            "status": "deleted",
+            "type_id": type_id,
+        }
+
+    @app.post("/api/memory-types/import/{type_id}")
+    async def import_example_type(type_id: str):
+        """
+        Import an example type definition.
+
+        Available examples: creative_project, book_note, dream_log, location
+        """
+        tl = get_threadlight()
+
+        type_def = tl.import_example_type(type_id)
+
+        if type_def is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Example type not found: {type_id}. Available: creative_project, book_note, dream_log, location"
+            )
+
+        return {
+            "status": "imported",
+            "type": type_def.to_dict(),
+        }
+
+    # ========================================================================
+    # Per-Model Memory Isolation Endpoints
+    # ========================================================================
+
+    class MemoryIsolationConfigRequest(BaseModel):
+        enabled: bool
+        default_shared: Optional[bool] = None
+
+    class MemoryScopeUpdateRequest(BaseModel):
+        model_id: Optional[str] = None  # None means share (remove scope)
+
+    @app.get("/api/memory/isolation")
+    async def get_memory_isolation_config():
+        """Get per-model memory isolation configuration."""
+        tl = get_threadlight()
+
+        return {
+            "per_model_isolation": tl.config.memory.per_model_isolation,
+            "default_shared": tl.config.memory.default_shared,
+            "current_model": tl.config.current_model,
+        }
+
+    @app.put("/api/memory/isolation")
+    async def update_memory_isolation_config(request: MemoryIsolationConfigRequest):
+        """Update per-model memory isolation configuration."""
+        tl = get_threadlight()
+
+        tl.set_per_model_isolation(request.enabled)
+        if request.default_shared is not None:
+            tl.set_default_shared(request.default_shared)
+
+        # Save config
+        tl.config.mark_changed()
+
+        return {
+            "status": "updated",
+            "per_model_isolation": tl.config.memory.per_model_isolation,
+            "default_shared": tl.config.memory.default_shared,
+        }
+
+    @app.post("/api/memories/{capsule_id}/share")
+    async def share_memory(capsule_id: str):
+        """Make a memory shared across all models (remove model scope)."""
+        tl = get_threadlight()
+
+        success = tl.share_memory(capsule_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Memory not found")
+
+        return {"status": "shared", "id": capsule_id, "model_scope": None}
+
+    @app.post("/api/memories/{capsule_id}/assign")
+    async def assign_memory_to_model(capsule_id: str, request: MemoryScopeUpdateRequest):
+        """Assign a memory to a specific model."""
+        tl = get_threadlight()
+
+        if request.model_id is None:
+            # If no model_id provided, assign to current model
+            model_id = tl.config.current_model
+        else:
+            model_id = request.model_id
+
+        success = tl.assign_memory_to_model(capsule_id, model_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Memory not found")
+
+        return {"status": "assigned", "id": capsule_id, "model_scope": model_id}
+
+    @app.post("/api/memories/{capsule_id}/copy-to-model")
+    async def copy_memory_to_model(capsule_id: str, request: MemoryScopeUpdateRequest):
+        """Copy a memory to another model (creates a new capsule)."""
+        tl = get_threadlight()
+
+        if not request.model_id:
+            raise HTTPException(status_code=400, detail="model_id is required")
+
+        new_capsule = tl.copy_memory_to_model(capsule_id, request.model_id)
+        if not new_capsule:
+            raise HTTPException(status_code=404, detail="Memory not found")
+
+        return {
+            "status": "copied",
+            "original_id": capsule_id,
+            "new_capsule": _capsule_to_dict(new_capsule),
+        }
+
+    @app.get("/api/memories/{capsule_id}/scope")
+    async def get_memory_scope(capsule_id: str):
+        """Get the model scope of a memory."""
+        tl = get_threadlight()
+
+        capsule = tl.storage.get_capsule(capsule_id)
+        if not capsule:
+            raise HTTPException(status_code=404, detail="Memory not found")
+
+        model_scope = getattr(capsule, 'model_scope', None)
+        return {
+            "id": capsule_id,
+            "model_scope": model_scope,
+            "is_shared": model_scope is None,
+        }
+
+    @app.get("/api/model-scope/stats")
+    async def get_model_scope_stats():
+        """Get statistics about memories per model scope."""
+        tl = get_threadlight()
+
+        if hasattr(tl.storage, 'count_capsules_by_model'):
+            counts = tl.storage.count_capsules_by_model()
+        else:
+            counts = {}
+
+        # Convert None key to "null" for JSON serialization
+        json_counts = {}
+        for key, value in counts.items():
+            json_counts[str(key) if key is not None else "null"] = value
+
+        return {
+            "per_model_isolation": tl.config.memory.per_model_isolation,
+            "current_model": tl.config.current_model,
+            "memory_counts_by_model": json_counts,
+            "shared_count": counts.get(None, 0),
+        }
+
     # ========================================================================
     # Stats Endpoints
     # ========================================================================
@@ -1218,6 +2423,198 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         tl = get_threadlight()
         result = tl.run_decay()
         return result
+
+    # ========================================================================
+    # Profile Endpoints
+    # ========================================================================
+
+    @app.get("/api/profiles")
+    async def list_profiles():
+        """List all profiles."""
+        tl = get_threadlight()
+        profiles = tl.list_profiles()
+        active_id = tl.active_profile.id if tl.active_profile else None
+        profile_dicts = [_profile_to_dict(p) for p in profiles]
+        for p in profile_dicts:
+            logger.info(f"[list_profiles] Profile {p['name']}: description={p.get('description')!r}")
+        return {
+            "profiles": profile_dicts,
+            "active_profile_id": active_id,
+        }
+
+    @app.get("/api/profiles/active")
+    async def get_active_profile():
+        """Get the currently active profile."""
+        tl = get_threadlight()
+        profile = tl.get_active_profile()
+        if not profile:
+            return {"active_profile": None}
+        return {"active_profile": _profile_to_dict(profile)}
+
+    @app.post("/api/profiles")
+    async def create_profile(request: ProfileCreateRequest):
+        """Create a new profile."""
+        tl = get_threadlight()
+
+        # Convert model_strategy string to enum
+        try:
+            strategy = ModelStrategy(request.model_strategy)
+        except ValueError:
+            strategy = ModelStrategy.SINGLE
+
+        profile = tl.create_profile(
+            name=request.name,
+            description=request.description,
+            system_prompt=request.system_prompt,
+            style_profile_id=request.style_profile_id,
+            model_strategy=strategy,
+            primary_model=request.primary_model,
+            model_pool=request.model_pool,
+            model_weights=request.model_weights,
+            routing_rules=request.routing_rules,
+            memory_scope=request.memory_scope,
+            access_shared_memories=request.access_shared_memories,
+            tags=request.tags,
+            philosophy=request.philosophy,
+            approach_to_rituals=request.approach_to_rituals,
+            ritual_depth=request.ritual_depth,
+        )
+
+        return {
+            "status": "created",
+            "profile": _profile_to_dict(profile),
+        }
+
+    @app.get("/api/profiles/{profile_id}")
+    async def get_profile(profile_id: str):
+        """Get a profile by ID."""
+        tl = get_threadlight()
+        profile = tl.get_profile(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return _profile_to_dict(profile)
+
+    @app.put("/api/profiles/{profile_id}")
+    async def update_profile(profile_id: str, request: ProfileUpdateRequest):
+        """Update a profile."""
+        logger.info(f"[update_profile] Updating profile {profile_id}")
+        logger.info(f"[update_profile] Request description: {request.description!r}")
+        tl = get_threadlight()
+
+        # Build update dict from non-None fields
+        updates = {}
+        if request.name is not None:
+            updates["name"] = request.name
+        if request.description is not None:
+            updates["description"] = request.description
+        if request.system_prompt is not None:
+            updates["system_prompt"] = request.system_prompt
+        if request.style_profile_id is not None:
+            updates["style_profile_id"] = request.style_profile_id
+        if request.model_strategy is not None:
+            try:
+                updates["model_strategy"] = ModelStrategy(request.model_strategy)
+            except ValueError:
+                pass
+        if request.primary_model is not None:
+            updates["primary_model"] = request.primary_model
+        if request.model_pool is not None:
+            updates["model_pool"] = request.model_pool
+        if request.model_weights is not None:
+            updates["model_weights"] = request.model_weights
+        if request.routing_rules is not None:
+            updates["routing_rules"] = request.routing_rules
+        if request.memory_scope is not None:
+            updates["memory_scope"] = request.memory_scope
+        if request.access_shared_memories is not None:
+            updates["access_shared_memories"] = request.access_shared_memories
+        if request.is_active is not None:
+            updates["is_active"] = request.is_active
+        if request.tags is not None:
+            updates["tags"] = request.tags
+        if request.philosophy is not None:
+            updates["philosophy"] = request.philosophy
+        if request.approach_to_rituals is not None:
+            updates["approach_to_rituals"] = request.approach_to_rituals
+        if request.ritual_depth is not None:
+            updates["ritual_depth"] = request.ritual_depth
+
+        logger.info(f"[update_profile] Updates dict: {updates}")
+        profile = tl.update_profile(profile_id, **updates)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        logger.info(f"[update_profile] Updated profile description: {profile.description!r}")
+        result = _profile_to_dict(profile)
+        logger.info(f"[update_profile] Returning profile dict with description: {result.get('description')!r}")
+        return {
+            "status": "updated",
+            "profile": result,
+        }
+
+    @app.delete("/api/profiles/{profile_id}")
+    async def delete_profile(profile_id: str):
+        """Delete a profile."""
+        tl = get_threadlight()
+
+        # Prevent deleting active profile
+        if tl.active_profile and tl.active_profile.id == profile_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete the currently active profile. Switch to a different profile first."
+            )
+
+        success = tl.delete_profile(profile_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        return {"status": "deleted", "profile_id": profile_id}
+
+    @app.post("/api/profiles/{profile_id}/switch")
+    async def switch_profile(profile_id: str):
+        """Switch to a profile."""
+        tl = get_threadlight()
+
+        profile = tl.switch_profile(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        return {
+            "status": "switched",
+            "profile": _profile_to_dict(profile),
+        }
+
+    @app.post("/api/profiles/clear")
+    async def clear_profile():
+        """Clear the active profile (return to default)."""
+        tl = get_threadlight()
+        tl.clear_profile()
+        return {"status": "cleared", "active_profile_id": None}
+
+    @app.get("/api/profiles/{profile_id}/export")
+    async def export_profile(profile_id: str):
+        """Export a profile as JSON."""
+        tl = get_threadlight()
+
+        data = tl.export_profile(profile_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        return data
+
+    @app.post("/api/profiles/import")
+    async def import_profile(request: ProfileImportRequest):
+        """Import a profile from JSON."""
+        tl = get_threadlight()
+
+        try:
+            profile = tl.import_profile(request.data)
+            return {
+                "status": "imported",
+                "profile": _profile_to_dict(profile),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Import failed: {str(e)}")
 
     return app
 
@@ -1270,3 +2667,35 @@ def _extract_cue_phrases(text: str, max_phrases: int = 5) -> list[str]:
     common_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'been', 'were', 'they', 'with', 'this', 'that', 'from', 'will', 'would', 'could', 'should', 'what', 'when', 'where', 'which', 'their', 'there', 'these', 'those', 'about'}
     meaningful = [w for w in words if len(w) > 3 and w not in common_words]
     return meaningful[:max_phrases]
+
+
+def _profile_to_dict(profile: Profile) -> dict[str, Any]:
+    """Convert a Profile to a dictionary for API responses."""
+    # Get model_weights from alloyed_config if available
+    model_weights = None
+    routing_rules = []
+    if profile.alloyed_config:
+        model_weights = profile.alloyed_config.weights
+        routing_rules = [r.to_dict() if hasattr(r, 'to_dict') else r for r in (profile.alloyed_config.routing_rules or [])]
+
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "description": profile.description,
+        "system_prompt": profile.system_prompt,
+        "style_profile_id": profile.style_profile_id,
+        "model_strategy": profile.model_strategy.value if profile.model_strategy else "single",
+        "primary_model": profile.primary_model,
+        "model_pool": profile.model_pool,
+        "model_weights": model_weights,
+        "routing_rules": routing_rules,
+        "memory_scope": profile.memory_scope,
+        "access_shared_memories": profile.access_shared_memories,
+        "is_active": getattr(profile, 'is_active', False),
+        "tags": getattr(profile, 'tags', []),
+        "philosophy": getattr(profile, 'philosophy', ""),
+        "approach_to_rituals": getattr(profile, 'approach_to_rituals', ""),
+        "ritual_depth": profile.ritual_depth.value if hasattr(profile, 'ritual_depth') and profile.ritual_depth else "functional",
+        "created_at": profile.created_at.isoformat() if profile.created_at else None,
+        "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
+    }

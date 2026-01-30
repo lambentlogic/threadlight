@@ -385,6 +385,6 @@ def get_example_type(type_id: str) -> Optional[CustomTypeDefinition]:
     return EXAMPLE_TYPES.get(type_id)
 
 
-def list_example_types() -> list[CustomTypeDefinition]:
-    """List all example type definitions."""
-    return list(EXAMPLE_TYPES.values())
+def list_example_types() -> list[str]:
+    """List all example type IDs."""
+    return list(EXAMPLE_TYPES.keys())

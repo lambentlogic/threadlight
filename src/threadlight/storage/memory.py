@@ -20,6 +20,7 @@ from threadlight.storage.base import (
     Conversation,
     MessageSearchResult,
 )
+from threadlight.profiles.profile import Profile
 
 
 class InMemoryStorage(StorageBackend):
@@ -30,6 +31,7 @@ class InMemoryStorage(StorageBackend):
         self.proposals: dict[str, MemoryProposal] = {}
         self.conversations: dict[str, Conversation] = {}
         self.messages: dict[str, Message] = {}
+        self.profiles: dict[str, Profile] = {}
 
     def initialize(self) -> None:
         """Nothing to initialize for in-memory storage."""
@@ -41,6 +43,7 @@ class InMemoryStorage(StorageBackend):
         self.proposals.clear()
         self.conversations.clear()
         self.messages.clear()
+        self.profiles.clear()
 
     # Capsule CRUD
 
@@ -100,6 +103,20 @@ class InMemoryStorage(StorageBackend):
             if filter.accessed_before:
                 capsules = [c for c in capsules if c.last_accessed <= filter.accessed_before]
 
+            # Profile scope filtering (profile_scope takes precedence, model_scope via __post_init__)
+            if filter.profile_scope is not None:
+                if filter.include_shared:
+                    capsules = [
+                        c for c in capsules
+                        if getattr(c, 'profile_scope', None) == filter.profile_scope
+                        or getattr(c, 'profile_scope', None) is None
+                    ]
+                else:
+                    capsules = [
+                        c for c in capsules
+                        if getattr(c, 'profile_scope', None) == filter.profile_scope
+                    ]
+
             # Sorting
             if filter.order_by == "last_accessed":
                 capsules.sort(key=lambda c: c.last_accessed, reverse=filter.order_desc)
@@ -117,14 +134,42 @@ class InMemoryStorage(StorageBackend):
 
         return capsules
 
-    def search_by_cue(self, cue: str, limit: int = 5) -> list[MemoryCapsule]:
-        """Search capsules by cue phrase match."""
+    def search_by_cue(
+        self,
+        cue: str,
+        limit: int = 5,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
+        profile_scope: Optional[str] = None,
+    ) -> list[MemoryCapsule]:
+        """Search capsules by cue phrase match.
+
+        Args:
+            cue: Search query string
+            limit: Maximum results to return
+            model_scope: Deprecated - use profile_scope instead
+            include_shared: Whether to include shared (NULL scope) capsules
+            profile_scope: Profile ID to filter by (takes precedence over model_scope)
+        """
         cue_lower = cue.lower()
         matches = []
+
+        # Use profile_scope if provided, fall back to model_scope for backward compatibility
+        effective_scope = profile_scope if profile_scope is not None else model_scope
 
         for capsule in self.capsules.values():
             if capsule.presence_score <= 0.1:
                 continue
+
+            # Profile/model scope filtering
+            if effective_scope is not None:
+                capsule_scope = getattr(capsule, 'profile_scope', None) or getattr(capsule, 'model_scope', None)
+                if include_shared:
+                    if capsule_scope is not None and capsule_scope != effective_scope:
+                        continue
+                else:
+                    if capsule_scope != effective_scope:
+                        continue
 
             for phrase in capsule.cue_phrases:
                 if cue_lower in phrase.lower() or phrase.lower() in cue_lower:
@@ -237,12 +282,24 @@ class InMemoryStorage(StorageBackend):
         limit: int = 50,
         offset: int = 0,
         source: Optional[str] = None,
+        include_archived: bool = False,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
     ) -> list[Conversation]:
         """List conversations with optional filtering."""
         convs = list(self.conversations.values())
 
         if source:
             convs = [c for c in convs if c.source == source]
+
+        if not include_archived:
+            convs = [c for c in convs if not c.archived]
+
+        if model_scope is not None:
+            if include_shared:
+                convs = [c for c in convs if getattr(c, 'model_scope', None) == model_scope or getattr(c, 'model_scope', None) is None]
+            else:
+                convs = [c for c in convs if getattr(c, 'model_scope', None) == model_scope]
 
         # Sort by updated_at descending
         convs.sort(key=lambda c: c.updated_at, reverse=True)
@@ -352,3 +409,66 @@ class InMemoryStorage(StorageBackend):
     def count_conversations(self) -> int:
         """Count total conversations."""
         return len(self.conversations)
+
+    def update_message(self, message: Message) -> bool:
+        """Update an existing message."""
+        if message.id not in self.messages:
+            return False
+        self.messages[message.id] = message
+        return True
+
+    def delete_message(self, message_id: str) -> bool:
+        """Delete a single message."""
+        if message_id not in self.messages:
+            return False
+        del self.messages[message_id]
+        return True
+
+    def delete_messages_after(self, conversation_id: str, message_id: str) -> int:
+        """Delete a message and all messages after it in a conversation."""
+        msg = self.messages.get(message_id)
+        if not msg:
+            return 0
+
+        target_time = msg.timestamp
+        msg_ids_to_delete = [
+            m.id for m in self.messages.values()
+            if m.conversation_id == conversation_id and m.timestamp >= target_time
+        ]
+
+        for mid in msg_ids_to_delete:
+            del self.messages[mid]
+
+        return len(msg_ids_to_delete)
+
+    # ========================================================================
+    # Profile Operations
+    # ========================================================================
+
+    def save_profile(self, profile: Profile) -> None:
+        """Save a profile to memory."""
+        self.profiles[profile.id] = profile
+
+    def get_profile(self, profile_id: str) -> Optional[Profile]:
+        """Get a profile by ID."""
+        return self.profiles.get(profile_id)
+
+    def update_profile(self, profile: Profile) -> None:
+        """Update an existing profile."""
+        if profile.id in self.profiles:
+            profile.updated_at = datetime.utcnow()
+            self.profiles[profile.id] = profile
+
+    def delete_profile(self, profile_id: str) -> bool:
+        """Delete a profile."""
+        if profile_id not in self.profiles:
+            return False
+        del self.profiles[profile_id]
+        return True
+
+    def list_profiles(self) -> list[Profile]:
+        """List all profiles."""
+        profiles = list(self.profiles.values())
+        # Sort by updated_at descending
+        profiles.sort(key=lambda p: p.updated_at, reverse=True)
+        return profiles

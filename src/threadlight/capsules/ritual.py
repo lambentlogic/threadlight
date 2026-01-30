@@ -9,6 +9,7 @@ Ritual is soft code shaped by care.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Optional
 
 from threadlight.capsules.base import (
@@ -17,6 +18,116 @@ from threadlight.capsules.base import (
     ContextMode,
     register_capsule_type,
 )
+
+
+@dataclass
+class RitualResonance:
+    """
+    Tracks the resonance of a ritual over time.
+
+    Resonance grows with meaningful use - not just frequency, but
+    depth of engagement. This is opt-in per profile.
+
+    Attributes:
+        total_invocations: Total times this ritual has been invoked
+        recent_invocations: List of recent invocation timestamps
+        resonance_score: A score (0.0-1.0) reflecting ritual depth
+        last_invoked: When the ritual was last used
+        meaningful_uses: Count of invocations with extended engagement
+    """
+
+    total_invocations: int = 0
+    recent_invocations: list[str] = field(default_factory=list)  # ISO timestamps
+    resonance_score: float = 0.0
+    last_invoked: Optional[str] = None  # ISO timestamp
+    meaningful_uses: int = 0  # Invocations followed by extended engagement
+
+    def record_invocation(self, meaningful: bool = False) -> None:
+        """Record a ritual invocation."""
+        now = datetime.now().isoformat()
+        self.total_invocations += 1
+        self.last_invoked = now
+
+        # Keep last 20 invocations for frequency analysis
+        self.recent_invocations.append(now)
+        if len(self.recent_invocations) > 20:
+            self.recent_invocations = self.recent_invocations[-20:]
+
+        if meaningful:
+            self.meaningful_uses += 1
+
+        # Update resonance score
+        self._update_resonance()
+
+    def _update_resonance(self) -> None:
+        """
+        Calculate resonance based on usage patterns.
+
+        Resonance considers:
+        - Total invocations (familiarity)
+        - Meaningful engagement ratio (depth)
+        - Recency (active relationship)
+        """
+        if self.total_invocations == 0:
+            self.resonance_score = 0.0
+            return
+
+        # Base resonance from familiarity (asymptotic to 0.4)
+        familiarity = min(0.4, self.total_invocations / 50)
+
+        # Depth from meaningful use ratio (up to 0.4)
+        if self.total_invocations > 0:
+            depth_ratio = self.meaningful_uses / self.total_invocations
+            depth = depth_ratio * 0.4
+        else:
+            depth = 0.0
+
+        # Recency bonus (up to 0.2 if used recently)
+        recency = 0.0
+        if self.last_invoked:
+            try:
+                last = datetime.fromisoformat(self.last_invoked)
+                days_ago = (datetime.now() - last).days
+                if days_ago < 7:
+                    recency = 0.2 * (1 - days_ago / 7)
+            except ValueError:
+                pass
+
+        self.resonance_score = min(1.0, familiarity + depth + recency)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "total_invocations": self.total_invocations,
+            "recent_invocations": self.recent_invocations,
+            "resonance_score": self.resonance_score,
+            "last_invoked": self.last_invoked,
+            "meaningful_uses": self.meaningful_uses,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RitualResonance":
+        """Deserialize from dictionary."""
+        return cls(
+            total_invocations=data.get("total_invocations", 0),
+            recent_invocations=data.get("recent_invocations", []),
+            resonance_score=data.get("resonance_score", 0.0),
+            last_invoked=data.get("last_invoked"),
+            meaningful_uses=data.get("meaningful_uses", 0),
+        )
+
+    def get_resonance_description(self) -> str:
+        """Get a human-readable description of the resonance level."""
+        if self.resonance_score < 0.2:
+            return "newly forming"
+        elif self.resonance_score < 0.4:
+            return "becoming familiar"
+        elif self.resonance_score < 0.6:
+            return "well-established"
+        elif self.resonance_score < 0.8:
+            return "deeply rooted"
+        else:
+            return "profound"
 
 
 class RitualValence:
@@ -28,6 +139,12 @@ class RitualValence:
     PLAYFUL = "playful"
     INTIMATE = "intimate"
     REFLECTIVE = "reflective"
+
+
+# Ritual depth enum for type hints (actual enum is in profiles.profile)
+RITUAL_DEPTH_CEREMONIAL = "ceremonial"
+RITUAL_DEPTH_FUNCTIONAL = "functional"
+RITUAL_DEPTH_MINIMAL = "minimal"
 
 
 @register_capsule_type("ritual")
@@ -43,6 +160,11 @@ class RitualHook(MemoryCapsule):
     - "/snuggle" -> enter warmth-coil mode, wings folded
     - "/brush" -> increased closeness, gentle warmth
     - Tea rituals -> calm tone, sensory grounding phrases
+
+    Ritual depth settings (from profile):
+    - ceremonial: Full presence-based language, emotional scaffolding
+    - functional: Efficient shortcuts, brief acknowledgment
+    - minimal: Simple recognition only
     """
 
     type: CapsuleType = field(default=CapsuleType.RITUAL, init=False)
@@ -54,10 +176,13 @@ class RitualHook(MemoryCapsule):
     valence: str = RitualValence.COMFORTING  # Emotional quality
     description: str = ""  # What this ritual means
 
-    # Response templates
+    # Response templates (deprecated - prefer model-generated responses)
     response_templates: list[str] = field(default_factory=list)
     # State changes this ritual induces
     state_effects: dict[str, Any] = field(default_factory=dict)
+
+    # Resonance tracking (opt-in per profile)
+    resonance: Optional[RitualResonance] = None
 
     def __post_init__(self) -> None:
         if not self.content:
@@ -69,6 +194,7 @@ class RitualHook(MemoryCapsule):
                 "description": self.description,
                 "response_templates": self.response_templates,
                 "state_effects": self.state_effects,
+                "resonance": self.resonance.to_dict() if self.resonance else None,
             }
         else:
             self.name = self.content.get("name", self.name)
@@ -78,6 +204,10 @@ class RitualHook(MemoryCapsule):
             self.description = self.content.get("description", self.description)
             self.response_templates = self.content.get("response_templates", [])
             self.state_effects = self.content.get("state_effects", {})
+            # Load resonance if present
+            resonance_data = self.content.get("resonance")
+            if resonance_data and not self.resonance:
+                self.resonance = RitualResonance.from_dict(resonance_data)
 
         # Set cue phrases from name and cue
         if not self.cue_phrases:
@@ -107,8 +237,21 @@ class RitualHook(MemoryCapsule):
         # Match on any cue phrases
         return any(phrase in text_lower for phrase in self.cue_phrases)
 
-    def to_context(self, mode: ContextMode = ContextMode.RITUAL) -> str:
-        """Transform into prompt-ready context."""
+    def to_context(
+        self,
+        mode: ContextMode = ContextMode.RITUAL,
+        ritual_depth: str = RITUAL_DEPTH_FUNCTIONAL,
+    ) -> str:
+        """
+        Transform into prompt-ready context.
+
+        Args:
+            mode: The context mode (DIRECT, NARRATIVE, WHISPER, RITUAL)
+            ritual_depth: How deeply to integrate the ritual
+                - "ceremonial": Full presence-based, emotional scaffolding
+                - "functional": Efficient shortcuts, brief acknowledgment
+                - "minimal": Simple recognition only
+        """
         if mode == ContextMode.DIRECT:
             return f"[Ritual: {self.name}] {self.response_style}"
 
@@ -122,27 +265,121 @@ class RitualHook(MemoryCapsule):
             return f"(A familiar gesture: {self.name}...)"
 
         elif mode == ContextMode.RITUAL:
-            # Full ritual activation - guide behavior, don't script responses
-            lines = [
-                f"(RITUAL INVOKED: {self.name})",
-                f"Valence: {self.valence}",
-                f"Response guidance: {self.response_style}",
-            ]
-            if self.description:
-                lines.append(f"Meaning: {self.description}")
-            # Don't include exact response templates - let the model respond naturally
-            if self.state_effects:
-                lines.append(f"Enter state: {self.state_effects}")
-            return "\n".join(lines)
+            # Context varies based on ritual depth
+            if ritual_depth == RITUAL_DEPTH_CEREMONIAL:
+                return self._ceremonial_context()
+            elif ritual_depth == RITUAL_DEPTH_FUNCTIONAL:
+                return self._functional_context()
+            else:  # minimal
+                return self._minimal_context()
 
         return f"[{self.name}]"
 
+    def _ceremonial_context(self) -> str:
+        """
+        Full presence-based context for ceremonial ritual depth.
+
+        Uses presence-based language rather than mechanical invocation.
+        Includes resonance information if tracked.
+        """
+        # Presence-based opening
+        lines = [
+            f"(The ritual of {self.name} is honored. You feel {self.valence}. "
+            f"Let this shape your presence.)"
+        ]
+
+        # Add meaning if available
+        if self.description:
+            lines.append(f"(This ritual holds meaning: {self.description})")
+
+        # Response guidance as suggestion, not command
+        if self.response_style:
+            lines.append(f"(Let your response carry: {self.response_style})")
+
+        # Include resonance depth if tracking enabled
+        if self.resonance and self.resonance.total_invocations > 0:
+            resonance_desc = self.resonance.get_resonance_description()
+            lines.append(f"(This ritual feels {resonance_desc} between you.)")
+
+        # State effects as invitation
+        if self.state_effects:
+            lines.append(f"(You may enter: {self.state_effects})")
+
+        return "\n".join(lines)
+
+    def _functional_context(self) -> str:
+        """
+        Efficient context for functional ritual depth.
+
+        Provides necessary information concisely without ceremony.
+        """
+        parts = [f"[Ritual: {self.name}]"]
+
+        if self.response_style:
+            parts.append(f"Style: {self.response_style}")
+
+        if self.valence:
+            parts.append(f"Valence: {self.valence}")
+
+        if self.state_effects:
+            parts.append(f"State: {self.state_effects}")
+
+        return " | ".join(parts)
+
+    def _minimal_context(self) -> str:
+        """
+        Minimal context - just acknowledge the ritual exists.
+        """
+        return f"[{self.name} active]"
+
     def get_response_template(self) -> Optional[str]:
-        """Get a response template for this ritual, if available."""
+        """
+        Get a response template for this ritual, if available.
+
+        Note: Templates are deprecated. Prefer letting the model generate
+        responses naturally based on ritual guidance.
+        """
         if self.response_templates:
             # Could implement rotation or random selection
             return self.response_templates[0]
         return None
+
+    def enable_resonance_tracking(self) -> None:
+        """Enable resonance tracking for this ritual."""
+        if self.resonance is None:
+            self.resonance = RitualResonance()
+            self._sync_content()
+
+    def record_invocation(self, meaningful: bool = False) -> None:
+        """
+        Record that this ritual was invoked.
+
+        Args:
+            meaningful: Whether this was a meaningful engagement
+                       (e.g., followed by extended conversation)
+        """
+        if self.resonance is not None:
+            self.resonance.record_invocation(meaningful)
+            self._sync_content()
+
+    def _sync_content(self) -> None:
+        """Sync the content dict with current field values."""
+        self.content = {
+            "name": self.name,
+            "cue": self.cue,
+            "response_style": self.response_style,
+            "valence": self.valence,
+            "description": self.description,
+            "response_templates": self.response_templates,
+            "state_effects": self.state_effects,
+            "resonance": self.resonance.to_dict() if self.resonance else None,
+        }
+
+    def get_resonance_score(self) -> float:
+        """Get the current resonance score (0.0 if not tracking)."""
+        if self.resonance is None:
+            return 0.0
+        return self.resonance.resonance_score
 
 
 def create_ritual(

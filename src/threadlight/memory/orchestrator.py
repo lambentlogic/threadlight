@@ -133,6 +133,7 @@ class MemoryOrchestrator:
     - Invoking rituals
     - Running decay cycles
     - Session tracking
+    - Per-model memory isolation (optional)
 
     Example:
         orchestrator = MemoryOrchestrator(storage)
@@ -157,12 +158,27 @@ class MemoryOrchestrator:
         auto_propose: bool = True,
         proposal_threshold: int = 3,
         enable_sessions: bool = True,
+        per_model_isolation: bool = False,
+        default_shared: bool = False,
+        current_model: Optional[str] = None,
+        # New profile-based settings
+        per_profile_isolation: bool = False,
+        current_profile: Optional[str] = None,
     ):
         self.storage = storage
         self.decay_engine = decay_engine or DecayEngine(storage)
         self.auto_propose = auto_propose
         self.proposal_threshold = proposal_threshold
         self.enable_sessions = enable_sessions
+
+        # Per-profile memory isolation settings (preferred over per-model)
+        self._per_profile_isolation = per_profile_isolation
+        self._current_profile = current_profile
+
+        # Per-model memory isolation settings (deprecated, use per-profile)
+        self._per_model_isolation = per_model_isolation
+        self._default_shared = default_shared
+        self._current_model = current_model
 
         # Session tracking
         self._current_session: Optional[Session] = None
@@ -171,6 +187,120 @@ class MemoryOrchestrator:
         # Track interactions for auto-proposal
         self._interaction_count = 0
         self._pending_proposal_content: list[dict] = []
+
+    # === Profile Scope Management ===
+
+    @property
+    def per_profile_isolation(self) -> bool:
+        """Whether per-profile memory isolation is enabled."""
+        return self._per_profile_isolation
+
+    @per_profile_isolation.setter
+    def per_profile_isolation(self, value: bool) -> None:
+        """Set per-profile memory isolation."""
+        self._per_profile_isolation = value
+
+    @property
+    def current_profile(self) -> Optional[str]:
+        """Get the current profile ID for memory scoping."""
+        return self._current_profile
+
+    @current_profile.setter
+    def current_profile(self, value: Optional[str]) -> None:
+        """Set the current profile ID for memory scoping."""
+        self._current_profile = value
+
+    # === Model Scope Management (Deprecated - use profile scope) ===
+
+    @property
+    def per_model_isolation(self) -> bool:
+        """Whether per-model memory isolation is enabled (deprecated)."""
+        return self._per_model_isolation
+
+    @per_model_isolation.setter
+    def per_model_isolation(self, value: bool) -> None:
+        """Set per-model memory isolation (deprecated)."""
+        self._per_model_isolation = value
+
+    @property
+    def current_model(self) -> Optional[str]:
+        """Get the current model ID for memory scoping (deprecated)."""
+        return self._current_model
+
+    @current_model.setter
+    def current_model(self, value: Optional[str]) -> None:
+        """Set the current model ID for memory scoping (deprecated)."""
+        self._current_model = value
+
+    @property
+    def default_shared(self) -> bool:
+        """Whether new memories are shared by default when isolation is enabled."""
+        return self._default_shared
+
+    @default_shared.setter
+    def default_shared(self, value: bool) -> None:
+        """Set whether new memories are shared by default."""
+        self._default_shared = value
+
+    def _get_effective_profile_scope(self, shared: Optional[bool] = None) -> Optional[str]:
+        """
+        Get the effective profile scope for a new memory.
+
+        Args:
+            shared: Explicit override - True means shared (no scope), False means profile-specific
+
+        Returns:
+            None if shared or isolation disabled, profile ID if profile-specific
+        """
+        # Prefer profile isolation over model isolation
+        if self._per_profile_isolation:
+            if shared is True:
+                return None
+            if shared is False:
+                return self._current_profile
+            # Use default behavior
+            if self._default_shared:
+                return None
+            return self._current_profile
+
+        # Fall back to model isolation for backward compatibility
+        if self._per_model_isolation:
+            if shared is True:
+                return None
+            if shared is False:
+                return self._current_model
+            # Use default behavior
+            if self._default_shared:
+                return None
+            return self._current_model
+
+        return None
+
+    def _get_effective_model_scope(self, shared: Optional[bool] = None) -> Optional[str]:
+        """
+        Get the effective model scope for a new memory.
+
+        Deprecated: Use _get_effective_profile_scope instead.
+
+        Args:
+            shared: Explicit override - True means shared (no scope), False means model-specific
+
+        Returns:
+            None if shared or isolation disabled, model ID if model-specific
+        """
+        if not self._per_model_isolation:
+            return None
+
+        if shared is True:
+            return None
+
+        if shared is False:
+            return self._current_model
+
+        # Use default behavior
+        if self._default_shared:
+            return None
+        return self._current_model
 
     # === Capsule Management ===
 
@@ -181,6 +311,9 @@ class MemoryOrchestrator:
         cue_phrases: Optional[list[str]] = None,
         retention: str = "normal",
         consent_confirmed: bool = False,
+        shared: Optional[bool] = None,
+        model_scope: Optional[str] = None,
+        profile_scope: Optional[str] = None,
         **kwargs: Any
     ) -> MemoryCapsule:
         """
@@ -192,22 +325,33 @@ class MemoryOrchestrator:
             cue_phrases: Phrases that trigger retrieval
             retention: Retention policy (sacred, normal, ephemeral)
             consent_confirmed: Whether user has confirmed this memory
+            shared: Whether this memory should be shared across all profiles
+                   (None = use default behavior based on config)
+            model_scope: Deprecated - use profile_scope instead
+            profile_scope: Explicit profile scope override
             **kwargs: Additional capsule fields
 
         Returns:
             The created MemoryCapsule
         """
+        # Determine profile scope (prefer profile_scope, fall back to model_scope)
+        effective_profile_scope = profile_scope or model_scope
+        if effective_profile_scope is None:
+            effective_profile_scope = self._get_effective_profile_scope(shared)
+
         capsule = capsule_from_simple(
             type=type,
             content=content,
             cue_phrases=cue_phrases or [],
             retention=RetentionPolicy(retention),
             consent_confirmed=consent_confirmed,
+            profile_scope=effective_profile_scope,
+            model_scope=effective_profile_scope,  # Keep model_scope synced for backward compat
             **kwargs
         )
 
         self.storage.save_capsule(capsule)
-        logger.debug(f"Created capsule: {capsule.id} ({capsule.type.value})")
+        logger.debug(f"Created capsule: {capsule.id} ({capsule.type.value}), profile_scope={effective_profile_scope}")
 
         return capsule
 
@@ -243,19 +387,119 @@ class MemoryOrchestrator:
 
         return self.storage.delete_capsule(capsule_id)
 
+    def share_memory(self, capsule_id: str) -> bool:
+        """
+        Make a memory shared across all models (remove model scope).
+
+        Args:
+            capsule_id: ID of capsule to share
+
+        Returns:
+            True if successful
+        """
+        capsule = self.storage.get_capsule(capsule_id)
+        if not capsule:
+            return False
+
+        capsule.model_scope = None
+        return self.storage.update_capsule(capsule)
+
+    def assign_memory_to_model(self, capsule_id: str, model_id: str) -> bool:
+        """
+        Assign a memory to a specific model.
+
+        Args:
+            capsule_id: ID of capsule to assign
+            model_id: Model ID to assign to
+
+        Returns:
+            True if successful
+        """
+        capsule = self.storage.get_capsule(capsule_id)
+        if not capsule:
+            return False
+
+        capsule.model_scope = model_id
+        return self.storage.update_capsule(capsule)
+
+    def copy_memory_to_model(self, capsule_id: str, target_model_id: str) -> Optional[MemoryCapsule]:
+        """
+        Copy a memory to another model (creates a new capsule).
+
+        Args:
+            capsule_id: ID of capsule to copy
+            target_model_id: Model ID to copy to
+
+        Returns:
+            The new capsule, or None if source not found
+        """
+        source = self.storage.get_capsule(capsule_id)
+        if not source:
+            return None
+
+        # Create a new capsule with the same content but different model scope
+        return self.create(
+            type=source.type.value,
+            content=source.content.copy(),
+            cue_phrases=source.cue_phrases.copy(),
+            retention=source.retention.value,
+            consent_confirmed=source.consent_confirmed,
+            model_scope=target_model_id,
+        )
+
+    def get_memory_model_scope(self, capsule_id: str) -> Optional[str]:
+        """
+        Get the model scope of a memory.
+
+        Args:
+            capsule_id: ID of capsule
+
+        Returns:
+            Model ID if scoped, None if shared or not found
+        """
+        capsule = self.storage.get_capsule(capsule_id)
+        if not capsule:
+            return None
+        return getattr(capsule, 'model_scope', None)
+
     def list(
         self,
         type: Optional[CapsuleType] = None,
         confirmed_only: bool = False,
         min_presence: float = 0.1,
         limit: int = 100,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
+        profile_scope: Optional[str] = None,
     ) -> list[MemoryCapsule]:
-        """List capsules with filtering."""
+        """List capsules with filtering.
+
+        Args:
+            type: Filter by capsule type
+            confirmed_only: Only return confirmed capsules
+            min_presence: Minimum presence score
+            limit: Maximum results
+            model_scope: Deprecated - use profile_scope instead
+            include_shared: Whether to include shared memories
+            profile_scope: Override profile scope for filtering (uses current if None)
+        """
+        # Determine effective scope for filtering (prefer profile, fall back to model)
+        effective_scope = profile_scope or model_scope
+        if effective_scope is None:
+            if self._per_profile_isolation:
+                effective_scope = self._current_profile
+            elif self._per_model_isolation:
+                effective_scope = self._current_model
+
+        isolation_enabled = self._per_profile_isolation or self._per_model_isolation
+
         filter = CapsuleFilter(
             type=type,
             consent_confirmed=True if confirmed_only else None,
             min_presence_score=min_presence,
             limit=limit,
+            profile_scope=effective_scope if isolation_enabled else None,
+            include_shared=include_shared,
         )
         return self.storage.list_capsules(filter)
 
@@ -267,6 +511,9 @@ class MemoryOrchestrator:
         types: Optional[list[CapsuleType]] = None,
         limit: int = 5,
         min_presence: float = 0.3,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
+        profile_scope: Optional[str] = None,
     ) -> list[MemoryCapsule]:
         """
         Recall memories matching a cue.
@@ -278,12 +525,29 @@ class MemoryOrchestrator:
             types: Limit to specific capsule types
             limit: Maximum capsules to return
             min_presence: Minimum presence score threshold
+            model_scope: Deprecated - use profile_scope instead
+            include_shared: Whether to include shared (profile_scope=NULL) memories
+            profile_scope: Override profile scope for filtering (uses current if None)
 
         Returns:
             List of matching capsules, sorted by relevance
         """
-        # Search by cue phrase
-        matches = self.storage.search_by_cue(cue, limit=limit * 2)
+        # Determine effective scope for filtering (prefer profile, fall back to model)
+        effective_scope = profile_scope or model_scope
+        if effective_scope is None:
+            if self._per_profile_isolation:
+                effective_scope = self._current_profile
+            elif self._per_model_isolation:
+                effective_scope = self._current_model
+
+        # Search by cue phrase with profile/model scope filtering
+        isolation_enabled = self._per_profile_isolation or self._per_model_isolation
+        matches = self.storage.search_by_cue(
+            cue,
+            limit=limit * 2,
+            profile_scope=effective_scope if isolation_enabled else None,
+            include_shared=include_shared,
+        )
 
         # Filter by type if specified
         if types:
@@ -696,6 +960,7 @@ class MemoryOrchestrator:
         name: Optional[str] = None,
         summary: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
+        model_scope: Optional[str] = None,
     ) -> Conversation:
         """
         Create a new conversation record.
@@ -704,10 +969,16 @@ class MemoryOrchestrator:
             name: Conversation name (auto-generated if not provided)
             summary: Optional summary of the conversation
             metadata: Additional metadata
+            model_scope: Model to scope conversation to (None = use current model if isolation enabled)
 
         Returns:
             The created Conversation
         """
+        # Determine model scope for conversation
+        effective_scope = model_scope
+        if effective_scope is None and self._per_model_isolation:
+            effective_scope = self._current_model
+
         conv = Conversation(
             id=str(uuid.uuid4()),
             name=name or f"Conversation {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
@@ -717,10 +988,11 @@ class MemoryOrchestrator:
             source="local",
             message_count=0,
             metadata=metadata or {},
+            model_scope=effective_scope,
         )
 
         self.storage.save_conversation(conv)
-        logger.debug(f"Created conversation: {conv.id}")
+        logger.debug(f"Created conversation: {conv.id}, model_scope={effective_scope}")
         return conv
 
     def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
@@ -766,9 +1038,30 @@ class MemoryOrchestrator:
         limit: int = 50,
         offset: int = 0,
         source: Optional[str] = None,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
     ) -> list[Conversation]:
-        """List conversations with optional filtering."""
-        return self.storage.list_conversations(limit=limit, offset=offset, source=source)
+        """List conversations with optional filtering.
+
+        Args:
+            limit: Maximum conversations to return
+            offset: Offset for pagination
+            source: Filter by source
+            model_scope: Filter by model scope (uses current if None and isolation enabled)
+            include_shared: Whether to include shared conversations
+        """
+        # Determine effective model scope for filtering
+        effective_scope = model_scope
+        if effective_scope is None and self._per_model_isolation:
+            effective_scope = self._current_model
+
+        return self.storage.list_conversations(
+            limit=limit,
+            offset=offset,
+            source=source,
+            model_scope=effective_scope if self._per_model_isolation else None,
+            include_shared=include_shared,
+        )
 
     def save_message(
         self,

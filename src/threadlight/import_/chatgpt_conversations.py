@@ -316,9 +316,15 @@ def parse_chatgpt_message(
 def parse_chatgpt_conversation(
     conv_data: dict[str, Any],
     skip_empty_messages: bool = True,
+    profile_scope: Optional[str] = None,
 ) -> tuple[Optional[Conversation], list[Message], list[str]]:
     """
     Parse a single ChatGPT conversation into Conversation and Message objects.
+
+    Args:
+        conv_data: Raw conversation data from ChatGPT export
+        skip_empty_messages: Skip messages with empty content
+        profile_scope: Optional profile ID to scope this conversation to
 
     Returns:
         Tuple of (Conversation, list of Messages, list of system instructions)
@@ -350,7 +356,17 @@ def parse_chatgpt_conversation(
 
             msg = parse_chatgpt_message(raw_msg, conv_id)
             if msg:
+                # Set profile_id on messages if profile_scope is provided
+                if profile_scope:
+                    msg.profile_id = profile_scope
                 messages.append(msg)
+
+        # Try to extract model info from messages metadata
+        model_name = "ChatGPT"  # Default
+        for msg in messages:
+            if msg.metadata and msg.metadata.get("model_slug"):
+                model_name = msg.metadata["model_slug"]
+                break
 
         # Create conversation object
         conversation = Conversation(
@@ -361,6 +377,8 @@ def parse_chatgpt_conversation(
             updated_at=updated_at,
             source="chatgpt",
             message_count=len(messages),
+            profile_scope=profile_scope,
+            model=model_name,  # Track the model used in this conversation
         )
 
         return conversation, messages, system_instructions
@@ -413,6 +431,7 @@ def import_chatgpt_conversations(
     limit: Optional[int] = None,
     dry_run: bool = False,
     progress_callback: Optional[callable] = None,
+    profile_scope: Optional[str] = None,
 ) -> ChatGPTImportResult:
     """
     Import conversations from a ChatGPT conversations.json export.
@@ -425,6 +444,7 @@ def import_chatgpt_conversations(
         limit: Maximum conversations to import (for testing)
         dry_run: If True, parse but don't save to storage
         progress_callback: Optional callback(stats) called periodically
+        profile_scope: Optional profile ID to scope imported conversations to
 
     Returns:
         ChatGPTImportResult with statistics
@@ -452,10 +472,11 @@ def import_chatgpt_conversations(
             if limit and stats.conversations_imported >= limit:
                 break
 
-            # Parse conversation
+            # Parse conversation with profile scope
             conversation, messages, system_instructions = parse_chatgpt_conversation(
                 conv_data,
                 skip_empty_messages=skip_empty,
+                profile_scope=profile_scope,
             )
 
             if not conversation:

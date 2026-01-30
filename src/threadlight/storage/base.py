@@ -7,9 +7,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from threadlight.capsules.base import MemoryCapsule, CapsuleType, RetentionPolicy
+
+if TYPE_CHECKING:
+    from threadlight.profiles.profile import Profile
 
 
 # ============================================================================
@@ -29,6 +32,8 @@ class Message:
     source: str = ""  # 'claude', 'chatgpt', 'local', etc.
     metadata: dict[str, Any] = field(default_factory=dict)
     embedding: Optional[list[float]] = None
+    profile_id: Optional[str] = None  # Profile that generated/received this message
+    model_used: Optional[str] = None  # Model that generated this message (for assistant messages)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize message to dictionary."""
@@ -41,6 +46,8 @@ class Message:
             "source": self.source,
             "metadata": self.metadata,
             "embedding": self.embedding,
+            "profile_id": self.profile_id,
+            "model_used": self.model_used,
         }
 
     @classmethod
@@ -59,6 +66,8 @@ class Message:
             source=data.get("source", ""),
             metadata=data.get("metadata", {}),
             embedding=data.get("embedding"),
+            profile_id=data.get("profile_id"),
+            model_used=data.get("model_used"),
         )
 
 
@@ -74,6 +83,10 @@ class Conversation:
     source: str = ""  # 'claude', 'chatgpt', 'local', etc.
     message_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    archived: bool = False
+    model_scope: Optional[str] = None  # Model ID for per-model isolation (NULL = shared)
+    profile_scope: Optional[str] = None  # Profile ID for profile-based scoping (NULL = shared)
+    model: Optional[str] = None  # Display model name (e.g., "gpt-4o", "Claude Opus", "Hermes-4.3")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize conversation to dictionary."""
@@ -86,6 +99,10 @@ class Conversation:
             "source": self.source,
             "message_count": self.message_count,
             "metadata": self.metadata,
+            "archived": self.archived,
+            "model_scope": self.model_scope,
+            "profile_scope": self.profile_scope,
+            "model": self.model,
         }
 
     @classmethod
@@ -113,6 +130,10 @@ class Conversation:
             source=data.get("source", ""),
             message_count=data.get("message_count", 0),
             metadata=data.get("metadata", {}),
+            archived=data.get("archived", False),
+            model_scope=data.get("model_scope"),
+            profile_scope=data.get("profile_scope"),
+            model=data.get("model"),
         )
 
 
@@ -163,6 +184,13 @@ class CapsuleFilter:
     accessed_after: Optional[datetime] = None
     accessed_before: Optional[datetime] = None
 
+    # Profile scope filters (for per-profile memory isolation)
+    profile_scope: Optional[str] = None  # Filter by specific profile
+    include_shared: bool = True  # Whether to include profile_scope=NULL (shared) capsules
+
+    # Deprecated: Use profile_scope instead (kept for backward compatibility)
+    model_scope: Optional[str] = None  # Filter by specific model (deprecated)
+
     # Pagination
     limit: int = 100
     offset: int = 0
@@ -170,6 +198,12 @@ class CapsuleFilter:
     # Sorting
     order_by: str = "last_accessed"  # last_accessed, created_at, presence_score
     order_desc: bool = True
+
+    def __post_init__(self):
+        """Handle backward compatibility for model_scope -> profile_scope migration."""
+        # If model_scope is set but profile_scope is not, use model_scope
+        if self.model_scope is not None and self.profile_scope is None:
+            self.profile_scope = self.model_scope
 
 
 @dataclass
@@ -326,8 +360,20 @@ class StorageBackend(ABC):
         limit: int = 50,
         offset: int = 0,
         source: Optional[str] = None,
+        include_archived: bool = False,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
     ) -> list[Conversation]:
-        """List conversations with optional filtering."""
+        """List conversations with optional filtering.
+
+        Args:
+            limit: Maximum conversations to return
+            offset: Offset for pagination
+            source: Filter by source (e.g., 'local', 'chatgpt')
+            include_archived: Whether to include archived conversations
+            model_scope: Filter by model ID (for per-model isolation)
+            include_shared: Whether to include conversations with model_scope=NULL
+        """
         pass
 
     @abstractmethod
@@ -392,4 +438,79 @@ class StorageBackend(ABC):
     @abstractmethod
     def count_conversations(self) -> int:
         """Count total conversations."""
+        pass
+
+    @abstractmethod
+    def update_message(self, message: Message) -> bool:
+        """Update an existing message."""
+        pass
+
+    @abstractmethod
+    def delete_message(self, message_id: str) -> bool:
+        """Delete a single message."""
+        pass
+
+    @abstractmethod
+    def delete_messages_after(self, conversation_id: str, message_id: str) -> int:
+        """Delete a message and all messages after it in a conversation."""
+        pass
+
+    # ========================================================================
+    # Profile Operations
+    # ========================================================================
+
+    @abstractmethod
+    def save_profile(self, profile: Profile) -> None:
+        """
+        Save a profile to storage.
+
+        Args:
+            profile: The profile to save
+        """
+        pass
+
+    @abstractmethod
+    def get_profile(self, profile_id: str) -> Optional[Profile]:
+        """
+        Get a profile by ID.
+
+        Args:
+            profile_id: The profile ID
+
+        Returns:
+            The Profile, or None if not found
+        """
+        pass
+
+    @abstractmethod
+    def update_profile(self, profile: Profile) -> None:
+        """
+        Update an existing profile.
+
+        Args:
+            profile: The profile to update
+        """
+        pass
+
+    @abstractmethod
+    def delete_profile(self, profile_id: str) -> bool:
+        """
+        Delete a profile.
+
+        Args:
+            profile_id: The profile ID to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        pass
+
+    @abstractmethod
+    def list_profiles(self) -> list[Profile]:
+        """
+        List all profiles.
+
+        Returns:
+            List of all profiles
+        """
         pass

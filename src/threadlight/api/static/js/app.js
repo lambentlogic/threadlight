@@ -14,6 +14,20 @@ function threadlightApp() {
         chatHistory: [],
         quickRituals: [],  // Loaded dynamically from user-created rituals
 
+        // Conversation management state
+        conversations: [],
+        currentConversationId: null,
+        conversationSearch: '',
+        showArchivedConversations: false,
+        renamingConversationId: null,
+        renameConversationName: '',
+        openConversationMenu: null,
+        showConversationPanel: false,  // For mobile slide-in panel
+
+        // Message editing state
+        editingMessageId: null,
+        editedMessageContent: '',
+
         // WebSocket
         ws: null,
         wsConnected: false,
@@ -31,6 +45,14 @@ function threadlightApp() {
             contentJson: '{}',
         },
 
+        // Embeddings state
+        embeddingsEnabled: false,
+        embeddingsProvider: 'local',
+        embeddingsModel: 'all-MiniLM-L6-v2',
+        embeddingStats: {},
+        semanticSearch: false,
+        generatingEmbeddings: false,
+
         // Ritual state
         rituals: [],
         selectedRitual: null,
@@ -47,8 +69,31 @@ function threadlightApp() {
             provider: { model: '', api_base: '' },
             style: { profile: '', current: null, available: [] },
             identity: { name: '', system_prompt: '' },
-            memory: { decay_enabled: true },
+            memory: { decay_enabled: true, per_model_isolation: false, default_shared: false },
         },
+
+        // Model configuration state
+        currentModelId: '',
+        currentModelConfig: {
+            system_prompt: '',
+            style_profile: null,
+            memory_enabled: true,
+            decay_enabled: false,
+            temperature: 0.7,
+            max_tokens: null,
+            top_p: 1.0,
+        },
+        availableModels: [],
+        showAddModelModal: false,
+        newModelData: {
+            model_id: '',
+            system_prompt: 'You are a helpful AI assistant.',
+            style_profile: '',
+            memory_enabled: true,
+            decay_enabled: false,
+            temperature: 0.7,
+        },
+        configSaved: false,  // Auto-save indicator
 
         // Style editing state
         styles: [],
@@ -56,16 +101,33 @@ function threadlightApp() {
         selectedStyleDetails: null,
         showStyleEditor: false,
         editingStyleMode: false,  // true when editing existing style, false when creating
+        stylePreviewVisible: false,
+        stylePreviewContent: '',
         newStyle: {
             style_id: '',
             tone_base: '',
             permissionsStr: '',
             constraintsStr: '',
             vocalMotifsStr: '',
+            use_freeform: false,
+            freeform_description: '',
         },
 
         // Stats
         stats: {},
+
+        // Memory Types state
+        memoryTypes: [],
+        exampleTypes: [],
+        selectedMemoryType: null,
+        showMemoryTypeEditor: false,
+        showExampleTypes: false,
+        newMemoryType: {
+            type_id: '',
+            description: '',
+            display_template: '',
+            fields: [],
+        },
 
         // Import state
         importText: '',
@@ -74,9 +136,72 @@ function threadlightApp() {
         importTags: '',
         importResult: null,
         isDragging: false,
+        // Conversation import state
+        conversationFile: null,
+        isDraggingConversation: false,
+        importingConversations: false,
+        conversationImportResult: null,
+        // Profile import state (from Import view)
+        profileImportFile: null,
+        isDraggingProfile: false,
+        importingProfile: false,
+        profileImportResult: null,
+
+        // Profile state
+        profiles: [],
+        activeProfileId: null,
+        selectedProfile: null,
+        showProfileEditor: false,
+        editingProfileMode: false,  // true when editing existing profile
+        savedProfileId: null,  // For flash animation after save
+        newProfile: {
+            name: '',
+            description: '',
+            system_prompt: '',
+            style_profile_id: '',
+            model_strategy: 'single',
+            primary_model: '',
+            model_pool: [],
+            model_pool_str: '',  // For comma-separated input
+            memory_scope: 'isolated',
+            access_shared_memories: true,
+            tags: [],
+            tags_str: '',  // For comma-separated input
+            philosophy: '',  // Freeform philosophy description
+            approach_to_rituals: '',  // Freeform approach to rituals
+            ritual_depth: 'functional',  // How deeply to integrate rituals
+        },
 
         // Toast notifications
         toasts: [],
+
+        // Confirmation modal state
+        confirmModal: {
+            visible: false,
+            title: '',
+            message: '',
+            confirmText: 'Confirm',
+            cancelText: 'Cancel',
+            confirmClass: 'bg-red-600 hover:bg-red-700',
+            onConfirm: null,
+        },
+
+        // Prompt modal state
+        promptModal: {
+            visible: false,
+            title: '',
+            message: '',
+            placeholder: '',
+            value: '',
+            confirmText: 'Submit',
+            cancelText: 'Cancel',
+            onConfirm: null,
+        },
+
+        // Per-model memory isolation state
+        perModelIsolation: false,
+        defaultShared: false,
+        modelScopeStats: {},
 
         // Initialize
         async init() {
@@ -94,16 +219,29 @@ function threadlightApp() {
 
             // Load initial data
             await this.loadConfig();
+            await this.loadModels();
             await this.loadStats();
             await this.loadRituals();
             await this.loadMemories();
             await this.loadStyles();
+            await this.loadEmbeddingStats();
+            await this.loadConversations();
+            await this.loadMemoryTypes();
+            await this.loadModelScopeConfig();
+            await this.loadProfiles();
 
             // Connect WebSocket
             this.connectWebSocket();
 
             // Refresh stats periodically
             setInterval(() => this.loadStats(), 30000);
+
+            // Close conversation menu when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('.conversation-menu-btn') && !e.target.closest('.conversation-menu')) {
+                    this.openConversationMenu = null;
+                }
+            });
         },
 
         // WebSocket connection
@@ -299,8 +437,434 @@ function threadlightApp() {
         clearChat() {
             this.messages = [];
             this.chatHistory = [];
+            this.currentConversationId = null;
             if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: 'clear_history' }));
+            }
+        },
+
+        // ============================================
+        // Conversation Management Functions
+        // ============================================
+
+        async loadConversations() {
+            try {
+                const params = new URLSearchParams();
+                params.append('limit', '50');
+                if (this.showArchivedConversations) {
+                    params.append('include_archived', 'true');
+                }
+
+                const response = await fetch(`/api/conversations?${params}`);
+                const data = await response.json();
+                this.conversations = data.conversations || [];
+
+                // Load most recent conversation if none selected
+                if (!this.currentConversationId && this.conversations.length > 0) {
+                    await this.loadConversation(this.conversations[0].id);
+                }
+            } catch (error) {
+                console.error('Failed to load conversations:', error);
+            }
+        },
+
+        get filteredConversations() {
+            if (!this.conversationSearch) {
+                return this.conversations;
+            }
+            const search = this.conversationSearch.toLowerCase();
+            return this.conversations.filter(c =>
+                (c.name || '').toLowerCase().includes(search) ||
+                (c.summary || '').toLowerCase().includes(search)
+            );
+        },
+
+        async createNewConversation() {
+            try {
+                const response = await fetch('/api/conversations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: 'New Chat' }),
+                });
+
+                if (!response.ok) throw new Error('Failed to create conversation');
+
+                const data = await response.json();
+                this.currentConversationId = data.conversation_id;
+                this.messages = [];
+                this.chatHistory = [];
+                await this.loadConversations();
+            } catch (error) {
+                this.showToast('Failed to create conversation: ' + error.message, 'error');
+            }
+        },
+
+        async loadConversation(conversationId) {
+            try {
+                const response = await fetch(`/api/conversations/${conversationId}/messages`);
+                if (!response.ok) throw new Error('Failed to load conversation');
+
+                const data = await response.json();
+                this.currentConversationId = conversationId;
+                this.messages = (data.messages || []).map(msg => ({
+                    id: msg.id,
+                    role: msg.role,
+                    content: msg.content,
+                    timestamp: msg.timestamp,
+                    memories: [],
+                }));
+
+                // Rebuild chat history for context
+                this.chatHistory = this.messages.slice(-20).map(m => ({
+                    role: m.role,
+                    content: m.content,
+                }));
+
+                this.scrollToBottom();
+            } catch (error) {
+                this.showToast('Failed to load conversation: ' + error.message, 'error');
+            }
+        },
+
+        async renameConversation(conversationId, newName) {
+            try {
+                const response = await fetch(`/api/conversations/${conversationId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName }),
+                });
+
+                if (!response.ok) throw new Error('Failed to rename conversation');
+
+                this.renamingConversationId = null;
+                this.renameConversationName = '';
+                await this.loadConversations();
+            } catch (error) {
+                this.showToast('Failed to rename: ' + error.message, 'error');
+            }
+        },
+
+        startRenameConversation(conv) {
+            this.renamingConversationId = conv.id;
+            this.renameConversationName = conv.name || '';
+            this.openConversationMenu = null;
+            this.$nextTick(() => {
+                const input = document.querySelector(`input[data-rename-id="${conv.id}"]`);
+                if (input) input.focus();
+            });
+        },
+
+        async archiveConversation(conversationId) {
+            try {
+                const response = await fetch(`/api/conversations/${conversationId}/archive`, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Failed to archive conversation');
+
+                this.showToast('Conversation archived');
+                this.openConversationMenu = null;
+
+                if (this.currentConversationId === conversationId) {
+                    this.currentConversationId = null;
+                    this.messages = [];
+                }
+
+                await this.loadConversations();
+            } catch (error) {
+                this.showToast('Failed to archive: ' + error.message, 'error');
+            }
+        },
+
+        async unarchiveConversation(conversationId) {
+            try {
+                const response = await fetch(`/api/conversations/${conversationId}/unarchive`, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Failed to unarchive conversation');
+
+                this.showToast('Conversation restored');
+                this.openConversationMenu = null;
+                await this.loadConversations();
+            } catch (error) {
+                this.showToast('Failed to unarchive: ' + error.message, 'error');
+            }
+        },
+
+        async deleteConversation(conversationId) {
+            const confirmed = await this.showConfirm({
+                title: 'Delete Conversation',
+                message: 'Delete this conversation? This cannot be undone.',
+                confirmText: 'Delete',
+            });
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/conversations/${conversationId}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) throw new Error('Failed to delete conversation');
+
+                this.showToast('Conversation deleted');
+                this.openConversationMenu = null;
+
+                if (this.currentConversationId === conversationId) {
+                    this.currentConversationId = null;
+                    this.messages = [];
+                }
+
+                await this.loadConversations();
+            } catch (error) {
+                this.showToast('Failed to delete: ' + error.message, 'error');
+            }
+        },
+
+        toggleConversationMenu(conversationId) {
+            if (this.openConversationMenu === conversationId) {
+                this.openConversationMenu = null;
+            } else {
+                this.openConversationMenu = conversationId;
+            }
+        },
+
+        toggleConversationPanel() {
+            this.showConversationPanel = !this.showConversationPanel;
+        },
+
+        formatRelativeDate(dateStr) {
+            if (!dateStr) return '';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffHours < 24) return `${diffHours}h ago`;
+            if (diffDays < 7) return `${diffDays}d ago`;
+            return date.toLocaleDateString();
+        },
+
+        // ============================================
+        // Model Label Functions (for conversation list)
+        // ============================================
+
+        /**
+         * Get a short label for the model/source of a conversation.
+         * Shows the model name if available, otherwise falls back to source.
+         */
+        getModelLabel(conv) {
+            // If we have a model name, use a shortened version
+            if (conv.model) {
+                return this.shortenModelName(conv.model);
+            }
+            // Fall back to source-based labels for imported conversations
+            if (conv.source === 'claude') return 'Claude';
+            if (conv.source === 'chatgpt') return 'GPT';
+            // For local conversations without a model, show a generic label
+            return 'Local';
+        },
+
+        /**
+         * Shorten a model name for display in badges.
+         * Examples: "gpt-4o" -> "4o", "Claude Opus" -> "Opus", "Hermes-4.3-36B" -> "Hermes"
+         */
+        shortenModelName(modelName) {
+            if (!modelName) return 'Local';
+            const name = modelName.toLowerCase();
+
+            // GPT models
+            if (name.includes('gpt-4o')) return '4o';
+            if (name.includes('gpt-4-turbo')) return '4T';
+            if (name.includes('gpt-4')) return 'GPT4';
+            if (name.includes('gpt-3.5')) return '3.5';
+            if (name.includes('o1')) return 'o1';
+            if (name.includes('o3')) return 'o3';
+
+            // Claude models
+            if (name.includes('opus')) return 'Opus';
+            if (name.includes('sonnet')) return 'Sonnet';
+            if (name.includes('haiku')) return 'Haiku';
+            if (name.includes('claude')) return 'Claude';
+
+            // Hermes and other local models
+            if (name.includes('hermes')) return 'Hermes';
+            if (name.includes('llama')) return 'Llama';
+            if (name.includes('mistral')) return 'Mistral';
+            if (name.includes('mixtral')) return 'Mixtral';
+            if (name.includes('qwen')) return 'Qwen';
+            if (name.includes('gemma')) return 'Gemma';
+            if (name.includes('phi')) return 'Phi';
+
+            // If it's a profile name (often longer), take first word
+            const words = modelName.split(/[\s-_]+/);
+            if (words[0].length <= 8) return words[0];
+            return words[0].substring(0, 6);
+        },
+
+        /**
+         * Get tooltip text showing full model/source info.
+         */
+        getModelTooltip(conv) {
+            if (conv.model) {
+                return `Model: ${conv.model}`;
+            }
+            if (conv.source === 'claude') return 'Imported from Claude';
+            if (conv.source === 'chatgpt') return 'Imported from ChatGPT';
+            return 'Local conversation';
+        },
+
+        /**
+         * Get CSS classes for the model badge based on source/model.
+         */
+        getModelBadgeClass(conv) {
+            const source = conv.source || 'local';
+            const model = (conv.model || '').toLowerCase();
+
+            // Claude colors (warm orange)
+            if (source === 'claude' || model.includes('claude') || model.includes('opus') || model.includes('sonnet') || model.includes('haiku')) {
+                return 'bg-orange-500/20 text-orange-300';
+            }
+
+            // ChatGPT/OpenAI colors (green)
+            if (source === 'chatgpt' || model.includes('gpt') || model.includes('o1') || model.includes('o3')) {
+                return 'bg-green-500/20 text-green-300';
+            }
+
+            // Hermes and other Nous models (accent purple)
+            if (model.includes('hermes') || model.includes('nous')) {
+                return 'bg-threadlight-accent/20 text-threadlight-accent2';
+            }
+
+            // Llama/Meta models (blue)
+            if (model.includes('llama')) {
+                return 'bg-blue-500/20 text-blue-300';
+            }
+
+            // Mistral models (yellow)
+            if (model.includes('mistral') || model.includes('mixtral')) {
+                return 'bg-yellow-500/20 text-yellow-300';
+            }
+
+            // Default local style
+            return 'bg-threadlight-border/50 text-threadlight-muted';
+        },
+
+        // ============================================
+        // Message Action Functions
+        // ============================================
+
+        startEditMessage(msg) {
+            this.editingMessageId = msg.id;
+            this.editedMessageContent = msg.content;
+        },
+
+        cancelEditMessage() {
+            this.editingMessageId = null;
+            this.editedMessageContent = '';
+        },
+
+        async saveEditedMessage(msg) {
+            if (!this.editingMessageId || !this.editedMessageContent.trim()) return;
+
+            try {
+                const response = await fetch(`/api/messages/${this.editingMessageId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: this.editedMessageContent }),
+                });
+
+                if (!response.ok) throw new Error('Failed to update message');
+
+                // Update local state
+                const msgIndex = this.messages.findIndex(m => m.id === this.editingMessageId);
+                if (msgIndex !== -1) {
+                    this.messages[msgIndex].content = this.editedMessageContent;
+                }
+
+                this.editingMessageId = null;
+                this.editedMessageContent = '';
+                this.showToast('Message updated');
+            } catch (error) {
+                this.showToast('Failed to update message: ' + error.message, 'error');
+            }
+        },
+
+        async deleteMessage(msg) {
+            if (!msg.id) return;
+            const confirmed = await this.showConfirm({
+                title: 'Delete Message',
+                message: 'Delete this message?',
+                confirmText: 'Delete',
+            });
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/messages/${msg.id}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) throw new Error('Failed to delete message');
+
+                // Remove from local state
+                const msgIndex = this.messages.findIndex(m => m.id === msg.id);
+                if (msgIndex !== -1) {
+                    this.messages.splice(msgIndex, 1);
+                }
+
+                this.showToast('Message deleted');
+            } catch (error) {
+                this.showToast('Failed to delete message: ' + error.message, 'error');
+            }
+        },
+
+        async regenerateResponse(msg) {
+            // Find the user message that came before this assistant message
+            const msgIndex = this.messages.findIndex(m => m.id === msg.id);
+            if (msgIndex <= 0) {
+                this.showToast('Cannot regenerate: no previous user message', 'error');
+                return;
+            }
+
+            // Find the previous user message
+            let userMsgIndex = msgIndex - 1;
+            while (userMsgIndex >= 0 && this.messages[userMsgIndex].role !== 'user') {
+                userMsgIndex--;
+            }
+
+            if (userMsgIndex < 0) {
+                this.showToast('Cannot regenerate: no previous user message', 'error');
+                return;
+            }
+
+            const userMessage = this.messages[userMsgIndex].content;
+
+            // Delete this message and all after it
+            if (msg.id) {
+                try {
+                    await fetch(`/api/messages/${msg.id}/and-after`, {
+                        method: 'DELETE',
+                    });
+                } catch (error) {
+                    console.error('Failed to delete messages from server:', error);
+                }
+            }
+
+            // Remove from local state
+            this.messages = this.messages.slice(0, msgIndex);
+
+            // Resend the user message
+            if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    type: 'chat',
+                    message: userMessage,
+                }));
+            } else {
+                await this.sendMessageHTTP(userMessage);
             }
         },
 
@@ -338,6 +902,164 @@ function threadlightApp() {
                 this.memories = data.memories || [];
             } catch (error) {
                 console.error('Failed to load memories:', error);
+            }
+        },
+
+        // Search memories (keyword or semantic based on toggle)
+        async searchMemories() {
+            if (this.semanticSearch && this.memorySearch && this.embeddingsEnabled) {
+                await this.semanticSearchMemories();
+            } else {
+                await this.loadMemories();
+            }
+        },
+
+        async semanticSearchMemories() {
+            if (!this.memorySearch) {
+                await this.loadMemories();
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/search/semantic', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: this.memorySearch,
+                        limit: 50,
+                        threshold: 0.3,
+                        include_memories: true,
+                        include_conversations: false,
+                    }),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Semantic search failed');
+                }
+
+                const data = await response.json();
+
+                // Transform results to match memory format
+                this.memories = (data.results || []).map(r => ({
+                    id: r.capsule_id,
+                    type: r.capsule_type,
+                    content: r.content?.content || r.content || {},
+                    preview: r.content?.preview || this.getPreviewFromContent(r.content),
+                    cue_phrases: r.content?.cue_phrases || [],
+                    presence_score: r.content?.presence_score || 0,
+                    similarity_score: r.similarity_score,
+                    ...r.content,
+                }));
+            } catch (error) {
+                console.error('Semantic search failed:', error);
+                this.showToast('Semantic search failed: ' + error.message, 'error');
+                // Fall back to keyword search
+                await this.loadMemories();
+            }
+        },
+
+        getPreviewFromContent(content) {
+            if (!content) return '';
+            if (content.preview) return content.preview;
+            if (content.content) {
+                const c = content.content;
+                if (c.seed) return c.seed;
+                if (c.entity) return `${c.entity}: ${c.summary || ''}`;
+                if (c.name) return `${c.name}: ${c.description || ''}`;
+                if (c.text) return c.text;
+            }
+            return '';
+        },
+
+        // Embedding functions
+        async loadEmbeddingStats() {
+            try {
+                const response = await fetch('/api/embeddings/stats');
+                const data = await response.json();
+
+                this.embeddingsEnabled = data.enabled || false;
+                if (data.enabled) {
+                    this.embeddingStats = data;
+                    this.embeddingsProvider = data.provider || 'local';
+                    this.embeddingsModel = data.model || 'all-MiniLM-L6-v2';
+                }
+            } catch (error) {
+                console.error('Failed to load embedding stats:', error);
+            }
+        },
+
+        async toggleEmbeddings() {
+            const newState = !this.embeddingsEnabled;
+
+            try {
+                const response = await fetch('/api/embeddings/enable', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: newState,
+                        provider: this.embeddingsProvider,
+                        model: this.embeddingsModel,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('Failed to update embeddings config');
+
+                this.embeddingsEnabled = newState;
+                this.showToast(newState ? 'Embeddings enabled' : 'Embeddings disabled');
+
+                if (newState) {
+                    await this.loadEmbeddingStats();
+                }
+            } catch (error) {
+                this.showToast('Failed to toggle embeddings: ' + error.message, 'error');
+            }
+        },
+
+        async updateEmbeddingsConfig() {
+            if (!this.embeddingsEnabled) return;
+
+            try {
+                await fetch('/api/embeddings/enable', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: true,
+                        provider: this.embeddingsProvider,
+                        model: this.embeddingsModel,
+                    }),
+                });
+
+                this.showToast('Embeddings configuration updated');
+            } catch (error) {
+                this.showToast('Failed to update config: ' + error.message, 'error');
+            }
+        },
+
+        async generateEmbeddings() {
+            this.generatingEmbeddings = true;
+
+            try {
+                const response = await fetch('/api/embeddings/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        include_memories: true,
+                        include_conversations: true,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('Embedding generation failed');
+
+                const data = await response.json();
+                this.showToast(
+                    `Generated embeddings: ${data.capsules_updated} memories, ${data.messages_updated} messages`
+                );
+
+                await this.loadEmbeddingStats();
+            } catch (error) {
+                this.showToast('Failed to generate embeddings: ' + error.message, 'error');
+            } finally {
+                this.generatingEmbeddings = false;
             }
         },
 
@@ -383,7 +1105,12 @@ function threadlightApp() {
         },
 
         async deleteMemory(id) {
-            if (!confirm('Delete this memory?')) return;
+            const confirmed = await this.showConfirm({
+                title: 'Delete Memory',
+                message: 'Delete this memory?',
+                confirmText: 'Delete',
+            });
+            if (!confirmed) return;
 
             try {
                 const response = await fetch(`/api/memories/${id}?force=true`, {
@@ -522,7 +1249,12 @@ function threadlightApp() {
 
         async deleteRitual(id) {
             if (!id) return;
-            if (!confirm('Delete this ritual? This cannot be undone.')) return;
+            const confirmed = await this.showConfirm({
+                title: 'Delete Ritual',
+                message: 'Delete this ritual? This cannot be undone.',
+                confirmText: 'Delete',
+            });
+            if (!confirmed) return;
 
             try {
                 const response = await fetch(`/api/rituals/${id}`, {
@@ -548,6 +1280,17 @@ function threadlightApp() {
             try {
                 const response = await fetch('/api/config');
                 this.config = await response.json();
+
+                // Update embeddings state from config
+                if (this.config.memory?.embeddings) {
+                    this.embeddingsEnabled = this.config.memory.embeddings.enabled || false;
+                    this.embeddingsProvider = this.config.memory.embeddings.provider || 'local';
+                    this.embeddingsModel = this.config.memory.embeddings.model || 'all-MiniLM-L6-v2';
+                }
+
+                // Update per-model isolation state from config
+                this.perModelIsolation = this.config.memory?.per_model_isolation || false;
+                this.defaultShared = this.config.memory?.default_shared || false;
             } catch (error) {
                 console.error('Failed to load config:', error);
             }
@@ -585,6 +1328,124 @@ function threadlightApp() {
             await this.updateConfig({ enable_decay: newValue });
         },
 
+        // Per-model memory isolation functions
+        async togglePerModelIsolation() {
+            const newValue = !this.perModelIsolation;
+            try {
+                const response = await fetch('/api/memory/isolation', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: newValue,
+                        default_shared: this.defaultShared,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('Failed to update isolation setting');
+
+                this.perModelIsolation = newValue;
+                this.config.memory.per_model_isolation = newValue;
+                this.showToast(newValue ? 'Per-model memory isolation enabled' : 'Memory isolation disabled (shared mode)');
+
+                // Reload memories to reflect the new scope
+                await this.loadMemories();
+            } catch (error) {
+                this.showToast('Failed to toggle isolation: ' + error.message, 'error');
+            }
+        },
+
+        async toggleDefaultShared() {
+            const newValue = !this.defaultShared;
+            try {
+                const response = await fetch('/api/memory/isolation', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: this.perModelIsolation,
+                        default_shared: newValue,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('Failed to update default shared setting');
+
+                this.defaultShared = newValue;
+                this.config.memory.default_shared = newValue;
+                this.showToast(newValue ? 'New memories shared by default' : 'New memories scoped to model by default');
+            } catch (error) {
+                this.showToast('Failed to update setting: ' + error.message, 'error');
+            }
+        },
+
+        async shareMemory(memoryId) {
+            try {
+                const response = await fetch(`/api/memories/${memoryId}/share`, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Failed to share memory');
+
+                this.showToast('Memory is now shared across all models');
+                await this.loadMemories();
+            } catch (error) {
+                this.showToast('Failed to share memory: ' + error.message, 'error');
+            }
+        },
+
+        async assignMemoryToModel(memoryId, modelId = null) {
+            try {
+                const response = await fetch(`/api/memories/${memoryId}/assign`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model_id: modelId }),
+                });
+
+                if (!response.ok) throw new Error('Failed to assign memory');
+
+                const data = await response.json();
+                this.showToast(`Memory assigned to ${data.model_scope}`);
+                await this.loadMemories();
+            } catch (error) {
+                this.showToast('Failed to assign memory: ' + error.message, 'error');
+            }
+        },
+
+        getModelScopeBadge(memory) {
+            if (!this.perModelIsolation) return null;
+            if (!memory.model_scope) {
+                return { text: 'Shared', class: 'bg-green-500/20 text-green-400' };
+            }
+            if (memory.model_scope === this.currentModelId) {
+                return { text: this.currentModelId, class: 'bg-threadlight-accent/20 text-threadlight-accent' };
+            }
+            return { text: memory.model_scope, class: 'bg-threadlight-muted/20 text-threadlight-muted' };
+        },
+
+        /**
+         * Get profile scope badge for a memory.
+         * Shows which profile a memory is scoped to, if any.
+         */
+        getProfileScopeBadge(memory) {
+            if (!memory.profile_scope) return null;
+
+            // Find the profile name from our profiles list
+            const profile = this.profiles.find(p => p.id === memory.profile_scope);
+            const profileName = profile ? profile.name : memory.profile_scope;
+
+            // Check if this is the active profile
+            if (memory.profile_scope === this.activeProfileId) {
+                return {
+                    text: profileName,
+                    class: 'bg-threadlight-accent/20 text-threadlight-accent',
+                    title: `Profile: ${profileName} (active)`
+                };
+            }
+            return {
+                text: profileName,
+                class: 'bg-threadlight-warm/20 text-threadlight-warm',
+                title: `Profile: ${profileName}`
+            };
+        },
+
         async runDecay() {
             try {
                 const response = await fetch('/api/decay', { method: 'POST' });
@@ -595,6 +1456,188 @@ function threadlightApp() {
             } catch (error) {
                 this.showToast('Failed to run memory cleanup: ' + error.message, 'error');
             }
+        },
+
+        // Model configuration functions
+        async loadModels() {
+            try {
+                const response = await fetch('/api/models');
+                const data = await response.json();
+                this.availableModels = data.models || [];
+                this.currentModelId = data.current_model;
+
+                // Load current model config
+                await this.loadCurrentModelConfig();
+            } catch (error) {
+                console.error('Failed to load models:', error);
+            }
+        },
+
+        async loadCurrentModelConfig() {
+            try {
+                const response = await fetch('/api/models/current');
+                const data = await response.json();
+                this.currentModelId = data.model_id;
+                this.currentModelConfig = data.config?.config || data.config || {
+                    system_prompt: '',
+                    style_profile: null,
+                    memory_enabled: true,
+                    decay_enabled: false,
+                    temperature: 0.7,
+                    max_tokens: null,
+                    top_p: 1.0,
+                };
+                // Extract from nested config if needed
+                if (this.currentModelConfig.memory) {
+                    this.currentModelConfig.memory_enabled = this.currentModelConfig.memory.enabled;
+                    this.currentModelConfig.decay_enabled = this.currentModelConfig.memory.decay_enabled;
+                }
+            } catch (error) {
+                console.error('Failed to load current model config:', error);
+            }
+        },
+
+        async switchModel(modelId) {
+            if (!modelId || modelId === this.currentModelId) return;
+
+            try {
+                const response = await fetch('/api/models/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model_id: modelId }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to switch model');
+                }
+
+                const data = await response.json();
+                this.currentModelId = modelId;
+                this.currentModelConfig = data.config?.config || data.config || {};
+                // Extract from nested config if needed
+                if (this.currentModelConfig.memory) {
+                    this.currentModelConfig.memory_enabled = this.currentModelConfig.memory.enabled;
+                    this.currentModelConfig.decay_enabled = this.currentModelConfig.memory.decay_enabled;
+                }
+
+                // Reload config and models
+                await this.loadConfig();
+                await this.loadModels();
+
+                this.showConfigSaved();
+                this.showToast(`Switched to ${modelId}`);
+            } catch (error) {
+                this.showToast('Failed to switch model: ' + error.message, 'error');
+            }
+        },
+
+        async updateCurrentModelConfig(updates) {
+            try {
+                const response = await fetch(`/api/models/${this.currentModelId}/config`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to update model config');
+                }
+
+                const data = await response.json();
+                // Update local state
+                Object.assign(this.currentModelConfig, updates);
+
+                this.showConfigSaved();
+            } catch (error) {
+                this.showToast('Failed to update model config: ' + error.message, 'error');
+            }
+        },
+
+        async addNewModel() {
+            if (!this.newModelData.model_id) {
+                this.showToast('Please enter a model ID', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/models/${this.newModelData.model_id}/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        system_prompt: this.newModelData.system_prompt,
+                        style_profile: this.newModelData.style_profile || null,
+                        memory_enabled: this.newModelData.memory_enabled,
+                        decay_enabled: this.newModelData.decay_enabled,
+                        temperature: this.newModelData.temperature,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to add model');
+                }
+
+                this.showToast(`Added model: ${this.newModelData.model_id}`);
+                this.showAddModelModal = false;
+                this.newModelData = {
+                    model_id: '',
+                    system_prompt: 'You are a helpful AI assistant.',
+                    style_profile: '',
+                    memory_enabled: true,
+                    decay_enabled: false,
+                    temperature: 0.7,
+                };
+                await this.loadModels();
+            } catch (error) {
+                this.showToast('Failed to add model: ' + error.message, 'error');
+            }
+        },
+
+        async copySettingsToAllModels() {
+            const confirmed = await this.showConfirm({
+                title: 'Copy Settings',
+                message: 'Copy current model settings to all other models?',
+                confirmText: 'Copy',
+                confirmClass: 'bg-threadlight-accent hover:bg-threadlight-accent/80',
+            });
+            if (!confirmed) return;
+
+            try {
+                // Get all model IDs
+                for (const model of this.availableModels) {
+                    if (model.model_id !== this.currentModelId && model.model_id !== 'default') {
+                        await fetch(`/api/models/${this.currentModelId}/copy-to/${model.model_id}`, {
+                            method: 'POST',
+                        });
+                    }
+                }
+
+                this.showToast('Settings copied to all models');
+                await this.loadModels();
+            } catch (error) {
+                this.showToast('Failed to copy settings: ' + error.message, 'error');
+            }
+        },
+
+        async setAsDefaultSettings() {
+            try {
+                await fetch(`/api/models/${this.currentModelId}/set-as-default`, {
+                    method: 'POST',
+                });
+
+                this.showToast('Settings set as default for new models');
+            } catch (error) {
+                this.showToast('Failed to set as default: ' + error.message, 'error');
+            }
+        },
+
+        showConfigSaved() {
+            this.configSaved = true;
+            setTimeout(() => {
+                this.configSaved = false;
+            }, 2000);
         },
 
         // Style functions
@@ -654,6 +1697,8 @@ function threadlightApp() {
                 permissionsStr: '',
                 constraintsStr: '',
                 vocalMotifsStr: '',
+                use_freeform: false,
+                freeform_description: '',
             };
             this.showStyleEditor = true;
         },
@@ -668,6 +1713,8 @@ function threadlightApp() {
                 permissionsStr: (style.permissions || []).join('\n'),
                 constraintsStr: (style.constraints || []).join('\n'),
                 vocalMotifsStr: (style.vocal_motifs || []).join(', '),
+                use_freeform: style.use_freeform || false,
+                freeform_description: style.freeform_description || '',
             };
             this.showStyleEditor = true;
         },
@@ -681,6 +1728,8 @@ function threadlightApp() {
                 permissionsStr: '',
                 constraintsStr: '',
                 vocalMotifsStr: '',
+                use_freeform: false,
+                freeform_description: '',
             };
         },
 
@@ -700,6 +1749,8 @@ function threadlightApp() {
                         permissions: this.newStyle.permissionsStr.split('\n').map(s => s.trim()).filter(s => s),
                         constraints: this.newStyle.constraintsStr.split('\n').map(s => s.trim()).filter(s => s),
                         vocal_motifs: this.newStyle.vocalMotifsStr.split(',').map(s => s.trim()).filter(s => s),
+                        use_freeform: this.newStyle.use_freeform,
+                        freeform_description: this.newStyle.freeform_description,
                     }),
                 });
 
@@ -711,7 +1762,7 @@ function threadlightApp() {
                 this.showToast(`Style ${this.editingStyleMode ? 'updated' : 'created'} successfully`);
                 this.showStyleEditor = false;
                 this.editingStyleMode = false;
-                this.newStyle = { style_id: '', tone_base: '', permissionsStr: '', constraintsStr: '', vocalMotifsStr: '' };
+                this.newStyle = { style_id: '', tone_base: '', permissionsStr: '', constraintsStr: '', vocalMotifsStr: '', use_freeform: false, freeform_description: '' };
                 await this.loadStyles();
                 await this.loadConfig();
 
@@ -730,7 +1781,12 @@ function threadlightApp() {
                 this.showToast('Cannot delete built-in styles', 'error');
                 return;
             }
-            if (!confirm('Delete this style profile?')) return;
+            const confirmed = await this.showConfirm({
+                title: 'Delete Style',
+                message: 'Delete this style profile?',
+                confirmText: 'Delete',
+            });
+            if (!confirmed) return;
 
             try {
                 const response = await fetch(`/api/styles/${styleId}`, {
@@ -749,6 +1805,47 @@ function threadlightApp() {
             } catch (error) {
                 this.showToast('Failed to delete style: ' + error.message, 'error');
             }
+        },
+
+        // Import style from another platform
+        async importStyleFrom(platform) {
+            const instructions = await this.showPrompt({
+                title: `Import from ${platform}`,
+                message: `Paste your ${platform} custom instructions or style definition:`,
+                placeholder: 'Paste your style definition here...',
+                confirmText: 'Import',
+            });
+            if (instructions && instructions.trim()) {
+                this.newStyle.freeform_description = instructions.trim();
+                this.newStyle.use_freeform = true;
+                this.showToast(`Imported style from ${platform}`);
+            }
+        },
+
+        // Preview what the style will look like in the system prompt
+        previewStyle() {
+            if (this.newStyle.use_freeform && this.newStyle.freeform_description) {
+                this.stylePreviewContent = `## Style\n${this.newStyle.freeform_description}`;
+            } else {
+                let sections = [];
+                if (this.newStyle.tone_base) {
+                    sections.push(`## Voice\nYour base tone is ${this.newStyle.tone_base}.`);
+                }
+                const permissions = this.newStyle.permissionsStr.split('\n').map(s => s.trim()).filter(s => s);
+                if (permissions.length > 0) {
+                    sections.push(`## Permissions\nYou are allowed to:\n${permissions.map(p => '- ' + p).join('\n')}`);
+                }
+                const constraints = this.newStyle.constraintsStr.split('\n').map(s => s.trim()).filter(s => s);
+                if (constraints.length > 0) {
+                    sections.push(`## Constraints\nYou should avoid:\n${constraints.map(c => '- ' + c).join('\n')}`);
+                }
+                const motifs = this.newStyle.vocalMotifsStr.split(',').map(s => s.trim()).filter(s => s);
+                if (motifs.length > 0) {
+                    sections.push(`## Motifs\nThese phrases are part of your voice: ${motifs.map(m => '"' + m + '"').join(', ')}`);
+                }
+                this.stylePreviewContent = sections.join('\n\n') || '(No style content defined)';
+            }
+            this.stylePreviewVisible = true;
         },
 
         // Config save function
@@ -830,6 +1927,553 @@ function threadlightApp() {
             }
         },
 
+        // Conversation Import functions
+        handleConversationSelect(event) {
+            this.conversationFile = event.target.files[0];
+            this.conversationImportResult = null;
+        },
+
+        handleConversationDrop(event) {
+            this.isDraggingConversation = false;
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (ext === 'zip' || ext === 'json') {
+                    this.conversationFile = file;
+                    this.conversationImportResult = null;
+                } else {
+                    this.showToast('Please upload a .zip or .json file', 'error');
+                }
+            }
+        },
+
+        formatFileSize(bytes) {
+            if (!bytes) return '';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        async importConversations() {
+            if (!this.conversationFile) return;
+
+            this.importingConversations = true;
+            this.conversationImportResult = null;
+
+            try {
+                const formData = new FormData();
+                formData.append('file', this.conversationFile);
+
+                // Pass active profile ID for scoping imported conversations
+                if (this.activeProfileId) {
+                    formData.append('profile_id', this.activeProfileId);
+                }
+
+                const response = await fetch('/api/import/conversations', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const result = await response.json();
+                this.conversationImportResult = result;
+
+                if (result.success) {
+                    this.conversationFile = null;
+                    // Reload conversations list
+                    await this.loadConversations();
+                    await this.loadStats();
+                    const profileInfo = result.profile_name ? ` to profile "${result.profile_name}"` : '';
+                    this.showToast(`Imported ${result.conversations_imported || 0} conversations${profileInfo}`);
+                }
+            } catch (error) {
+                this.conversationImportResult = { error: error.message };
+            } finally {
+                this.importingConversations = false;
+            }
+        },
+
+        viewImportedConversations() {
+            this.conversationImportResult = null;
+            this.currentView = 'chat';
+            // Reload conversations to show the newly imported ones
+            this.loadConversations();
+        },
+
+        // Profile Import functions (from Import view)
+        handleProfileSelect(event) {
+            this.profileImportFile = event.target.files[0];
+            this.profileImportResult = null;
+        },
+
+        handleProfileDrop(event) {
+            this.isDraggingProfile = false;
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (ext === 'json') {
+                    this.profileImportFile = file;
+                    this.profileImportResult = null;
+                } else {
+                    this.showToast('Please upload a .json profile file', 'error');
+                }
+            }
+        },
+
+        async importProfileFromFile() {
+            if (!this.profileImportFile) return;
+
+            this.importingProfile = true;
+            this.profileImportResult = null;
+
+            try {
+                const text = await this.profileImportFile.text();
+                const data = JSON.parse(text);
+
+                const response = await fetch('/api/profiles/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ data }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Failed to import profile');
+                }
+
+                const result = await response.json();
+                this.profileImportResult = result;
+                this.profileImportFile = null;
+                await this.loadProfiles();
+                this.showToast(`Profile "${result.profile?.name}" imported successfully`);
+            } catch (error) {
+                this.profileImportResult = { error: error.message };
+            } finally {
+                this.importingProfile = false;
+            }
+        },
+
+        viewImportedProfile() {
+            this.profileImportResult = null;
+            this.currentView = 'profiles';
+            this.loadProfiles();
+        },
+
+        // Memory Type functions
+        async loadMemoryTypes() {
+            try {
+                const response = await fetch('/api/memory-types');
+                const data = await response.json();
+                this.memoryTypes = data.types || [];
+            } catch (error) {
+                console.error('Failed to load memory types:', error);
+            }
+        },
+
+        async loadExampleTypes() {
+            try {
+                const response = await fetch('/api/memory-types/examples');
+                const data = await response.json();
+                this.exampleTypes = data.examples || [];
+            } catch (error) {
+                console.error('Failed to load example types:', error);
+            }
+        },
+
+        viewMemoryType(memType) {
+            this.selectedMemoryType = memType;
+        },
+
+        openMemoryTypeEditor() {
+            this.newMemoryType = {
+                type_id: '',
+                description: '',
+                display_template: '',
+                fields: [{ name: '', field_type: 'string', required: false }],
+            };
+            this.showMemoryTypeEditor = true;
+        },
+
+        addMemoryTypeField() {
+            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false });
+        },
+
+        removeMemoryTypeField(index) {
+            this.newMemoryType.fields.splice(index, 1);
+        },
+
+        async createMemoryType() {
+            if (!this.newMemoryType.type_id || this.newMemoryType.fields.length === 0) {
+                this.showToast('Please provide a type ID and at least one field', 'error');
+                return;
+            }
+
+            // Filter out empty fields
+            const validFields = this.newMemoryType.fields.filter(f => f.name.trim());
+            if (validFields.length === 0) {
+                this.showToast('At least one field must have a name', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/memory-types', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type_id: this.newMemoryType.type_id,
+                        description: this.newMemoryType.description || null,
+                        display_template: this.newMemoryType.display_template || null,
+                        fields: validFields.map(f => ({
+                            name: f.name.trim(),
+                            field_type: f.field_type,
+                            required: f.required,
+                            description: f.description || null,
+                        })),
+                    }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to create memory type');
+                }
+
+                this.showToast('Memory type created successfully');
+                this.showMemoryTypeEditor = false;
+                await this.loadMemoryTypes();
+            } catch (error) {
+                this.showToast('Failed to create memory type: ' + error.message, 'error');
+            }
+        },
+
+        async deleteMemoryType(typeId) {
+            if (!typeId) return;
+            const confirmed = await this.showConfirm({
+                title: 'Delete Memory Type',
+                message: 'Delete this memory type? Existing memories of this type will become orphaned.',
+                confirmText: 'Delete',
+            });
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/memory-types/${typeId}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to delete memory type');
+                }
+
+                this.showToast('Memory type deleted');
+                this.selectedMemoryType = null;
+                await this.loadMemoryTypes();
+            } catch (error) {
+                this.showToast('Failed to delete memory type: ' + error.message, 'error');
+            }
+        },
+
+        async importExampleType(typeId) {
+            try {
+                const response = await fetch(`/api/memory-types/import/${typeId}`, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to import example type');
+                }
+
+                this.showToast('Example type imported successfully');
+                this.showExampleTypes = false;
+                await this.loadMemoryTypes();
+            } catch (error) {
+                this.showToast('Failed to import example type: ' + error.message, 'error');
+            }
+        },
+
+        // Additional model scope functions
+        async loadModelScopeConfig() {
+            try {
+                const response = await fetch('/api/memory/isolation');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.perModelIsolation = data.per_model_isolation || false;
+                    this.defaultShared = data.default_shared || false;
+                }
+            } catch (error) {
+                console.error('Failed to load model scope config:', error);
+            }
+        },
+
+        // Profile functions
+        async loadProfiles() {
+            try {
+                console.log('[loadProfiles] Fetching profiles...');
+                // Add cache-busting parameter to prevent browser caching
+                const response = await fetch(`/api/profiles?_=${Date.now()}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('[loadProfiles] Received', data.profiles?.length, 'profiles');
+                    // Log all profiles with their descriptions
+                    data.profiles?.forEach(p => {
+                        console.log(`[loadProfiles] Profile "${p.name}": description="${p.description}"`);
+                    });
+                    this.profiles = data.profiles || [];
+                    this.activeProfileId = data.active_profile_id;
+                } else {
+                    console.error('[loadProfiles] Response not ok:', response.status);
+                }
+            } catch (error) {
+                console.error('Failed to load profiles:', error);
+            }
+        },
+
+        async switchProfile(profileId) {
+            try {
+                const response = await fetch(`/api/profiles/${profileId}/switch`, {
+                    method: 'POST',
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    this.activeProfileId = data.profile.id;
+                    this.showToast(`Switched to profile: ${data.profile.name}`);
+                    await this.loadConfig();  // Reload config to reflect profile changes
+                } else {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to switch profile');
+                }
+            } catch (error) {
+                this.showToast('Failed to switch profile: ' + error.message, 'error');
+            }
+        },
+
+        async clearActiveProfile() {
+            try {
+                const response = await fetch('/api/profiles/clear', {
+                    method: 'POST',
+                });
+                if (response.ok) {
+                    this.activeProfileId = null;
+                    this.showToast('Profile cleared, using default settings');
+                    await this.loadConfig();
+                }
+            } catch (error) {
+                this.showToast('Failed to clear profile: ' + error.message, 'error');
+            }
+        },
+
+        openProfileEditor(profile = null) {
+            if (profile) {
+                // Edit mode
+                this.editingProfileMode = true;
+                this.selectedProfile = profile;
+                this.newProfile = {
+                    name: profile.name || '',
+                    description: profile.description || '',
+                    system_prompt: profile.system_prompt || '',
+                    style_profile_id: profile.style_profile_id || '',
+                    model_strategy: profile.model_strategy || 'single',
+                    primary_model: profile.primary_model || '',
+                    model_pool: profile.model_pool || [],
+                    model_pool_str: (profile.model_pool || []).join(', '),
+                    memory_scope: profile.memory_scope || 'isolated',
+                    access_shared_memories: profile.access_shared_memories !== false,
+                    tags: profile.tags || [],
+                    tags_str: (profile.tags || []).join(', '),
+                    philosophy: profile.philosophy || '',
+                    approach_to_rituals: profile.approach_to_rituals || '',
+                    ritual_depth: profile.ritual_depth || 'functional',
+                };
+            } else {
+                // Create mode
+                this.editingProfileMode = false;
+                this.selectedProfile = null;
+                this.newProfile = {
+                    name: '',
+                    description: '',
+                    system_prompt: '',
+                    style_profile_id: '',
+                    model_strategy: 'single',
+                    primary_model: this.config.provider.model || '',
+                    model_pool: [],
+                    model_pool_str: '',
+                    memory_scope: 'isolated',
+                    access_shared_memories: true,
+                    tags: [],
+                    tags_str: '',
+                    philosophy: '',
+                    approach_to_rituals: '',
+                    ritual_depth: 'functional',
+                };
+            }
+            this.showProfileEditor = true;
+        },
+
+        cancelProfileEditor() {
+            this.showProfileEditor = false;
+            this.selectedProfile = null;
+            this.editingProfileMode = false;
+        },
+
+        async saveProfile() {
+            // Parse comma-separated fields
+            const modelPool = this.newProfile.model_pool_str
+                ? this.newProfile.model_pool_str.split(',').map(s => s.trim()).filter(s => s)
+                : [];
+            const tags = this.newProfile.tags_str
+                ? this.newProfile.tags_str.split(',').map(s => s.trim()).filter(s => s)
+                : [];
+
+            const profileData = {
+                name: this.newProfile.name,
+                description: this.newProfile.description,
+                system_prompt: this.newProfile.system_prompt,
+                style_profile_id: this.newProfile.style_profile_id || null,
+                model_strategy: this.newProfile.model_strategy,
+                primary_model: this.newProfile.primary_model || null,
+                model_pool: modelPool.length > 0 ? modelPool : null,
+                memory_scope: this.newProfile.memory_scope,
+                access_shared_memories: this.newProfile.access_shared_memories,
+                tags: tags.length > 0 ? tags : null,
+                philosophy: this.newProfile.philosophy || '',
+                approach_to_rituals: this.newProfile.approach_to_rituals || '',
+                ritual_depth: this.newProfile.ritual_depth || 'functional',
+            };
+
+            console.log('[saveProfile] Saving profile:', profileData.name);
+            console.log('[saveProfile] Description being sent:', profileData.description);
+
+            try {
+                let response;
+                if (this.editingProfileMode && this.selectedProfile) {
+                    // Update existing profile
+                    console.log('[saveProfile] PUT to /api/profiles/' + this.selectedProfile.id);
+                    response = await fetch(`/api/profiles/${this.selectedProfile.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(profileData),
+                    });
+                } else {
+                    // Create new profile
+                    console.log('[saveProfile] POST to /api/profiles');
+                    response = await fetch('/api/profiles', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(profileData),
+                    });
+                }
+
+                console.log('[saveProfile] Response status:', response.status);
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to save profile');
+                }
+
+                const data = await response.json();
+                console.log('[saveProfile] Response data:', data);
+                console.log('[saveProfile] Returned profile description:', data.profile?.description);
+                this.showToast(this.editingProfileMode ? 'Profile updated' : 'Profile created');
+
+                // Trigger flash animation for the saved profile
+                const profileId = this.editingProfileMode ? this.selectedProfile.id : data.profile?.id;
+                if (profileId) {
+                    this.savedProfileId = profileId;
+                    setTimeout(() => { this.savedProfileId = null; }, 1000);
+                }
+
+                this.showProfileEditor = false;
+                this.selectedProfile = null;
+                await this.loadProfiles();
+            } catch (error) {
+                console.error('[saveProfile] Error:', error);
+                this.showToast('Failed to save profile: ' + error.message, 'error');
+            }
+        },
+
+        async deleteProfile(profileId) {
+            if (!profileId) return;
+            const confirmed = await this.showConfirm({
+                title: 'Delete Profile',
+                message: 'Delete this profile? This cannot be undone.',
+                confirmText: 'Delete',
+            });
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/profiles/${profileId}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to delete profile');
+                }
+
+                this.showToast('Profile deleted');
+                this.selectedProfile = null;
+                await this.loadProfiles();
+            } catch (error) {
+                this.showToast('Failed to delete profile: ' + error.message, 'error');
+            }
+        },
+
+        async exportProfile(profileId) {
+            try {
+                const response = await fetch(`/api/profiles/${profileId}/export`);
+                if (!response.ok) {
+                    throw new Error('Failed to export profile');
+                }
+
+                const data = await response.json();
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `profile-${data.name || profileId}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                this.showToast('Profile exported');
+            } catch (error) {
+                this.showToast('Failed to export profile: ' + error.message, 'error');
+            }
+        },
+
+        async importProfile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const text = await file.text();
+                const data = JSON.parse(text);
+
+                const response = await fetch('/api/profiles/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ data }),
+                });
+
+                if (!response.ok) {
+                    const responseData = await response.json();
+                    throw new Error(responseData.detail || 'Failed to import profile');
+                }
+
+                this.showToast('Profile imported successfully');
+                await this.loadProfiles();
+            } catch (error) {
+                this.showToast('Failed to import profile: ' + error.message, 'error');
+            }
+
+            // Reset file input
+            event.target.value = '';
+        },
+
+        getActiveProfile() {
+            return this.profiles.find(p => p.id === this.activeProfileId) || null;
+        },
+
         // Utility functions
         formatDate(dateStr) {
             if (!dateStr) return '';
@@ -844,6 +2488,56 @@ function threadlightApp() {
                 const index = this.toasts.indexOf(toast);
                 if (index > -1) this.toasts.splice(index, 1);
             }, 4000);
+        },
+
+        // Show confirmation modal and return a promise
+        showConfirm(options) {
+            return new Promise((resolve) => {
+                this.confirmModal = {
+                    visible: true,
+                    title: options.title || 'Confirm',
+                    message: options.message || 'Are you sure?',
+                    confirmText: options.confirmText || 'Confirm',
+                    cancelText: options.cancelText || 'Cancel',
+                    confirmClass: options.confirmClass || 'bg-red-600 hover:bg-red-700',
+                    onConfirm: () => {
+                        this.confirmModal.visible = false;
+                        resolve(true);
+                    },
+                };
+                // Store cancel handler for escape key or cancel button
+                this.confirmModal.onCancel = () => {
+                    this.confirmModal.visible = false;
+                    resolve(false);
+                };
+            });
+        },
+
+        // Show prompt modal and return a promise
+        showPrompt(options) {
+            return new Promise((resolve) => {
+                this.promptModal = {
+                    visible: true,
+                    title: options.title || 'Enter Value',
+                    message: options.message || '',
+                    placeholder: options.placeholder || '',
+                    value: options.defaultValue || '',
+                    confirmText: options.confirmText || 'Submit',
+                    cancelText: options.cancelText || 'Cancel',
+                    onConfirm: () => {
+                        const value = this.promptModal.value;
+                        this.promptModal.visible = false;
+                        this.promptModal.value = '';
+                        resolve(value);
+                    },
+                };
+                // Store cancel handler
+                this.promptModal.onCancel = () => {
+                    this.promptModal.visible = false;
+                    this.promptModal.value = '';
+                    resolve(null);
+                };
+            });
         },
     };
 }

@@ -23,6 +23,7 @@ from threadlight.storage.base import (
     Conversation,
     MessageSearchResult,
 )
+from threadlight.profiles.profile import Profile, AlloyedConfig
 
 
 class SQLiteStorage(StorageBackend):
@@ -59,13 +60,16 @@ class SQLiteStorage(StorageBackend):
                 consent_origin TEXT,
                 consent_confirmed INTEGER DEFAULT 0,
                 cue_phrases TEXT,
-                embedding BLOB
+                embedding BLOB,
+                model_scope TEXT,
+                profile_scope TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_capsules_type ON capsules(type);
             CREATE INDEX IF NOT EXISTS idx_capsules_presence ON capsules(presence_score);
             CREATE INDEX IF NOT EXISTS idx_capsules_last_accessed ON capsules(last_accessed);
             CREATE INDEX IF NOT EXISTS idx_capsules_consent ON capsules(consent_confirmed);
+            -- model_scope and profile_scope indexes created in migrations for backward compat
 
             CREATE TABLE IF NOT EXISTS memory_proposals (
                 id TEXT PRIMARY KEY,
@@ -96,11 +100,17 @@ class SQLiteStorage(StorageBackend):
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 source TEXT,
                 message_count INTEGER DEFAULT 0,
-                metadata TEXT
+                metadata TEXT,
+                archived INTEGER DEFAULT 0,
+                model_scope TEXT,
+                profile_scope TEXT,
+                model TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_conversations_source ON conversations(source);
             CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_conversations_archived ON conversations(archived);
+            -- model_scope and profile_scope indexes created in migrations for backward compat
 
             CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY,
@@ -111,12 +121,15 @@ class SQLiteStorage(StorageBackend):
                 source TEXT,
                 metadata TEXT,
                 embedding BLOB,
+                profile_id TEXT,
+                model_used TEXT,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
             CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
             CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+            -- profile_id index created in migrations for backward compat
 
             -- Full-text search for messages
             CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -148,8 +161,152 @@ class SQLiteStorage(StorageBackend):
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Profiles table for persistent personas
+            CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                avatar TEXT,
+                color TEXT,
+                primary_model TEXT NOT NULL,
+                alloyed_config TEXT,
+                temperature REAL DEFAULT 0.7,
+                max_tokens INTEGER,
+                top_p REAL DEFAULT 1.0,
+                system_prompt TEXT DEFAULT '',
+                style_profile_id TEXT,
+                memory_scope TEXT,
+                access_shared_memories INTEGER DEFAULT 1,
+                philosophy TEXT DEFAULT '',
+                approach_to_rituals TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_profiles_name ON profiles(name);
+            CREATE INDEX IF NOT EXISTS idx_profiles_updated ON profiles(updated_at);
         """)
         self.conn.commit()
+
+        # Run migrations for existing databases
+        self._run_migrations()
+
+    def _run_migrations(self) -> None:
+        """Run schema migrations for existing databases."""
+        assert self.conn is not None
+
+        # Check if model_scope column exists in capsules table
+        cursor = self.conn.execute("PRAGMA table_info(capsules)")
+        capsule_columns = [row[1] for row in cursor.fetchall()]
+        if "model_scope" not in capsule_columns:
+            self.conn.execute("ALTER TABLE capsules ADD COLUMN model_scope TEXT")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_model_scope ON capsules(model_scope)")
+            self.conn.commit()
+
+        # Phase 2: Add profile_scope column to capsules table
+        if "profile_scope" not in capsule_columns:
+            self.conn.execute("ALTER TABLE capsules ADD COLUMN profile_scope TEXT")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_profile_scope ON capsules(profile_scope)")
+            # Migrate model_scope to profile_scope (copy existing values)
+            # Note: model_scope values that are model IDs will be copied to profile_scope
+            # NULL values remain NULL (shared memories)
+            self.conn.execute("""
+                UPDATE capsules
+                SET profile_scope = model_scope
+                WHERE model_scope IS NOT NULL AND model_scope != 'shared'
+            """)
+            self.conn.commit()
+
+        # Check if model_scope column exists in conversations table
+        cursor = self.conn.execute("PRAGMA table_info(conversations)")
+        conv_columns = [row[1] for row in cursor.fetchall()]
+        if "model_scope" not in conv_columns:
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN model_scope TEXT")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_model_scope ON conversations(model_scope)")
+            self.conn.commit()
+
+        # Phase 2: Add profile_scope column to conversations table
+        if "profile_scope" not in conv_columns:
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN profile_scope TEXT")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_profile_scope ON conversations(profile_scope)")
+            # Migrate model_scope to profile_scope
+            self.conn.execute("""
+                UPDATE conversations
+                SET profile_scope = model_scope
+                WHERE model_scope IS NOT NULL AND model_scope != 'shared'
+            """)
+            self.conn.commit()
+
+        # Add model column for display (tracks the model/AI name used in conversation)
+        if "model" not in conv_columns:
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN model TEXT")
+            self.conn.commit()
+
+        # Phase 2: Add profile_id and model_used columns to messages table
+        cursor = self.conn.execute("PRAGMA table_info(messages)")
+        msg_columns = [row[1] for row in cursor.fetchall()]
+        if "profile_id" not in msg_columns:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN profile_id TEXT")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_profile_id ON messages(profile_id)")
+            self.conn.commit()
+        if "model_used" not in msg_columns:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN model_used TEXT")
+            self.conn.commit()
+
+        # Check if profiles table exists
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='profiles'"
+        )
+        if cursor.fetchone() is None:
+            self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS profiles (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    avatar TEXT,
+                    color TEXT,
+                    primary_model TEXT NOT NULL,
+                    alloyed_config TEXT,
+                    temperature REAL DEFAULT 0.7,
+                    max_tokens INTEGER,
+                    top_p REAL DEFAULT 1.0,
+                    system_prompt TEXT DEFAULT '',
+                    style_profile_id TEXT,
+                    memory_scope TEXT,
+                    access_shared_memories INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    last_used_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_profiles_name ON profiles(name);
+                CREATE INDEX IF NOT EXISTS idx_profiles_updated ON profiles(updated_at);
+            """)
+            self.conn.commit()
+
+        # Ensure all scope indexes exist (for new databases that created tables with columns)
+        try:
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_model_scope ON capsules(model_scope)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_profile_scope ON capsules(profile_scope)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_model_scope ON conversations(model_scope)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_profile_scope ON conversations(profile_scope)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_profile_id ON messages(profile_id)")
+            self.conn.commit()
+        except Exception:
+            # Columns may not exist yet in old databases - migrations will handle them
+            pass
+
+        # Add philosophy columns to profiles table if they don't exist
+        cursor = self.conn.execute("PRAGMA table_info(profiles)")
+        profile_columns = [row[1] for row in cursor.fetchall()]
+        if "philosophy" not in profile_columns:
+            self.conn.execute("ALTER TABLE profiles ADD COLUMN philosophy TEXT DEFAULT ''")
+            self.conn.commit()
+        if "approach_to_rituals" not in profile_columns:
+            self.conn.execute("ALTER TABLE profiles ADD COLUMN approach_to_rituals TEXT DEFAULT ''")
+            self.conn.commit()
 
     def close(self) -> None:
         """Close database connection."""
@@ -171,12 +328,15 @@ class SQLiteStorage(StorageBackend):
 
         data = capsule.to_dict()
 
+        # Determine profile_scope: prefer profile_scope, fall back to model_scope for backward compatibility
+        profile_scope = data.get("profile_scope") or data.get("model_scope")
+
         conn.execute("""
             INSERT OR REPLACE INTO capsules
             (id, type, content, created_at, updated_at, last_accessed,
              access_count, retention, decay_rate, presence_score,
-             consent_origin, consent_confirmed, cue_phrases, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             consent_origin, consent_confirmed, cue_phrases, embedding, model_scope, profile_scope)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             data["id"],
             data["type"],
@@ -192,6 +352,8 @@ class SQLiteStorage(StorageBackend):
             1 if data["consent_confirmed"] else 0,
             json.dumps(data["cue_phrases"]),
             json.dumps(data["embedding"]) if data["embedding"] else None,
+            data.get("model_scope"),
+            profile_scope,
         ))
         conn.commit()
 
@@ -220,6 +382,9 @@ class SQLiteStorage(StorageBackend):
 
         data = capsule.to_dict()
 
+        # Determine profile_scope: prefer profile_scope, fall back to model_scope for backward compatibility
+        profile_scope = data.get("profile_scope") or data.get("model_scope")
+
         result = conn.execute("""
             UPDATE capsules SET
                 content = ?,
@@ -231,7 +396,9 @@ class SQLiteStorage(StorageBackend):
                 presence_score = ?,
                 consent_confirmed = ?,
                 cue_phrases = ?,
-                embedding = ?
+                embedding = ?,
+                model_scope = ?,
+                profile_scope = ?
             WHERE id = ?
         """, (
             json.dumps(data["content"]),
@@ -244,6 +411,8 @@ class SQLiteStorage(StorageBackend):
             1 if data["consent_confirmed"] else 0,
             json.dumps(data["cue_phrases"]),
             json.dumps(data["embedding"]) if data["embedding"] else None,
+            data.get("model_scope"),
+            profile_scope,
             data["id"],
         ))
         conn.commit()
@@ -307,6 +476,16 @@ class SQLiteStorage(StorageBackend):
                 query += " AND last_accessed <= ?"
                 params.append(filter.accessed_before.isoformat())
 
+            # Profile scope filtering (profile_scope takes precedence, model_scope for backward compat)
+            # Note: CapsuleFilter.__post_init__ already handles model_scope -> profile_scope fallback
+            if filter.profile_scope is not None:
+                if filter.include_shared:
+                    query += " AND (profile_scope = ? OR profile_scope IS NULL)"
+                    params.append(filter.profile_scope)
+                else:
+                    query += " AND profile_scope = ?"
+                    params.append(filter.profile_scope)
+
             # Sorting
             order_column = filter.order_by
             if order_column not in ("last_accessed", "created_at", "presence_score"):
@@ -324,21 +503,49 @@ class SQLiteStorage(StorageBackend):
 
         return [self._row_to_capsule(row) for row in rows]
 
-    def search_by_cue(self, cue: str, limit: int = 5) -> list[MemoryCapsule]:
-        """Search capsules by cue phrase match and content text."""
+    def search_by_cue(
+        self,
+        cue: str,
+        limit: int = 5,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
+        profile_scope: Optional[str] = None,
+    ) -> list[MemoryCapsule]:
+        """Search capsules by cue phrase match and content text.
+
+        Args:
+            cue: Search query string
+            limit: Maximum results to return
+            model_scope: Deprecated - use profile_scope instead
+            include_shared: Whether to include shared (NULL scope) capsules
+            profile_scope: Profile ID to filter by (takes precedence over model_scope)
+        """
         conn = self._ensure_connected()
 
         cue_lower = cue.lower()
 
-        # Search both cue_phrases and content text (for ImportedMemory)
-        # This allows finding imported memories by their text content
-        rows = conn.execute("""
+        # Build query with optional profile scope filtering
+        query = """
             SELECT * FROM capsules
             WHERE (LOWER(cue_phrases) LIKE ? OR LOWER(content) LIKE ?)
             AND presence_score > 0.1
-            ORDER BY presence_score DESC, last_accessed DESC
-            LIMIT ?
-        """, (f"%{cue_lower}%", f"%{cue_lower}%", limit)).fetchall()
+        """
+        params: list[Any] = [f"%{cue_lower}%", f"%{cue_lower}%"]
+
+        # Use profile_scope if provided, fall back to model_scope for backward compatibility
+        effective_scope = profile_scope if profile_scope is not None else model_scope
+
+        if effective_scope is not None:
+            if include_shared:
+                query += " AND (profile_scope = ? OR profile_scope IS NULL)"
+            else:
+                query += " AND profile_scope = ?"
+            params.append(effective_scope)
+
+        query += " ORDER BY presence_score DESC, last_accessed DESC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(query, params).fetchall()
 
         return [self._row_to_capsule(row) for row in rows]
 
@@ -490,6 +697,18 @@ class SQLiteStorage(StorageBackend):
 
     def _row_to_capsule(self, row: sqlite3.Row) -> MemoryCapsule:
         """Convert a database row to a capsule."""
+        # Handle model_scope and profile_scope fields which may not exist in older databases
+        model_scope = None
+        profile_scope = None
+        try:
+            model_scope = row["model_scope"]
+        except (IndexError, KeyError):
+            pass
+        try:
+            profile_scope = row["profile_scope"]
+        except (IndexError, KeyError):
+            pass
+
         data = {
             "id": row["id"],
             "type": row["type"],
@@ -505,6 +724,8 @@ class SQLiteStorage(StorageBackend):
             "consent_confirmed": bool(row["consent_confirmed"]),
             "cue_phrases": json.loads(row["cue_phrases"]) if row["cue_phrases"] else [],
             "embedding": json.loads(row["embedding"]) if row["embedding"] else None,
+            "model_scope": model_scope,
+            "profile_scope": profile_scope,
         }
 
         return create_capsule(data)
@@ -533,8 +754,8 @@ class SQLiteStorage(StorageBackend):
 
         conn.execute("""
             INSERT OR REPLACE INTO conversations
-            (id, name, summary, created_at, updated_at, source, message_count, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, name, summary, created_at, updated_at, source, message_count, metadata, archived, model_scope, profile_scope, model)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             conversation.id,
             conversation.name,
@@ -544,6 +765,10 @@ class SQLiteStorage(StorageBackend):
             conversation.source,
             conversation.message_count,
             json.dumps(conversation.metadata),
+            1 if conversation.archived else 0,
+            getattr(conversation, 'model_scope', None),
+            getattr(conversation, 'profile_scope', None),
+            getattr(conversation, 'model', None),
         ))
         conn.commit()
 
@@ -568,6 +793,9 @@ class SQLiteStorage(StorageBackend):
         limit: int = 50,
         offset: int = 0,
         source: Optional[str] = None,
+        include_archived: bool = False,
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
     ) -> list[Conversation]:
         """List conversations with optional filtering."""
         conn = self._ensure_connected()
@@ -578,6 +806,16 @@ class SQLiteStorage(StorageBackend):
         if source:
             query += " AND source = ?"
             params.append(source)
+
+        if not include_archived:
+            query += " AND (archived = 0 OR archived IS NULL)"
+
+        if model_scope is not None:
+            if include_shared:
+                query += " AND (model_scope = ? OR model_scope IS NULL)"
+            else:
+                query += " AND model_scope = ?"
+            params.append(model_scope)
 
         query += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -599,7 +837,11 @@ class SQLiteStorage(StorageBackend):
                 updated_at = ?,
                 source = ?,
                 message_count = ?,
-                metadata = ?
+                metadata = ?,
+                archived = ?,
+                model_scope = ?,
+                profile_scope = ?,
+                model = ?
             WHERE id = ?
         """, (
             conversation.name,
@@ -608,6 +850,10 @@ class SQLiteStorage(StorageBackend):
             conversation.source,
             conversation.message_count,
             json.dumps(conversation.metadata),
+            1 if conversation.archived else 0,
+            getattr(conversation, 'model_scope', None),
+            getattr(conversation, 'profile_scope', None),
+            getattr(conversation, 'model', None),
             conversation.id,
         ))
         conn.commit()
@@ -641,8 +887,8 @@ class SQLiteStorage(StorageBackend):
 
         conn.execute("""
             INSERT OR REPLACE INTO messages
-            (id, conversation_id, role, content, timestamp, source, metadata, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, conversation_id, role, content, timestamp, source, metadata, embedding, profile_id, model_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             message.id,
             message.conversation_id,
@@ -652,6 +898,8 @@ class SQLiteStorage(StorageBackend):
             message.source,
             json.dumps(message.metadata),
             json.dumps(message.embedding) if message.embedding else None,
+            message.profile_id,
+            message.model_used,
         ))
         conn.commit()
 
@@ -669,8 +917,8 @@ class SQLiteStorage(StorageBackend):
             try:
                 conn.execute("""
                     INSERT OR REPLACE INTO messages
-                    (id, conversation_id, role, content, timestamp, source, metadata, embedding)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, role, content, timestamp, source, metadata, embedding, profile_id, model_used)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     msg.id,
                     msg.conversation_id,
@@ -680,6 +928,8 @@ class SQLiteStorage(StorageBackend):
                     msg.source,
                     json.dumps(msg.metadata),
                     json.dumps(msg.embedding) if msg.embedding else None,
+                    msg.profile_id,
+                    msg.model_used,
                 ))
                 count += 1
             except Exception:
@@ -719,6 +969,55 @@ class SQLiteStorage(StorageBackend):
         """, (conversation_id, limit, offset)).fetchall()
 
         return [self._row_to_message(row) for row in rows]
+
+    def update_message(self, message: Message) -> bool:
+        """Update an existing message."""
+        conn = self._ensure_connected()
+
+        result = conn.execute("""
+            UPDATE messages SET
+                content = ?,
+                metadata = ?
+            WHERE id = ?
+        """, (
+            message.content,
+            json.dumps(message.metadata),
+            message.id,
+        ))
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def delete_message(self, message_id: str) -> bool:
+        """Delete a single message."""
+        conn = self._ensure_connected()
+
+        result = conn.execute(
+            "DELETE FROM messages WHERE id = ?",
+            (message_id,)
+        )
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def delete_messages_after(self, conversation_id: str, message_id: str) -> int:
+        """Delete a message and all messages after it in a conversation."""
+        conn = self._ensure_connected()
+
+        # Get the timestamp of the target message
+        msg = self.get_message(message_id)
+        if not msg:
+            return 0
+
+        # Delete the message and all after it
+        result = conn.execute("""
+            DELETE FROM messages
+            WHERE conversation_id = ?
+            AND timestamp >= ?
+        """, (conversation_id, msg.timestamp.isoformat()))
+        conn.commit()
+
+        return result.rowcount
 
     def search_messages(
         self,
@@ -817,6 +1116,34 @@ class SQLiteStorage(StorageBackend):
         if isinstance(updated_at, str):
             updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
 
+        # Handle archived field (may not exist in older databases)
+        archived = False
+        try:
+            archived = bool(row["archived"])
+        except (IndexError, KeyError):
+            pass
+
+        # Handle model_scope field (may not exist in older databases)
+        model_scope = None
+        try:
+            model_scope = row["model_scope"]
+        except (IndexError, KeyError):
+            pass
+
+        # Handle profile_scope field (may not exist in older databases)
+        profile_scope = None
+        try:
+            profile_scope = row["profile_scope"]
+        except (IndexError, KeyError):
+            pass
+
+        # Handle model field (may not exist in older databases)
+        model = None
+        try:
+            model = row["model"]
+        except (IndexError, KeyError):
+            pass
+
         return Conversation(
             id=row["id"],
             name=row["name"] or "",
@@ -826,6 +1153,10 @@ class SQLiteStorage(StorageBackend):
             source=row["source"] or "",
             message_count=row["message_count"] or 0,
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
+            archived=archived,
+            model_scope=model_scope,
+            profile_scope=profile_scope,
+            model=model,
         )
 
     def _row_to_message(self, row: sqlite3.Row) -> Message:
@@ -833,6 +1164,18 @@ class SQLiteStorage(StorageBackend):
         timestamp = row["timestamp"]
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+
+        # Handle profile_id and model_used which may not exist in older databases
+        profile_id = None
+        model_used = None
+        try:
+            profile_id = row["profile_id"]
+        except (IndexError, KeyError):
+            pass
+        try:
+            model_used = row["model_used"]
+        except (IndexError, KeyError):
+            pass
 
         return Message(
             id=row["id"],
@@ -843,4 +1186,855 @@ class SQLiteStorage(StorageBackend):
             source=row["source"] or "",
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
             embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+            profile_id=profile_id,
+            model_used=model_used,
+        )
+
+    # ========================================================================
+    # Embedding Operations for Semantic Search
+    # ========================================================================
+
+    def search_by_embedding(
+        self,
+        embedding: list[float],
+        limit: int = 5,
+        threshold: float = 0.5,
+    ) -> list[MemoryCapsule]:
+        """
+        Search capsules by embedding similarity.
+
+        Note: This performs in-memory similarity calculation as SQLite
+        doesn't have native vector similarity. For large datasets,
+        consider using FAISS or a vector database.
+
+        Args:
+            embedding: Query embedding vector
+            limit: Maximum results to return
+            threshold: Minimum similarity score (0-1)
+
+        Returns:
+            List of capsules sorted by similarity
+        """
+        conn = self._ensure_connected()
+
+        # Get all capsules with embeddings
+        rows = conn.execute("""
+            SELECT * FROM capsules
+            WHERE embedding IS NOT NULL
+            AND presence_score > 0.1
+        """).fetchall()
+
+        # Calculate similarities
+        from threadlight.embeddings import cosine_similarity
+
+        results = []
+        for row in rows:
+            capsule = self._row_to_capsule(row)
+            if capsule.embedding:
+                similarity = cosine_similarity(embedding, capsule.embedding)
+                if similarity >= threshold:
+                    results.append((capsule, similarity))
+
+        # Sort by similarity (descending)
+        results.sort(key=lambda x: x[1], reverse=True)
+
+        return [capsule for capsule, _ in results[:limit]]
+
+    def get_capsules_needing_embeddings(self, limit: int = 1000) -> list[MemoryCapsule]:
+        """Get capsules that don't have embeddings yet."""
+        conn = self._ensure_connected()
+
+        rows = conn.execute("""
+            SELECT * FROM capsules
+            WHERE embedding IS NULL
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+
+        return [self._row_to_capsule(row) for row in rows]
+
+    def get_messages_without_embeddings(self, limit: int = 1000) -> list[Message]:
+        """Get messages that don't have embeddings yet."""
+        conn = self._ensure_connected()
+
+        rows = conn.execute("""
+            SELECT * FROM messages
+            WHERE embedding IS NULL
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+
+        return [self._row_to_message(row) for row in rows]
+
+    def count_capsules_with_embeddings(self) -> int:
+        """Count capsules that have embeddings."""
+        conn = self._ensure_connected()
+        result = conn.execute(
+            "SELECT COUNT(*) FROM capsules WHERE embedding IS NOT NULL"
+        ).fetchone()
+        return result[0] if result else 0
+
+    def count_messages_with_embeddings(self) -> int:
+        """Count messages that have embeddings."""
+        conn = self._ensure_connected()
+        result = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE embedding IS NOT NULL"
+        ).fetchone()
+        return result[0] if result else 0
+
+    def search_messages_by_embedding(
+        self,
+        embedding: list[float],
+        limit: int = 10,
+        threshold: float = 0.5,
+    ) -> list[MessageSearchResult]:
+        """
+        Search messages by embedding similarity.
+
+        Args:
+            embedding: Query embedding vector
+            limit: Maximum results to return
+            threshold: Minimum similarity score (0-1)
+
+        Returns:
+            List of message search results sorted by similarity
+        """
+        conn = self._ensure_connected()
+
+        # Get all messages with embeddings
+        rows = conn.execute("""
+            SELECT m.*, c.name as conversation_name
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.embedding IS NOT NULL
+            ORDER BY m.timestamp DESC
+            LIMIT 5000
+        """).fetchall()
+
+        # Calculate similarities
+        from threadlight.embeddings import cosine_similarity
+
+        results = []
+        for row in rows:
+            message = self._row_to_message(row)
+            if message.embedding:
+                similarity = cosine_similarity(embedding, message.embedding)
+                if similarity >= threshold:
+                    results.append(MessageSearchResult(
+                        message=message,
+                        conversation_name=row["conversation_name"] or "",
+                        relevance_score=similarity,
+                    ))
+
+        # Sort by similarity (descending)
+        results.sort(key=lambda x: x.relevance_score, reverse=True)
+
+        return results[:limit]
+
+    def update_capsule_embedding(
+        self,
+        capsule_id: str,
+        embedding: list[float],
+    ) -> bool:
+        """Update just the embedding for a capsule."""
+        conn = self._ensure_connected()
+
+        result = conn.execute("""
+            UPDATE capsules SET embedding = ? WHERE id = ?
+        """, (json.dumps(embedding), capsule_id))
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def update_message_embedding(
+        self,
+        message_id: str,
+        embedding: list[float],
+    ) -> bool:
+        """Update just the embedding for a message."""
+        conn = self._ensure_connected()
+
+        result = conn.execute("""
+            UPDATE messages SET embedding = ? WHERE id = ?
+        """, (json.dumps(embedding), message_id))
+        conn.commit()
+
+        return result.rowcount > 0
+
+    # ========================================================================
+    # Custom Type Definition Operations
+    # ========================================================================
+
+    def save_custom_type(self, type_def: dict[str, Any]) -> str:
+        """
+        Save a custom type definition to the database.
+
+        Args:
+            type_def: Dictionary containing type definition data
+
+        Returns:
+            The type_id of the saved definition
+        """
+        conn = self._ensure_connected()
+
+        type_id = type_def["type_id"]
+        fields_json = json.dumps(type_def.get("fields", []))
+
+        conn.execute("""
+            INSERT OR REPLACE INTO custom_type_definitions
+            (type_id, display_name, description, fields, display_template, icon, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            type_id,
+            type_def.get("display_name", type_id),
+            type_def.get("description", ""),
+            fields_json,
+            type_def.get("display_template", "{type_id}"),
+            type_def.get("icon", "file-text"),
+            type_def.get("created_at", datetime.utcnow().isoformat()),
+            datetime.utcnow().isoformat(),
+        ))
+        conn.commit()
+
+        return type_id
+
+    def get_custom_type(self, type_id: str) -> Optional[dict[str, Any]]:
+        """
+        Get a custom type definition by ID.
+
+        Args:
+            type_id: The type identifier
+
+        Returns:
+            Dictionary containing type definition, or None if not found
+        """
+        conn = self._ensure_connected()
+
+        row = conn.execute(
+            "SELECT * FROM custom_type_definitions WHERE type_id = ?",
+            (type_id,)
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        return self._row_to_custom_type(row)
+
+    def list_custom_types(self) -> list[dict[str, Any]]:
+        """
+        List all custom type definitions.
+
+        Returns:
+            List of type definition dictionaries
+        """
+        conn = self._ensure_connected()
+
+        rows = conn.execute(
+            "SELECT * FROM custom_type_definitions ORDER BY display_name"
+        ).fetchall()
+
+        return [self._row_to_custom_type(row) for row in rows]
+
+    def update_custom_type(self, type_id: str, updates: dict[str, Any]) -> bool:
+        """
+        Update a custom type definition.
+
+        Args:
+            type_id: The type identifier to update
+            updates: Dictionary of fields to update
+
+        Returns:
+            True if updated, False if not found
+        """
+        conn = self._ensure_connected()
+
+        # Get existing type
+        existing = self.get_custom_type(type_id)
+        if not existing:
+            return False
+
+        # Merge updates
+        for key, value in updates.items():
+            if key != "type_id":  # Can't change the ID
+                existing[key] = value
+
+        existing["updated_at"] = datetime.utcnow().isoformat()
+
+        # Save
+        self.save_custom_type(existing)
+        return True
+
+    def delete_custom_type(self, type_id: str) -> bool:
+        """
+        Delete a custom type definition.
+
+        Args:
+            type_id: The type identifier to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        conn = self._ensure_connected()
+
+        result = conn.execute(
+            "DELETE FROM custom_type_definitions WHERE type_id = ?",
+            (type_id,)
+        )
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def _row_to_custom_type(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Convert a database row to a custom type definition dictionary."""
+        return {
+            "type_id": row["type_id"],
+            "display_name": row["display_name"],
+            "description": row["description"] or "",
+            "fields": json.loads(row["fields"]) if row["fields"] else [],
+            "display_template": row["display_template"] or "{type_id}",
+            "icon": row["icon"] or "file-text",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    # ========================================================================
+    # Model Scope Operations
+    # ========================================================================
+
+    def migrate_add_model_scope(self) -> bool:
+        """
+        Add model_scope column to existing tables if not present.
+
+        This is a migration helper for existing databases.
+
+        Returns:
+            True if migration was needed and performed, False if already migrated
+        """
+        conn = self._ensure_connected()
+
+        # Check if model_scope column exists in capsules
+        cursor = conn.execute("PRAGMA table_info(capsules)")
+        columns = [col[1] for col in cursor.fetchall()]
+
+        migrated = False
+
+        if "model_scope" not in columns:
+            conn.execute("ALTER TABLE capsules ADD COLUMN model_scope TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_model_scope ON capsules(model_scope)")
+            migrated = True
+
+        # Check conversations table
+        cursor = conn.execute("PRAGMA table_info(conversations)")
+        columns = [col[1] for col in cursor.fetchall()]
+
+        if "model_scope" not in columns:
+            conn.execute("ALTER TABLE conversations ADD COLUMN model_scope TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_model_scope ON conversations(model_scope)")
+            migrated = True
+
+        if migrated:
+            conn.commit()
+
+        return migrated
+
+    def update_capsule_model_scope(
+        self,
+        capsule_id: str,
+        model_scope: Optional[str],
+    ) -> bool:
+        """
+        Update just the model_scope for a capsule.
+
+        Args:
+            capsule_id: ID of capsule to update
+            model_scope: Model ID to assign (None = shared across all models)
+
+        Returns:
+            True if updated successfully
+        """
+        conn = self._ensure_connected()
+
+        result = conn.execute(
+            "UPDATE capsules SET model_scope = ? WHERE id = ?",
+            (model_scope, capsule_id)
+        )
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def update_conversation_model_scope(
+        self,
+        conversation_id: str,
+        model_scope: Optional[str],
+    ) -> bool:
+        """
+        Update just the model_scope for a conversation.
+
+        Args:
+            conversation_id: ID of conversation to update
+            model_scope: Model ID to assign (None = shared across all models)
+
+        Returns:
+            True if updated successfully
+        """
+        conn = self._ensure_connected()
+
+        result = conn.execute(
+            "UPDATE conversations SET model_scope = ? WHERE id = ?",
+            (model_scope, conversation_id)
+        )
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def copy_capsule_to_model(
+        self,
+        capsule_id: str,
+        target_model_scope: Optional[str],
+    ) -> Optional[str]:
+        """
+        Copy a capsule to another model scope.
+
+        Args:
+            capsule_id: ID of capsule to copy
+            target_model_scope: Model ID to copy to (None = shared)
+
+        Returns:
+            ID of the new capsule, or None if source not found
+        """
+        conn = self._ensure_connected()
+
+        # Get the source capsule
+        source = self.get_capsule(capsule_id)
+        if not source:
+            return None
+
+        # Create a copy with new ID
+        data = source.to_dict()
+        data["id"] = str(uuid.uuid4())
+        data["model_scope"] = target_model_scope
+        data["created_at"] = datetime.utcnow().isoformat()
+        data["updated_at"] = datetime.utcnow().isoformat()
+
+        # Save the copy
+        new_capsule = create_capsule(data)
+        self.save_capsule(new_capsule)
+
+        return new_capsule.id
+
+    def list_capsules_for_model(
+        self,
+        model_scope: str,
+        include_shared: bool = True,
+        limit: int = 100,
+    ) -> list[MemoryCapsule]:
+        """
+        List all capsules for a specific model.
+
+        Args:
+            model_scope: Model ID to filter by
+            include_shared: Include memories with no model_scope (shared)
+            limit: Maximum results
+
+        Returns:
+            List of capsules for this model
+        """
+        conn = self._ensure_connected()
+
+        if include_shared:
+            query = """
+                SELECT * FROM capsules
+                WHERE (model_scope = ? OR model_scope IS NULL)
+                ORDER BY last_accessed DESC
+                LIMIT ?
+            """
+            rows = conn.execute(query, (model_scope, limit)).fetchall()
+        else:
+            query = """
+                SELECT * FROM capsules
+                WHERE model_scope = ?
+                ORDER BY last_accessed DESC
+                LIMIT ?
+            """
+            rows = conn.execute(query, (model_scope, limit)).fetchall()
+
+        return [self._row_to_capsule(row) for row in rows]
+
+    def list_conversations_for_model(
+        self,
+        model_scope: str,
+        include_shared: bool = True,
+        include_archived: bool = False,
+        limit: int = 50,
+    ) -> list[Conversation]:
+        """
+        List all conversations for a specific model.
+
+        Args:
+            model_scope: Model ID to filter by
+            include_shared: Include conversations with no model_scope (shared)
+            include_archived: Include archived conversations
+            limit: Maximum results
+
+        Returns:
+            List of conversations for this model
+        """
+        conn = self._ensure_connected()
+
+        query = "SELECT * FROM conversations WHERE 1=1"
+        params: list[Any] = []
+
+        if include_shared:
+            query += " AND (model_scope = ? OR model_scope IS NULL)"
+        else:
+            query += " AND model_scope = ?"
+        params.append(model_scope)
+
+        if not include_archived:
+            query += " AND (archived = 0 OR archived IS NULL)"
+
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(query, params).fetchall()
+
+        return [self._row_to_conversation(row) for row in rows]
+
+    def get_model_scopes_in_use(self) -> list[str]:
+        """
+        Get list of all model scopes that have memories or conversations.
+
+        Returns:
+            List of model scope identifiers
+        """
+        conn = self._ensure_connected()
+
+        # Get unique model scopes from both tables
+        capsule_scopes = conn.execute(
+            "SELECT DISTINCT model_scope FROM capsules WHERE model_scope IS NOT NULL"
+        ).fetchall()
+
+        conv_scopes = conn.execute(
+            "SELECT DISTINCT model_scope FROM conversations WHERE model_scope IS NOT NULL"
+        ).fetchall()
+
+        scopes = set()
+        for row in capsule_scopes:
+            scopes.add(row[0])
+        for row in conv_scopes:
+            scopes.add(row[0])
+
+        return sorted(list(scopes))
+
+    def count_capsules_by_model(self) -> dict[str, int]:
+        """
+        Count capsules grouped by model scope.
+
+        Deprecated: Use count_capsules_by_profile instead.
+
+        Returns:
+            Dictionary mapping model_scope to count (None key = shared)
+        """
+        conn = self._ensure_connected()
+
+        rows = conn.execute("""
+            SELECT model_scope, COUNT(*) as count
+            FROM capsules
+            GROUP BY model_scope
+        """).fetchall()
+
+        result = {}
+        for row in rows:
+            key = row[0] if row[0] else "shared"
+            result[key] = row[1]
+
+        return result
+
+    def count_capsules_by_profile(self) -> dict[str, int]:
+        """
+        Count capsules grouped by profile scope.
+
+        Returns:
+            Dictionary mapping profile_scope to count ("shared" key = NULL/shared)
+        """
+        conn = self._ensure_connected()
+
+        rows = conn.execute("""
+            SELECT profile_scope, COUNT(*) as count
+            FROM capsules
+            GROUP BY profile_scope
+        """).fetchall()
+
+        result = {}
+        for row in rows:
+            key = row[0] if row[0] else "shared"
+            result[key] = row[1]
+
+        return result
+
+    def get_profile_scopes_in_use(self) -> list[str]:
+        """
+        Get list of all profile scopes that have memories or conversations.
+
+        Returns:
+            List of profile scope identifiers
+        """
+        conn = self._ensure_connected()
+
+        # Get unique profile scopes from both tables
+        capsule_scopes = conn.execute(
+            "SELECT DISTINCT profile_scope FROM capsules WHERE profile_scope IS NOT NULL"
+        ).fetchall()
+
+        conv_scopes = conn.execute(
+            "SELECT DISTINCT profile_scope FROM conversations WHERE profile_scope IS NOT NULL"
+        ).fetchall()
+
+        scopes = set()
+        for row in capsule_scopes:
+            scopes.add(row[0])
+        for row in conv_scopes:
+            scopes.add(row[0])
+
+        return sorted(list(scopes))
+
+    def search_by_embedding_for_model(
+        self,
+        embedding: list[float],
+        model_scope: Optional[str] = None,
+        include_shared: bool = True,
+        limit: int = 5,
+        threshold: float = 0.5,
+    ) -> list[MemoryCapsule]:
+        """
+        Search capsules by embedding similarity, optionally filtered by model.
+
+        Args:
+            embedding: Query embedding vector
+            model_scope: Model ID to filter by (None = all)
+            include_shared: Include shared memories when model_scope is set
+            limit: Maximum results to return
+            threshold: Minimum similarity score (0-1)
+
+        Returns:
+            List of capsules sorted by similarity
+        """
+        conn = self._ensure_connected()
+
+        # Build query
+        query = """
+            SELECT * FROM capsules
+            WHERE embedding IS NOT NULL
+            AND presence_score > 0.1
+        """
+        params: list[Any] = []
+
+        if model_scope is not None:
+            if include_shared:
+                query += " AND (model_scope = ? OR model_scope IS NULL)"
+            else:
+                query += " AND model_scope = ?"
+            params.append(model_scope)
+
+        rows = conn.execute(query, params).fetchall()
+
+        # Calculate similarities
+        from threadlight.embeddings import cosine_similarity
+
+        results = []
+        for row in rows:
+            capsule = self._row_to_capsule(row)
+            if capsule.embedding:
+                similarity = cosine_similarity(embedding, capsule.embedding)
+                if similarity >= threshold:
+                    results.append((capsule, similarity))
+
+        # Sort by similarity (descending)
+        results.sort(key=lambda x: x[1], reverse=True)
+
+        return [capsule for capsule, _ in results[:limit]]
+
+    # ========================================================================
+    # Profile Operations
+    # ========================================================================
+
+    def save_profile(self, profile: Profile) -> None:
+        """Save a profile to the database."""
+        conn = self._ensure_connected()
+
+        # Serialize alloyed_config to JSON
+        alloyed_config_json = None
+        if profile.alloyed_config:
+            alloyed_config_json = json.dumps(profile.alloyed_config.to_dict())
+
+        conn.execute("""
+            INSERT OR REPLACE INTO profiles
+            (id, name, description, avatar, color, primary_model, alloyed_config,
+             temperature, max_tokens, top_p, system_prompt, style_profile_id,
+             memory_scope, access_shared_memories, philosophy, approach_to_rituals,
+             created_at, updated_at, last_used_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            profile.id,
+            profile.name,
+            profile.description,
+            profile.avatar,
+            profile.color,
+            profile.primary_model,
+            alloyed_config_json,
+            profile.temperature,
+            profile.max_tokens,
+            profile.top_p,
+            profile.system_prompt,
+            profile.style_profile_id,
+            profile.memory_scope,
+            1 if profile.access_shared_memories else 0,
+            getattr(profile, 'philosophy', ''),
+            getattr(profile, 'approach_to_rituals', ''),
+            profile.created_at.isoformat() if isinstance(profile.created_at, datetime) else profile.created_at,
+            profile.updated_at.isoformat() if isinstance(profile.updated_at, datetime) else profile.updated_at,
+            profile.last_used_at.isoformat() if profile.last_used_at else None,
+        ))
+        conn.commit()
+
+    def get_profile(self, profile_id: str) -> Optional[Profile]:
+        """Get a profile by ID."""
+        conn = self._ensure_connected()
+
+        row = conn.execute(
+            "SELECT * FROM profiles WHERE id = ?",
+            (profile_id,)
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        return self._row_to_profile(row)
+
+    def update_profile(self, profile: Profile) -> None:
+        """Update an existing profile."""
+        conn = self._ensure_connected()
+
+        # Serialize alloyed_config to JSON
+        alloyed_config_json = None
+        if profile.alloyed_config:
+            alloyed_config_json = json.dumps(profile.alloyed_config.to_dict())
+
+        conn.execute("""
+            UPDATE profiles SET
+                name = ?,
+                description = ?,
+                avatar = ?,
+                color = ?,
+                primary_model = ?,
+                alloyed_config = ?,
+                temperature = ?,
+                max_tokens = ?,
+                top_p = ?,
+                system_prompt = ?,
+                style_profile_id = ?,
+                memory_scope = ?,
+                access_shared_memories = ?,
+                philosophy = ?,
+                approach_to_rituals = ?,
+                updated_at = ?,
+                last_used_at = ?
+            WHERE id = ?
+        """, (
+            profile.name,
+            profile.description,
+            profile.avatar,
+            profile.color,
+            profile.primary_model,
+            alloyed_config_json,
+            profile.temperature,
+            profile.max_tokens,
+            profile.top_p,
+            profile.system_prompt,
+            profile.style_profile_id,
+            profile.memory_scope,
+            1 if profile.access_shared_memories else 0,
+            getattr(profile, 'philosophy', ''),
+            getattr(profile, 'approach_to_rituals', ''),
+            profile.updated_at.isoformat() if isinstance(profile.updated_at, datetime) else profile.updated_at,
+            profile.last_used_at.isoformat() if profile.last_used_at else None,
+            profile.id,
+        ))
+        conn.commit()
+
+    def delete_profile(self, profile_id: str) -> bool:
+        """Delete a profile."""
+        conn = self._ensure_connected()
+
+        result = conn.execute(
+            "DELETE FROM profiles WHERE id = ?",
+            (profile_id,)
+        )
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def list_profiles(self) -> list[Profile]:
+        """List all profiles."""
+        conn = self._ensure_connected()
+
+        rows = conn.execute(
+            "SELECT * FROM profiles ORDER BY updated_at DESC"
+        ).fetchall()
+
+        return [self._row_to_profile(row) for row in rows]
+
+    def _row_to_profile(self, row: sqlite3.Row) -> Profile:
+        """Convert a database row to a Profile."""
+        # Parse alloyed_config from JSON
+        alloyed_config = None
+        if row["alloyed_config"]:
+            alloyed_config = AlloyedConfig.from_dict(json.loads(row["alloyed_config"]))
+
+        # Parse timestamps
+        created_at = row["created_at"]
+        updated_at = row["updated_at"]
+        last_used_at = row["last_used_at"]
+
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        if isinstance(updated_at, str):
+            updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+        if isinstance(last_used_at, str) and last_used_at:
+            last_used_at = datetime.fromisoformat(last_used_at.replace("Z", "+00:00"))
+        else:
+            last_used_at = None
+
+        # Handle philosophy fields which may not exist in older databases
+        philosophy = ""
+        approach_to_rituals = ""
+        try:
+            philosophy = row["philosophy"] or ""
+        except (IndexError, KeyError):
+            pass
+        try:
+            approach_to_rituals = row["approach_to_rituals"] or ""
+        except (IndexError, KeyError):
+            pass
+
+        return Profile(
+            id=row["id"],
+            name=row["name"],
+            description=row["description"] or "",
+            avatar=row["avatar"],
+            color=row["color"],
+            primary_model=row["primary_model"],
+            alloyed_config=alloyed_config,
+            temperature=row["temperature"],
+            max_tokens=row["max_tokens"],
+            top_p=row["top_p"],
+            system_prompt=row["system_prompt"] or "",
+            style_profile_id=row["style_profile_id"],
+            memory_scope=row["memory_scope"],
+            access_shared_memories=bool(row["access_shared_memories"]),
+            philosophy=philosophy,
+            approach_to_rituals=approach_to_rituals,
+            created_at=created_at,
+            updated_at=updated_at,
+            last_used_at=last_used_at,
         )

@@ -77,6 +77,7 @@ def import_chatgpt_export(
     batch_size: int = 100,
     dry_run: bool = False,
     progress_callback: Optional[callable] = None,
+    profile_scope: Optional[str] = None,
 ) -> ChatGPTExportResult:
     """
     Import from a complete ChatGPT export zip file.
@@ -97,6 +98,7 @@ def import_chatgpt_export(
         batch_size: Messages per save batch
         dry_run: If True, parse but don't save
         progress_callback: Optional callback(stats) for progress
+        profile_scope: Optional profile ID to scope imported conversations to
 
     Returns:
         ChatGPTExportResult with combined statistics
@@ -126,6 +128,7 @@ def import_chatgpt_export(
             batch_size=batch_size,
             dry_run=dry_run,
             progress_callback=progress_callback,
+            profile_scope=profile_scope,
         )
         return ChatGPTExportResult(
             success=len(errors) == 0,
@@ -158,6 +161,7 @@ def import_chatgpt_export(
                 batch_size=batch_size,
                 dry_run=dry_run,
                 progress_callback=progress_callback,
+                profile_scope=profile_scope,
             )
 
     elif path.is_dir():
@@ -172,6 +176,7 @@ def import_chatgpt_export(
             batch_size=batch_size,
             dry_run=dry_run,
             progress_callback=progress_callback,
+            profile_scope=profile_scope,
         )
     else:
         return ChatGPTExportResult(
@@ -238,6 +243,7 @@ def _import_conversations_file(
         limit=kwargs.get("conversation_limit"),
         dry_run=kwargs.get("dry_run", False),
         progress_callback=kwargs.get("progress_callback"),
+        profile_scope=kwargs.get("profile_scope"),
     )
 
     stats.conversations = result.stats

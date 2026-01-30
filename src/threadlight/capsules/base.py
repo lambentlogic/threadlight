@@ -80,6 +80,12 @@ class MemoryCapsule(ABC):
     cue_phrases: list[str] = field(default_factory=list)
     embedding: Optional[list[float]] = None
 
+    # Profile scoping (for per-profile memory isolation)
+    profile_scope: Optional[str] = None  # NULL = shared across all profiles
+
+    # Deprecated: Use profile_scope instead (kept for backward compatibility)
+    model_scope: Optional[str] = None  # NULL = shared across all models
+
     def touch(self) -> None:
         """Record an access to this capsule."""
         self.last_accessed = datetime.utcnow()
@@ -125,6 +131,8 @@ class MemoryCapsule(ABC):
             "consent_confirmed": self.consent_confirmed,
             "cue_phrases": self.cue_phrases,
             "embedding": self.embedding,
+            "profile_scope": self.profile_scope,
+            "model_scope": self.model_scope,  # Deprecated, kept for backward compatibility
         }
 
     @classmethod
@@ -141,6 +149,9 @@ class MemoryCapsule(ABC):
 
 # Registry for custom capsule types
 _capsule_registry: dict[str, type[MemoryCapsule]] = {}
+
+# Registry for user-defined custom type definitions
+_custom_type_definitions: dict[str, "CustomTypeDefinition"] = {}
 
 
 def register_capsule_type(type_name: str):
@@ -241,3 +252,164 @@ class CapsuleRegistry:
     def __len__(self) -> int:
         """Return number of registered types."""
         return len(_capsule_registry)
+
+
+# =============================================================================
+# Custom Type Capsule (User-Defined Types)
+# =============================================================================
+
+def register_custom_type_definition(type_def: "CustomTypeDefinition") -> None:
+    """Register a user-defined custom type definition."""
+    _custom_type_definitions[type_def.type_id] = type_def
+
+
+def unregister_custom_type_definition(type_id: str) -> bool:
+    """Unregister a user-defined custom type definition."""
+    if type_id in _custom_type_definitions:
+        del _custom_type_definitions[type_id]
+        return True
+    return False
+
+
+def get_custom_type_definition(type_id: str) -> Optional["CustomTypeDefinition"]:
+    """Get a registered custom type definition."""
+    return _custom_type_definitions.get(type_id)
+
+
+def list_custom_type_definitions() -> list["CustomTypeDefinition"]:
+    """List all registered custom type definitions."""
+    return list(_custom_type_definitions.values())
+
+
+def is_custom_type(type_id: str) -> bool:
+    """Check if a type_id corresponds to a user-defined custom type."""
+    return type_id in _custom_type_definitions
+
+
+@dataclass
+class CustomTypeCapsule(MemoryCapsule):
+    """
+    A memory capsule that uses a user-defined custom type definition.
+
+    This capsule type is dynamically configured based on a CustomTypeDefinition,
+    allowing users to create structured memories with custom fields.
+
+    The custom_type_id field indicates which custom type definition to use
+    for validation and display formatting.
+    """
+
+    type: CapsuleType = field(default=CapsuleType.CUSTOM, init=False)
+
+    # The ID of the custom type definition this capsule uses
+    custom_type_id: str = ""
+
+    # Default retention - can be overridden
+    retention: RetentionPolicy = field(default=RetentionPolicy.NORMAL)
+
+    def __post_init__(self) -> None:
+        self.type = CapsuleType.CUSTOM
+
+        # Store custom_type_id in content for serialization
+        if self.custom_type_id and "custom_type_id" not in self.content:
+            self.content["custom_type_id"] = self.custom_type_id
+        elif "custom_type_id" in self.content and not self.custom_type_id:
+            self.custom_type_id = self.content["custom_type_id"]
+
+        # Extract cue phrases from content if not set
+        if not self.cue_phrases:
+            self._extract_cue_phrases()
+
+    def _extract_cue_phrases(self) -> None:
+        """Extract searchable cue phrases from the content."""
+        phrases = []
+        for key, value in self.content.items():
+            if key in ("custom_type_id", "capsule_subtype"):
+                continue
+            if isinstance(value, str) and len(value) > 2:
+                # Add whole value and significant words
+                if len(value) <= 50:
+                    phrases.append(value.lower())
+                words = value.lower().split()
+                phrases.extend(w for w in words if len(w) >= 4)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str) and len(item) > 2:
+                        phrases.append(item.lower())
+
+        # Deduplicate and limit
+        seen = set()
+        unique = []
+        for p in phrases:
+            if p not in seen:
+                seen.add(p)
+                unique.append(p)
+                if len(unique) >= 15:
+                    break
+        self.cue_phrases = unique
+
+    def get_type_definition(self) -> Optional["CustomTypeDefinition"]:
+        """Get the type definition for this capsule."""
+        return get_custom_type_definition(self.custom_type_id)
+
+    def validate(self) -> bool:
+        """Validate that the capsule has required fields based on type definition."""
+        type_def = self.get_type_definition()
+        if type_def is None:
+            # No type definition, just check we have some content
+            return bool(self.content)
+
+        is_valid, errors = type_def.validate_instance(self.content)
+        return is_valid
+
+    def get_validation_errors(self) -> list[str]:
+        """Get validation errors for this capsule's content."""
+        type_def = self.get_type_definition()
+        if type_def is None:
+            return []
+
+        is_valid, errors = type_def.validate_instance(self.content)
+        return errors
+
+    def to_context(self, mode: ContextMode = ContextMode.NARRATIVE) -> str:
+        """Transform into prompt-ready context."""
+        type_def = self.get_type_definition()
+
+        # Format display using type definition if available
+        if type_def:
+            display = type_def.format_display(self.content)
+            type_name = type_def.display_name
+        else:
+            display = str(self.content)
+            type_name = self.custom_type_id or "Custom"
+
+        if mode == ContextMode.DIRECT:
+            return f"[{type_name}] {display}"
+
+        elif mode == ContextMode.NARRATIVE:
+            return f'(You recall a {type_name.lower()}: "{display}")'
+
+        elif mode == ContextMode.WHISPER:
+            return f'({display[:80]}...)'
+
+        elif mode == ContextMode.RITUAL:
+            return f'(A memory surfaces - {type_name}: "{display}")'
+
+        return display
+
+    def get_preview(self) -> str:
+        """Get a short preview of this capsule."""
+        type_def = self.get_type_definition()
+        if type_def:
+            return type_def.format_display(self.content)
+        return str(self.content)[:100]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize capsule to dictionary."""
+        data = super().to_dict()
+        data["custom_type_id"] = self.custom_type_id
+        return data
+
+
+# Type hint import for CustomTypeDefinition (avoid circular import)
+if False:  # TYPE_CHECKING equivalent that doesn't need import
+    from threadlight.capsules.custom_types import CustomTypeDefinition

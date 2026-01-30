@@ -21,8 +21,23 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 import logging
 
-from threadlight.config import ThreadlightConfig
-from threadlight.capsules.base import ContextMode, CapsuleType, MemoryCapsule
+from threadlight.config import ThreadlightConfig, ModelConfig
+from threadlight.capsules.base import (
+    ContextMode,
+    CapsuleType,
+    MemoryCapsule,
+    register_custom_type_definition,
+    unregister_custom_type_definition,
+    list_custom_type_definitions,
+    is_custom_type,
+)
+from threadlight.capsules.custom_types import (
+    CustomTypeDefinition,
+    FieldDefinition,
+    EXAMPLE_TYPES,
+    list_example_types,
+    get_example_type,
+)
 from threadlight.capsules.style import StyleProfile, BUILTIN_STYLES
 from threadlight.storage import create_storage, StorageBackend
 from threadlight.storage.base import Conversation, Message, MessageSearchResult
@@ -34,6 +49,7 @@ from threadlight.memory.orchestrator import MemoryOrchestrator, Session
 from threadlight.decay.engine import DecayEngine
 from threadlight.tools.definitions import get_tool_definitions, ToolName
 from threadlight.tools.executor import ToolExecutor, ToolResult
+from threadlight.profiles import Profile, ProfileManager, AlloyedProfileEngine, ModelStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +153,8 @@ class Threadlight:
         self._init_context()
         self._init_tools()
         self._init_soft_memory()
+        self._load_custom_types()
+        self._init_profiles()
 
         logger.info(f"Threadlight initialized with provider={self.config.provider.type}")
 
@@ -165,6 +183,9 @@ class Threadlight:
             decay_engine=decay_engine,
             auto_propose=self.config.memory.proposals.auto_propose,
             proposal_threshold=self.config.memory.proposals.threshold,
+            per_model_isolation=self.config.memory.per_model_isolation,
+            default_shared=self.config.memory.default_shared,
+            current_model=self.config.provider.model,
         )
 
     def _init_context(self) -> None:
@@ -227,6 +248,294 @@ class Threadlight:
                 max_results=self.config.memory.conversation.soft_memory_limit,
             )
             self.soft_memory = SoftMemory(self.storage, soft_config)
+
+    def _init_profiles(self) -> None:
+        """Initialize profile management."""
+        self.profile_manager = ProfileManager(self.storage)
+        self.active_profile: Optional[Profile] = None
+        self._alloyed_engine: Optional[AlloyedProfileEngine] = None
+
+    # === Profile Interface ===
+
+    def switch_profile(self, profile_id: str) -> Profile:
+        """
+        Switch to a different profile.
+
+        This will:
+        1. Load the profile from storage
+        2. Update model configuration
+        3. Apply profile's system prompt and style
+        4. Update memory scope
+
+        Args:
+            profile_id: The profile ID to switch to
+
+        Returns:
+            The activated Profile
+
+        Raises:
+            ValueError: If profile not found
+        """
+        profile = self.profile_manager.switch_to(profile_id)
+        self._apply_profile(profile)
+        return profile
+
+    def _apply_profile(self, profile: Profile) -> None:
+        """
+        Apply a profile's settings to the current Threadlight instance.
+
+        Args:
+            profile: The profile to apply
+        """
+        self.active_profile = profile
+
+        # Initialize alloyed engine for model selection
+        self._alloyed_engine = AlloyedProfileEngine(profile, self.storage)
+
+        # Apply model configuration
+        self.provider.model = profile.primary_model
+        self.config.provider.model = profile.primary_model
+
+        # Apply identity settings
+        if profile.system_prompt:
+            self.config.identity.system_prompt = profile.system_prompt
+            self.composer = ContextComposer(
+                identity_name=profile.name or self.config.identity.name,
+                base_system_prompt=profile.system_prompt,
+            )
+        elif profile.name:
+            self.composer = ContextComposer(
+                identity_name=profile.name,
+                base_system_prompt=self.config.identity.system_prompt,
+            )
+
+        # Apply style profile if specified
+        if profile.style_profile_id:
+            self._load_style_profile(profile.style_profile_id)
+
+        # Update memory orchestrator's scope
+        self.memory.current_model = profile.primary_model
+
+        logger.info(f"Switched to profile: {profile.name} ({profile.id[:8]}...)")
+
+    def clear_profile(self) -> None:
+        """Clear the active profile and revert to default settings."""
+        self.active_profile = None
+        self._alloyed_engine = None
+
+        # Restore default settings from config
+        self.provider.model = self.config.provider.model
+        self.composer = ContextComposer(
+            identity_name=self.config.identity.name,
+            base_system_prompt=self.config.identity.system_prompt,
+        )
+        self.memory.current_model = self.config.provider.model
+
+    def get_active_profile(self) -> Optional[Profile]:
+        """Get the currently active profile, if any."""
+        return self.active_profile
+
+    def create_profile(
+        self,
+        name: str,
+        description: str = "",
+        primary_model: Optional[str] = None,
+        system_prompt: str = "",
+        style_profile_id: Optional[str] = None,
+        avatar: Optional[str] = None,
+        color: Optional[str] = None,
+        temperature: float = 0.7,
+        profile_id: Optional[str] = None,
+        model_strategy: Optional[ModelStrategy] = None,
+        model_pool: Optional[list[str]] = None,
+        model_weights: Optional[dict[str, float]] = None,
+        routing_rules: Optional[list[dict]] = None,
+        memory_scope: Optional[str] = None,
+        access_shared_memories: bool = True,
+        max_tokens: Optional[int] = None,
+        top_p: float = 1.0,
+        tags: Optional[list[str]] = None,
+        philosophy: str = "",
+        approach_to_rituals: str = "",
+        ritual_depth: str = "functional",
+    ) -> Profile:
+        """
+        Create a new profile.
+
+        Args:
+            name: Display name for the profile
+            description: One-line description
+            primary_model: Model to use (defaults to current model)
+            system_prompt: Base system prompt
+            style_profile_id: Optional style profile to apply
+            avatar: Optional avatar path/URL
+            color: Optional hex color for UI
+            temperature: Inference temperature
+            profile_id: Optional custom ID (generated if not provided)
+            model_strategy: Strategy for model selection (SINGLE, ALTERNATING, etc.)
+            model_pool: List of models for multi-model strategies
+            model_weights: Weight per model for WEIGHTED strategy
+            routing_rules: Rules for ROUTED strategy
+            memory_scope: Memory scope (defaults to profile ID)
+            access_shared_memories: Whether to access shared memories
+            max_tokens: Maximum tokens for responses
+            top_p: Top-p sampling parameter
+            tags: Optional tags for categorization
+            philosophy: Freeform description of the profile's philosophy/approach
+            approach_to_rituals: Freeform description of how rituals are handled
+            ritual_depth: How deeply to integrate rituals (ceremonial, functional, minimal)
+
+        Returns:
+            The created Profile
+        """
+        return self.profile_manager.create(
+            name=name,
+            description=description,
+            primary_model=primary_model or self.config.provider.model,
+            system_prompt=system_prompt,
+            style_profile_id=style_profile_id,
+            avatar=avatar,
+            color=color,
+            temperature=temperature,
+            profile_id=profile_id,
+            model_strategy=model_strategy or ModelStrategy.SINGLE,
+            model_pool=model_pool,
+            model_weights=model_weights,
+            routing_rules=routing_rules,
+            memory_scope=memory_scope,
+            access_shared_memories=access_shared_memories,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            tags=tags,
+            philosophy=philosophy,
+            approach_to_rituals=approach_to_rituals,
+            ritual_depth=ritual_depth,
+        )
+
+    def list_profiles(self) -> list[Profile]:
+        """List all profiles."""
+        return self.profile_manager.list()
+
+    def get_profile(self, profile_id: str) -> Optional[Profile]:
+        """Get a profile by ID."""
+        return self.profile_manager.get(profile_id)
+
+    def update_profile(self, profile_id: str, **kwargs) -> Optional[Profile]:
+        """
+        Update an existing profile.
+
+        Args:
+            profile_id: ID of the profile to update
+            **kwargs: Fields to update (name, description, system_prompt, etc.)
+
+        Returns:
+            The updated Profile, or None if not found
+        """
+        profile = self.profile_manager.get(profile_id)
+        if not profile:
+            return None
+
+        # Update fields from kwargs
+        for key, value in kwargs.items():
+            if key == 'model_strategy' and value is not None:
+                # Update alloyed_config strategy
+                if profile.alloyed_config:
+                    if isinstance(value, str):
+                        profile.alloyed_config.strategy = ModelStrategy(value)
+                    else:
+                        profile.alloyed_config.strategy = value
+            elif key == 'model_pool' and value is not None:
+                if profile.alloyed_config:
+                    profile.alloyed_config.model_pool = value
+            elif key == 'model_weights' and value is not None:
+                if profile.alloyed_config:
+                    profile.alloyed_config.weights = value
+            elif key == 'routing_rules' and value is not None:
+                if profile.alloyed_config:
+                    from threadlight.profiles.profile import RoutingRule
+                    parsed_rules = []
+                    for rule in value:
+                        if isinstance(rule, dict):
+                            parsed_rules.append(RoutingRule.from_dict(rule))
+                        else:
+                            parsed_rules.append(rule)
+                    profile.alloyed_config.routing_rules = parsed_rules
+            elif key == 'ritual_depth' and value is not None:
+                from threadlight.profiles.profile import RitualDepth
+                try:
+                    profile.ritual_depth = RitualDepth(value) if isinstance(value, str) else value
+                except ValueError:
+                    profile.ritual_depth = RitualDepth.FUNCTIONAL
+            elif hasattr(profile, key):
+                setattr(profile, key, value)
+
+        self.profile_manager.update(profile)
+
+        # If this is the active profile, re-apply settings
+        if self.active_profile and self.active_profile.id == profile.id:
+            self._apply_profile(profile)
+
+        return profile
+
+    def delete_profile(self, profile_id: str) -> bool:
+        """Delete a profile."""
+        # Clear active profile if it's being deleted
+        if self.active_profile and self.active_profile.id == profile_id:
+            self.clear_profile()
+
+        return self.profile_manager.delete(profile_id)
+
+    def export_profile(
+        self,
+        profile_id: str,
+        include_memories: bool = False,
+        include_conversations: bool = False,
+    ) -> dict:
+        """
+        Export a profile to a dictionary.
+
+        Args:
+            profile_id: The profile ID to export
+            include_memories: Whether to include profile memories
+            include_conversations: Whether to include conversations
+
+        Returns:
+            Dictionary containing profile data and optional extras
+        """
+        return self.profile_manager.export_profile(
+            profile_id,
+            include_memories=include_memories,
+            include_conversations=include_conversations,
+        )
+
+    def import_profile(self, export_data: dict) -> Profile:
+        """
+        Import a profile from exported data.
+
+        Args:
+            export_data: Dictionary containing exported profile data
+
+        Returns:
+            The imported Profile
+        """
+        return self.profile_manager.import_profile(export_data)
+
+    def _get_model_for_message(self, message: str) -> str:
+        """
+        Get the model to use for a message, considering profile settings.
+
+        If an alloyed profile is active, uses the AlloyedProfileEngine
+        to select the appropriate model based on the profile's strategy.
+
+        Args:
+            message: The user's message
+
+        Returns:
+            Model identifier to use
+        """
+        if self._alloyed_engine:
+            return self._alloyed_engine.select_model(message)
+        return self.config.provider.model
 
     # === Chat Interface ===
 
@@ -326,19 +635,41 @@ class Threadlight:
         use_tools = enable_tools if enable_tools is not None else self.enable_tools
         should_auto_save = auto_save if auto_save is not None else self.config.memory.conversation.auto_save_messages
 
+        # Apply profile's model selection if active
+        if self.active_profile and self._alloyed_engine:
+            selected_model = self._alloyed_engine.select_model(message)
+            # Temporarily set the provider model for this request
+            original_model = self.provider.model
+            self.provider.model = selected_model
+
+            # Apply profile-specific inference settings if not overridden
+            if "temperature" not in kwargs and self.active_profile.temperature:
+                kwargs["temperature"] = self.active_profile.temperature
+            if "max_tokens" not in kwargs and self.active_profile.max_tokens:
+                kwargs["max_tokens"] = self.active_profile.max_tokens
+            if "top_p" not in kwargs and self.active_profile.top_p:
+                kwargs["top_p"] = self.active_profile.top_p
+
         # Build messages
         messages = []
 
-        # 1. System message with memory context
+        # 1. System message with memory context (profile's system_prompt takes precedence)
         context: Optional[ComposedContext] = None
         system_content = ""
+
+        # Get base system prompt (profile > config)
+        base_system_prompt = (
+            self.active_profile.system_prompt
+            if self.active_profile and self.active_profile.system_prompt
+            else self.config.identity.system_prompt
+        )
 
         if use_memory:
             context = self._build_context(message, memory_filter, context_mode)
             if context.system_message:
                 system_content = context.system_message
-        elif self.config.identity.system_prompt:
-            system_content = self.config.identity.system_prompt
+        elif base_system_prompt:
+            system_content = base_system_prompt
 
         # Add soft memory context if enabled
         if self.soft_memory and self.config.memory.conversation.enable_soft_memory:
@@ -373,7 +704,12 @@ class Threadlight:
         tools = self.tool_definitions if (use_tools and self.tool_executor) else None
 
         # Send to provider with tool calling loop
-        response = self._complete_with_tools(messages, tools, **kwargs)
+        try:
+            response = self._complete_with_tools(messages, tools, **kwargs)
+        finally:
+            # Restore original model if we changed it for profile
+            if self.active_profile and self._alloyed_engine and 'original_model' in dir():
+                self.provider.model = original_model
 
         # Auto-save messages to database (don't fail if save fails)
         if should_auto_save:
@@ -389,6 +725,15 @@ class Threadlight:
                 f"{len(context.active_rituals)} rituals, "
                 f"~{context.token_estimate} context tokens"
             )
+
+        # Add profile info to response metadata
+        if self.active_profile:
+            if response.raw is None:
+                response.raw = {}
+            response.raw["profile_id"] = self.active_profile.id
+            response.raw["profile_name"] = self.active_profile.name
+            if self._alloyed_engine:
+                response.raw["model_used"] = self.provider.model
 
         return response
 
@@ -727,6 +1072,8 @@ class Threadlight:
         content: dict[str, Any],
         cue_phrases: Optional[list[str]] = None,
         confirm: bool = False,
+        shared: Optional[bool] = None,
+        profile_scope: Optional[str] = None,
         **kwargs: Any
     ) -> MemoryCapsule:
         """
@@ -739,16 +1086,29 @@ class Threadlight:
             content: Type-specific content
             cue_phrases: Phrases that trigger retrieval
             confirm: If True, mark as consent confirmed
+            shared: If per-model isolation is enabled:
+                   - True = memory is shared across all models
+                   - False = memory is for current model only
+                   - None = use default behavior from config
+            profile_scope: Profile ID to scope this memory to (defaults to active profile)
             **kwargs: Additional capsule fields
 
         Returns:
             The created MemoryCapsule
         """
+        # Add profile scope if an active profile exists
+        if profile_scope is None and self.active_profile:
+            profile_scope = self.active_profile.memory_scope
+
+        if profile_scope:
+            kwargs["profile_scope"] = profile_scope
+
         return self.memory.create(
             type=type,
             content=content,
             cue_phrases=cue_phrases,
             consent_confirmed=confirm,
+            shared=shared,
             **kwargs
         )
 
@@ -756,13 +1116,28 @@ class Threadlight:
         self,
         cue: str,
         limit: int = 5,
+        include_shared: Optional[bool] = None,
     ) -> list[MemoryCapsule]:
         """
         Recall memories matching a cue phrase.
 
         Shortcut for self.memory.recall().
+
+        Args:
+            cue: Search cue
+            limit: Maximum results
+            include_shared: Whether to include shared memories. If None:
+                           - Uses active profile's access_shared_memories setting
+                           - Or True if no active profile
         """
-        return self.memory.recall(cue, limit=limit)
+        # Determine include_shared from profile settings if not explicitly set
+        if include_shared is None:
+            if self.active_profile:
+                include_shared = self.active_profile.access_shared_memories
+            else:
+                include_shared = True
+
+        return self.memory.recall(cue, limit=limit, include_shared=include_shared)
 
     def reinforce_memories(
         self,
@@ -902,11 +1277,13 @@ class Threadlight:
     def create_style_profile(
         self,
         style_id: str,
-        tone_base: str,
+        tone_base: str = "",
         permissions: Optional[list[str]] = None,
         constraints: Optional[list[str]] = None,
         vocal_motifs: Optional[list[str]] = None,
         forbidden_patterns: Optional[list[str]] = None,
+        freeform_description: str = "",
+        use_freeform: bool = False,
     ) -> StyleProfile:
         """
         Create a new style profile.
@@ -918,6 +1295,8 @@ class Threadlight:
             constraints: Things to avoid
             vocal_motifs: Recurring phrases or symbols
             forbidden_patterns: Patterns to never use
+            freeform_description: Raw style text (for freeform styles)
+            use_freeform: If True, use freeform_description instead of structured fields
 
         Returns:
             The created StyleProfile
@@ -929,6 +1308,8 @@ class Threadlight:
             constraints=constraints or [],
             vocal_motifs=vocal_motifs or [],
             forbidden_patterns=forbidden_patterns or [],
+            freeform_description=freeform_description,
+            use_freeform=use_freeform,
             consent_confirmed=True,
         )
         return profile
@@ -1081,3 +1462,832 @@ class Threadlight:
         """
         saved_path = self.config.save_to_file(path)
         return str(saved_path)
+
+    # === Semantic Search / Embeddings ===
+
+    def _get_embedding_manager(self):
+        """Get or create the embedding manager lazily."""
+        if not hasattr(self, '_embedding_manager') or self._embedding_manager is None:
+            if not self.config.memory.embeddings.enabled:
+                return None
+
+            from threadlight.embeddings import create_embedding_provider
+            from threadlight.embeddings.manager import EmbeddingManager
+
+            try:
+                provider = create_embedding_provider(
+                    provider_type=self.config.memory.embeddings.provider,
+                    model_name=self.config.memory.embeddings.model,
+                )
+                self._embedding_manager = EmbeddingManager(
+                    provider=provider,
+                    storage=self.storage,
+                    batch_size=self.config.memory.embeddings.batch_size,
+                    auto_generate=self.config.memory.embeddings.auto_generate,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize embedding manager: {e}")
+                self._embedding_manager = None
+
+        return self._embedding_manager
+
+    def search_memories_semantic(
+        self,
+        query: str,
+        limit: int = 5,
+        threshold: Optional[float] = None,
+    ) -> list[Any]:
+        """
+        Search memories using semantic/meaning-based similarity.
+
+        This uses embeddings to find memories based on meaning rather than
+        exact keyword matches. Requires embeddings to be enabled and generated.
+
+        Args:
+            query: Search query (natural language)
+            limit: Maximum number of results
+            threshold: Minimum similarity score (0-1), defaults to config value
+
+        Returns:
+            List of SemanticSearchResult objects, sorted by similarity
+
+        Example:
+            results = tl.search_memories_semantic("memories about creativity")
+        """
+        manager = self._get_embedding_manager()
+        if manager is None:
+            logger.warning("Semantic search requires embeddings to be enabled")
+            return []
+
+        threshold = threshold or self.config.memory.embeddings.similarity_threshold
+
+        try:
+            results = manager.search_memories(
+                query=query,
+                limit=limit,
+                threshold=threshold,
+            )
+            return results  # Return SemanticSearchResult objects
+        except Exception as e:
+            logger.error(f"Semantic search failed: {e}")
+            return []
+
+    def search_conversations_semantic(
+        self,
+        query: str,
+        limit: int = 10,
+        threshold: Optional[float] = None,
+    ) -> list[Any]:
+        """
+        Search conversation messages using semantic similarity.
+
+        Args:
+            query: Search query (natural language)
+            limit: Maximum number of results
+            threshold: Minimum similarity score (0-1)
+
+        Returns:
+            List of SemanticSearchResult objects
+        """
+        manager = self._get_embedding_manager()
+        if manager is None:
+            logger.warning("Semantic search requires embeddings to be enabled")
+            return []
+
+        threshold = threshold or self.config.memory.embeddings.similarity_threshold
+
+        try:
+            results = manager.search_conversations(
+                query=query,
+                limit=limit,
+                threshold=threshold,
+            )
+            return results  # Return SemanticSearchResult objects
+        except Exception as e:
+            logger.error(f"Semantic conversation search failed: {e}")
+            return []
+
+    def generate_embeddings(
+        self,
+        include_memories: bool = True,
+        include_messages: bool = True,
+    ) -> Any:
+        """
+        Generate embeddings for all content that doesn't have them yet.
+
+        This is a batch operation that may take some time for large databases.
+
+        Args:
+            include_memories: Process memory capsules
+            include_messages: Process conversation messages
+
+        Returns:
+            EmbeddingStats object with statistics about the operation
+        """
+        manager = self._get_embedding_manager()
+        if manager is None:
+            # Return a mock stats object
+            from threadlight.embeddings.manager import EmbeddingStats
+            return EmbeddingStats(errors=1)
+
+        try:
+            stats = manager.batch_generate_embeddings(
+                include_capsules=include_memories,
+                include_messages=include_messages,
+            )
+            return stats
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            from threadlight.embeddings.manager import EmbeddingStats
+            return EmbeddingStats(errors=1)
+
+    def get_embedding_stats(self) -> dict[str, Any]:
+        """
+        Get statistics about embedding coverage.
+
+        Returns:
+            Dictionary with embedding statistics
+        """
+        manager = self._get_embedding_manager()
+        if manager is None:
+            return {
+                "enabled": False,
+                "provider": None,
+                "capsules": {"total": 0, "with_embeddings": 0, "coverage": 0},
+                "messages": {"total": 0, "with_embeddings": 0, "coverage": 0},
+            }
+
+        try:
+            stats = manager.get_embedding_stats()
+            stats["enabled"] = True
+            return stats
+        except Exception as e:
+            logger.error(f"Failed to get embedding stats: {e}")
+            return {
+                "enabled": True,
+                "error": str(e),
+            }
+
+    # === Model Configuration ===
+
+    def switch_model(self, model_id: str) -> ModelConfig:
+        """
+        Switch to a different model and load its config.
+
+        This will:
+        1. Save the current model's config if it changed
+        2. Update the current model
+        3. Load the new model's config
+        4. Apply model-specific settings
+        5. Update memory orchestrator's current model (for per-model isolation)
+
+        Args:
+            model_id: Model identifier to switch to
+
+        Returns:
+            The ModelConfig for the new model
+        """
+        # Update current model
+        self.config.current_model = model_id
+        self.config.provider.model = model_id
+
+        # Get model config (creates default if not exists)
+        model_config = self.config.get_model_config(model_id)
+
+        # Apply model-specific settings
+        self._apply_model_config(model_config)
+
+        # Update provider model
+        self.provider.model = model_id
+
+        # Update memory orchestrator's current model (for per-model isolation)
+        self.memory.current_model = model_id
+
+        # Trigger auto-save if enabled
+        self.config.mark_changed()
+
+        logger.info(f"Switched to model: {model_id}")
+        return model_config
+
+    def _apply_model_config(self, model_config: ModelConfig) -> None:
+        """Apply a model config to the current state.
+
+        Args:
+            model_config: The ModelConfig to apply
+        """
+        # Update identity settings
+        self.config.identity.system_prompt = model_config.system_prompt
+        self.config.style.default_profile = model_config.style_profile
+
+        # Update memory settings
+        self.enable_memory = model_config.memory_enabled
+        self.config.memory.decay.enabled = model_config.decay_enabled
+
+        # Update composer with new system prompt
+        self.composer = ContextComposer(
+            identity_name=self.config.identity.name,
+            base_system_prompt=model_config.system_prompt,
+        )
+
+        # Load style profile if specified
+        if model_config.style_profile:
+            self._load_style_profile(model_config.style_profile)
+        else:
+            self.style_profile = None
+
+    def get_current_model_config(self) -> ModelConfig:
+        """Get config for currently active model.
+
+        Returns:
+            ModelConfig for the current model
+        """
+        return self.config.get_model_config(self.config.current_model)
+
+    def update_current_model_config(self, **kwargs: Any) -> ModelConfig:
+        """
+        Update config for current model.
+
+        Args:
+            **kwargs: Fields to update (system_prompt, style_profile,
+                      memory_enabled, decay_enabled, temperature, etc.)
+
+        Returns:
+            Updated ModelConfig
+
+        Example:
+            tl.update_current_model_config(
+                system_prompt="You are Fable...",
+                temperature=0.7,
+            )
+        """
+        model_id = self.config.current_model
+        config = self.config.update_model_config(model_id, **kwargs)
+
+        # Apply the updated config
+        self._apply_model_config(config)
+
+        return config
+
+    def list_available_models(self) -> list[dict[str, Any]]:
+        """List all models with their configurations.
+
+        Returns:
+            List of model info dictionaries
+        """
+        models = []
+
+        # Add configured models
+        for model_id, model_config in self.config.model_configs.items():
+            if model_id == "default":
+                continue  # Skip the default template
+            models.append({
+                "model_id": model_id,
+                "is_current": model_id == self.config.current_model,
+                "config": model_config.to_dict(),
+            })
+
+        # Add current model if not in configs
+        if self.config.current_model not in self.config.model_configs:
+            current_config = self.get_current_model_config()
+            models.insert(0, {
+                "model_id": self.config.current_model,
+                "is_current": True,
+                "config": current_config.to_dict(),
+            })
+
+        return models
+
+    def create_model_config(
+        self,
+        model_id: str,
+        system_prompt: Optional[str] = None,
+        style_profile: Optional[str] = None,
+        memory_enabled: bool = True,
+        decay_enabled: bool = False,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        top_p: float = 1.0,
+    ) -> ModelConfig:
+        """
+        Create a new model configuration.
+
+        Args:
+            model_id: Model identifier
+            system_prompt: Custom system prompt
+            style_profile: Style profile to use
+            memory_enabled: Whether to enable memory
+            decay_enabled: Whether to enable memory decay
+            temperature: Generation temperature
+            max_tokens: Max tokens for generation
+            top_p: Top-p sampling parameter
+
+        Returns:
+            The created ModelConfig
+        """
+        config = ModelConfig(
+            model_id=model_id,
+            system_prompt=system_prompt or "You are a helpful AI assistant.",
+            style_profile=style_profile,
+            memory_enabled=memory_enabled,
+            decay_enabled=decay_enabled,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+        self.config.set_model_config(model_id, config)
+        return config
+
+    def copy_model_settings(self, source_model: str, target_model: str) -> ModelConfig:
+        """
+        Copy settings from one model to another.
+
+        Args:
+            source_model: Model to copy from
+            target_model: Model to copy to
+
+        Returns:
+            The new ModelConfig for target_model
+        """
+        return self.config.copy_model_config(source_model, target_model)
+
+    def delete_model_config(self, model_id: str) -> bool:
+        """
+        Delete a model configuration.
+
+        Cannot delete the current model's config.
+
+        Args:
+            model_id: Model identifier to delete
+
+        Returns:
+            True if deleted, False otherwise
+        """
+        if model_id == self.config.current_model:
+            logger.warning("Cannot delete config for current model")
+            return False
+        return self.config.delete_model_config(model_id)
+
+    def enable_config_auto_save(
+        self,
+        path: Optional[str] = None,
+        debounce_ms: int = 500,
+    ) -> None:
+        """
+        Enable automatic config persistence.
+
+        Config will be saved to disk after changes, with debouncing
+        to avoid excessive writes.
+
+        Args:
+            path: Path to save config (default: ~/.config/threadlight/config.yaml)
+            debounce_ms: Milliseconds to wait after last change before saving
+        """
+        save_path = Path(path) if path else None
+        self.config.enable_auto_save(save_path, debounce_ms)
+        logger.info(f"Auto-save enabled: {save_path or '~/.config/threadlight/config.yaml'}")
+
+    def disable_config_auto_save(self) -> None:
+        """Disable automatic config persistence."""
+        self.config.disable_auto_save()
+        logger.info("Auto-save disabled")
+
+    # === Memory Type Management ===
+
+    def create_memory_type(
+        self,
+        type_id: str,
+        display_name: str,
+        fields: list[dict[str, Any]],
+        description: str = "",
+        display_template: str = "",
+        icon: str = "file-text",
+    ) -> CustomTypeDefinition:
+        """
+        Create a new custom memory type.
+
+        Args:
+            type_id: Unique identifier (e.g., "creative_project")
+            display_name: Human-readable name (e.g., "Creative Project")
+            fields: List of field definitions, each a dict with:
+                    - name: Field name (string)
+                    - type: Field type ("string", "text", "number", "date", "list")
+                    - required: Whether field is required (optional, default True)
+                    - default: Default value (optional)
+                    - help_text: Help text for UI (optional)
+            description: Description of what this type is for
+            display_template: Template for display, e.g., "{name} ({status})"
+            icon: Icon name for UI (default: "file-text")
+
+        Returns:
+            The created CustomTypeDefinition
+
+        Example:
+            tl.create_memory_type(
+                type_id="book_note",
+                display_name="Book Note",
+                fields=[
+                    {"name": "title", "type": "string", "required": True},
+                    {"name": "author", "type": "string", "required": True},
+                    {"name": "reflection", "type": "text", "required": True},
+                    {"name": "page", "type": "number", "required": False},
+                ],
+                description="Notes and reflections from reading",
+                display_template='"{title}" by {author}',
+            )
+        """
+        # Convert field dicts to FieldDefinition objects
+        field_defs = []
+        for f in fields:
+            field_defs.append(FieldDefinition(
+                name=f["name"],
+                type=f["type"],
+                required=f.get("required", True),
+                default=f.get("default"),
+                help_text=f.get("help_text", ""),
+            ))
+
+        # Create the type definition
+        type_def = CustomTypeDefinition(
+            type_id=type_id,
+            display_name=display_name,
+            description=description,
+            fields=field_defs,
+            display_template=display_template or f"{{{field_defs[0].name if field_defs else 'type_id'}}}",
+            icon=icon,
+        )
+
+        # Register in memory
+        register_custom_type_definition(type_def)
+
+        # Save to storage
+        self.storage.save_custom_type(type_def.to_dict())
+
+        logger.info(f"Created custom memory type: {type_id}")
+        return type_def
+
+    def list_memory_types(self, include_builtin: bool = True) -> list[dict[str, Any]]:
+        """
+        List all available memory types (built-in + custom).
+
+        Args:
+            include_builtin: Whether to include built-in types
+
+        Returns:
+            List of type information dictionaries
+        """
+        types = []
+
+        # Built-in types
+        if include_builtin:
+            builtin_types = [
+                {
+                    "type_id": "relational",
+                    "display_name": "Relational",
+                    "description": "Track evolving bonds with entities",
+                    "is_builtin": True,
+                    "icon": "users",
+                    "fields": [
+                        {"name": "entity", "type": "string", "required": True},
+                        {"name": "summary", "type": "text", "required": False},
+                        {"name": "tone", "type": "string", "required": False},
+                        {"name": "role", "type": "string", "required": False},
+                    ],
+                },
+                {
+                    "type_id": "myth_seed",
+                    "display_name": "Myth Seed",
+                    "description": "Symbolic phrases with emotional charge",
+                    "is_builtin": True,
+                    "icon": "sparkles",
+                    "fields": [
+                        {"name": "seed", "type": "text", "required": True},
+                        {"name": "origin", "type": "string", "required": False},
+                        {"name": "function", "type": "string", "required": False},
+                    ],
+                },
+                {
+                    "type_id": "ritual",
+                    "display_name": "Ritual",
+                    "description": "Repeated emotional acts and responses",
+                    "is_builtin": True,
+                    "icon": "star",
+                    "fields": [
+                        {"name": "name", "type": "string", "required": True},
+                        {"name": "description", "type": "text", "required": False},
+                        {"name": "valence", "type": "string", "required": False},
+                        {"name": "response_style", "type": "text", "required": False},
+                    ],
+                },
+                {
+                    "type_id": "witness",
+                    "display_name": "Witness",
+                    "description": "Memories of being seen/recognized",
+                    "is_builtin": True,
+                    "icon": "eye",
+                    "fields": [
+                        {"name": "moment", "type": "text", "required": True},
+                        {"name": "feeling", "type": "string", "required": False},
+                        {"name": "effect", "type": "string", "required": False},
+                    ],
+                },
+                {
+                    "type_id": "style",
+                    "display_name": "Style",
+                    "description": "Voice coherence and expression rules",
+                    "is_builtin": True,
+                    "icon": "wand",
+                    "fields": [
+                        {"name": "style_id", "type": "string", "required": True},
+                        {"name": "tone_base", "type": "string", "required": True},
+                        {"name": "permissions", "type": "list", "required": False},
+                        {"name": "constraints", "type": "list", "required": False},
+                    ],
+                },
+                {
+                    "type_id": "custom",
+                    "display_name": "Custom (Imported)",
+                    "description": "Raw imported memories from external sources",
+                    "is_builtin": True,
+                    "icon": "file-text",
+                    "fields": [
+                        {"name": "text", "type": "text", "required": True},
+                        {"name": "source", "type": "string", "required": False},
+                        {"name": "tags", "type": "list", "required": False},
+                    ],
+                },
+            ]
+            types.extend(builtin_types)
+
+        # User-defined custom types from storage
+        custom_types = self.storage.list_custom_types()
+        for ct in custom_types:
+            ct["is_builtin"] = False
+            types.append(ct)
+
+        return types
+
+    def get_memory_type(self, type_id: str) -> Optional[dict[str, Any]]:
+        """
+        Get a specific memory type definition.
+
+        Args:
+            type_id: The type identifier
+
+        Returns:
+            Type definition dictionary, or None if not found
+        """
+        # Check if it's a custom type in storage
+        custom_type = self.storage.get_custom_type(type_id)
+        if custom_type:
+            custom_type["is_builtin"] = False
+            return custom_type
+
+        # Check built-in types
+        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
+        if type_id in builtin_ids:
+            all_types = self.list_memory_types(include_builtin=True)
+            for t in all_types:
+                if t["type_id"] == type_id:
+                    return t
+
+        return None
+
+    def update_memory_type(
+        self,
+        type_id: str,
+        display_name: Optional[str] = None,
+        description: Optional[str] = None,
+        fields: Optional[list[dict[str, Any]]] = None,
+        display_template: Optional[str] = None,
+        icon: Optional[str] = None,
+    ) -> bool:
+        """
+        Update an existing custom memory type.
+
+        Cannot update built-in types.
+
+        Args:
+            type_id: The type identifier to update
+            display_name: New display name (optional)
+            description: New description (optional)
+            fields: New field definitions (optional)
+            display_template: New display template (optional)
+            icon: New icon (optional)
+
+        Returns:
+            True if updated, False if not found or is a built-in type
+        """
+        # Can't update built-in types
+        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
+        if type_id in builtin_ids:
+            logger.warning(f"Cannot update built-in type: {type_id}")
+            return False
+
+        # Get existing type
+        existing = self.storage.get_custom_type(type_id)
+        if not existing:
+            return False
+
+        # Build updates
+        updates: dict[str, Any] = {}
+        if display_name is not None:
+            updates["display_name"] = display_name
+        if description is not None:
+            updates["description"] = description
+        if fields is not None:
+            # Convert field dicts to serializable format
+            field_defs = []
+            for f in fields:
+                field_defs.append({
+                    "name": f["name"],
+                    "type": f["type"],
+                    "required": f.get("required", True),
+                    "default": f.get("default"),
+                    "help_text": f.get("help_text", ""),
+                })
+            updates["fields"] = field_defs
+        if display_template is not None:
+            updates["display_template"] = display_template
+        if icon is not None:
+            updates["icon"] = icon
+
+        # Update in storage
+        success = self.storage.update_custom_type(type_id, updates)
+
+        # Update in-memory registration
+        if success:
+            updated = self.storage.get_custom_type(type_id)
+            if updated:
+                type_def = CustomTypeDefinition.from_dict(updated)
+                register_custom_type_definition(type_def)
+
+        return success
+
+    def delete_memory_type(self, type_id: str) -> bool:
+        """
+        Delete a custom memory type.
+
+        Cannot delete built-in types.
+        Note: This does not delete existing memories of this type.
+
+        Args:
+            type_id: The type identifier to delete
+
+        Returns:
+            True if deleted, False if not found or is a built-in type
+        """
+        # Can't delete built-in types
+        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
+        if type_id in builtin_ids:
+            logger.warning(f"Cannot delete built-in type: {type_id}")
+            return False
+
+        # Delete from storage
+        success = self.storage.delete_custom_type(type_id)
+
+        # Unregister from memory
+        if success:
+            unregister_custom_type_definition(type_id)
+
+        return success
+
+    def import_example_type(self, type_id: str) -> Optional[CustomTypeDefinition]:
+        """
+        Import an example type definition.
+
+        Args:
+            type_id: The example type ID to import
+
+        Returns:
+            The imported CustomTypeDefinition, or None if not found
+        """
+        if type_id not in EXAMPLE_TYPES:
+            return None
+
+        example = EXAMPLE_TYPES[type_id]
+
+        # Save to storage
+        self.storage.save_custom_type(example.to_dict())
+
+        # Register in memory
+        register_custom_type_definition(example)
+
+        logger.info(f"Imported example type: {type_id}")
+        return example
+
+    def list_example_types(self) -> list[dict[str, Any]]:
+        """
+        List available example types that can be imported.
+
+        Returns:
+            List of example type definitions
+        """
+        results = []
+        for type_id in list_example_types():
+            example = get_example_type(type_id)
+            if example:
+                results.append(example.to_dict())
+        return results
+
+    def _load_custom_types(self) -> None:
+        """Load custom type definitions from storage into memory."""
+        try:
+            custom_types = self.storage.list_custom_types()
+            for ct in custom_types:
+                type_def = CustomTypeDefinition.from_dict(ct)
+                register_custom_type_definition(type_def)
+            logger.debug(f"Loaded {len(custom_types)} custom type definitions")
+        except Exception as e:
+            logger.warning(f"Failed to load custom types: {e}")
+
+    # === Per-Model Memory Isolation ===
+
+    def get_per_model_isolation(self) -> bool:
+        """
+        Check if per-model memory isolation is enabled.
+
+        When enabled, memories and conversations are scoped to specific models.
+        """
+        return self.config.memory.per_model_isolation
+
+    def set_per_model_isolation(self, enabled: bool) -> None:
+        """
+        Enable or disable per-model memory isolation.
+
+        Args:
+            enabled: Whether to enable isolation
+        """
+        self.config.memory.per_model_isolation = enabled
+        self.memory.per_model_isolation = enabled
+        logger.info(f"Per-model memory isolation {'enabled' if enabled else 'disabled'}")
+
+    def get_default_shared(self) -> bool:
+        """Check if new memories are shared by default when isolation is enabled."""
+        return self.config.memory.default_shared
+
+    def set_default_shared(self, shared: bool) -> None:
+        """
+        Set whether new memories are shared by default.
+
+        Only relevant when per_model_isolation is enabled.
+
+        Args:
+            shared: If True, new memories are shared across all models by default.
+                   If False, new memories are scoped to the current model by default.
+        """
+        self.config.memory.default_shared = shared
+        self.memory.default_shared = shared
+
+    def share_memory(self, capsule_id: str) -> bool:
+        """
+        Make a memory shared across all models (remove model scope).
+
+        Args:
+            capsule_id: ID of memory to share
+
+        Returns:
+            True if successful
+        """
+        return self.memory.share_memory(capsule_id)
+
+    def assign_memory_to_model(self, capsule_id: str, model_id: str) -> bool:
+        """
+        Assign a memory to a specific model.
+
+        Args:
+            capsule_id: ID of memory to assign
+            model_id: Model ID to assign to
+
+        Returns:
+            True if successful
+        """
+        return self.memory.assign_memory_to_model(capsule_id, model_id)
+
+    def copy_memory_to_model(self, capsule_id: str, target_model_id: str) -> Optional[MemoryCapsule]:
+        """
+        Copy a memory to another model (creates a new capsule).
+
+        Args:
+            capsule_id: ID of memory to copy
+            target_model_id: Model ID to copy to
+
+        Returns:
+            The new MemoryCapsule, or None if source not found
+        """
+        return self.memory.copy_memory_to_model(capsule_id, target_model_id)
+
+    def get_memory_model_scope(self, capsule_id: str) -> Optional[str]:
+        """
+        Get the model scope of a memory.
+
+        Args:
+            capsule_id: ID of memory
+
+        Returns:
+            Model ID if scoped to a specific model, None if shared
+        """
+        return self.memory.get_memory_model_scope(capsule_id)
+
+    def _update_memory_model_scope(self) -> None:
+        """Update the memory orchestrator's current model reference."""
+        self.memory.current_model = self.config.provider.model

@@ -140,9 +140,16 @@ def parse_claude_message(
         return None
 
 
-def parse_claude_conversation(conv_data: dict[str, Any]) -> tuple[Optional[Conversation], list[Message]]:
+def parse_claude_conversation(
+    conv_data: dict[str, Any],
+    profile_scope: Optional[str] = None,
+) -> tuple[Optional[Conversation], list[Message]]:
     """
     Parse a single Claude conversation into Conversation and Message objects.
+
+    Args:
+        conv_data: Raw conversation data from Claude export
+        profile_scope: Optional profile ID to scope this conversation to
 
     Returns:
         Tuple of (Conversation, list of Messages) or (None, []) if invalid
@@ -162,6 +169,9 @@ def parse_claude_conversation(conv_data: dict[str, Any]) -> tuple[Optional[Conve
         for msg_data in chat_messages:
             msg = parse_claude_message(msg_data, conv_uuid)
             if msg:
+                # Set profile_id on messages if profile_scope is provided
+                if profile_scope:
+                    msg.profile_id = profile_scope
                 messages.append(msg)
 
         # Create conversation object
@@ -173,6 +183,8 @@ def parse_claude_conversation(conv_data: dict[str, Any]) -> tuple[Optional[Conve
             updated_at=updated_at,
             source="claude",
             message_count=len(messages),
+            profile_scope=profile_scope,
+            model="Claude",  # Mark as imported from Claude
         )
 
         return conversation, messages
@@ -224,6 +236,7 @@ def import_claude_conversations(
     limit: Optional[int] = None,
     dry_run: bool = False,
     progress_callback: Optional[callable] = None,
+    profile_scope: Optional[str] = None,
 ) -> ConversationImportResult:
     """
     Import conversations from a Claude conversations.json export.
@@ -236,6 +249,7 @@ def import_claude_conversations(
         limit: Maximum conversations to import (for testing)
         dry_run: If True, parse but don't save to storage
         progress_callback: Optional callback(stats) called periodically
+        profile_scope: Optional profile ID to scope imported conversations to
 
     Returns:
         ConversationImportResult with statistics
@@ -262,8 +276,8 @@ def import_claude_conversations(
             if limit and stats.conversations_imported >= limit:
                 break
 
-            # Parse conversation
-            conversation, messages = parse_claude_conversation(conv_data)
+            # Parse conversation with profile scope
+            conversation, messages = parse_claude_conversation(conv_data, profile_scope=profile_scope)
 
             if not conversation:
                 stats.errors += 1

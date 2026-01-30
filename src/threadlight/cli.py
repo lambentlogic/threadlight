@@ -67,8 +67,20 @@ def print_help() -> None:
   [cyan]/style [name][/cyan]        Set or view style profile
   [cyan]/stats[/cyan]               Show memory statistics
   [cyan]/rituals[/cyan]             List your rituals
+  [cyan]/profile <cmd>[/cyan]       Manage profiles (list, create, switch, show, delete)
   [cyan]/help[/cyan]                Show this message
   [cyan]/quit[/cyan]                Exit Threadlight
+
+[bold]Profiles:[/bold]
+
+  [dim]Profiles are persistent personas with their own memories and model configs.
+  /profile list              - List all profiles
+  /profile create <name>     - Create a new profile
+  /profile switch <id/name>  - Switch to a profile
+  /profile show <id>         - Show profile details
+  /profile delete <id>       - Delete a profile
+  /profile export <id>       - Export profile to JSON
+  /profile import <file>     - Import profile from JSON[/dim]
 
 [bold]Rituals:[/bold]
 
@@ -102,6 +114,7 @@ def format_memory_table(capsules: list, title: str = "Memories") -> None:
     table = Table(title=title, border_style="dim")
     table.add_column("ID", style="dim", width=10)
     table.add_column("Type", style="cyan", width=12)
+    table.add_column("Model", style="magenta", width=15)
     table.add_column("Presence", justify="right", width=10)
     table.add_column("Content", style="white", overflow="ellipsis")
 
@@ -133,9 +146,17 @@ def format_memory_table(capsules: list, title: str = "Memories") -> None:
         else:
             presence_str = f"[dim]{presence:.2f}[/dim]"
 
+        # Model scope display
+        model_scope = getattr(c, 'model_scope', None)
+        if model_scope is None:
+            scope_str = "[green]shared[/green]"
+        else:
+            scope_str = model_scope[:12] + "..." if len(model_scope) > 15 else model_scope
+
         table.add_row(
             c.id[:8] + "...",
             c.type.value,
+            scope_str,
             presence_str,
             preview if preview else "[dim]...[/dim]"
         )
@@ -271,6 +292,9 @@ class ThreadlightREPL:
 
         elif command == "/conversations":
             self.handle_conversations()
+
+        elif command == "/profile" or command == "/profiles":
+            self.handle_profile(args)
 
         elif command.startswith("/"):
             # Any unrecognized /command is treated as a ritual invocation
@@ -667,6 +691,322 @@ class ThreadlightREPL:
         except Exception as e:
             console.print(f"[error]Failed to list conversations: {e}[/error]")
 
+    def handle_profile(self, args: str) -> None:
+        """Handle profile commands."""
+        parts = args.split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        if not subcmd or subcmd == "list":
+            self._profile_list()
+        elif subcmd == "create":
+            self._profile_create(subargs)
+        elif subcmd == "switch":
+            self._profile_switch(subargs)
+        elif subcmd == "show":
+            self._profile_show(subargs)
+        elif subcmd == "delete":
+            self._profile_delete(subargs)
+        elif subcmd == "export":
+            self._profile_export(subargs)
+        elif subcmd == "import":
+            self._profile_import(subargs)
+        elif subcmd == "clear":
+            self._profile_clear()
+        else:
+            console.print(f"[warning]Unknown profile command: {subcmd}[/warning]")
+            console.print("[dim]Available: list, create, switch, show, delete, export, import, clear[/dim]")
+
+    def _profile_list(self) -> None:
+        """List all profiles."""
+        try:
+            profiles = self.tl.list_profiles()
+            active = self.tl.get_active_profile()
+
+            if not profiles:
+                console.print("\n[dim]No profiles found. Create one with /profile create <name>[/dim]\n")
+                return
+
+            console.print("\n[bold]Profiles[/bold]\n")
+
+            table = Table(border_style="dim")
+            table.add_column("ID", style="dim", width=10)
+            table.add_column("Name", style="white")
+            table.add_column("Model", style="cyan", width=25)
+            table.add_column("Style", style="magenta", width=12)
+            table.add_column("Updated", style="dim", width=16)
+
+            for p in profiles:
+                pid = p.id[:8] + "..."
+                name = p.name
+                if active and p.id == active.id:
+                    name = f"[green]* {name}[/green]"
+
+                model = p.primary_model
+                if len(model) > 25:
+                    model = model[:22] + "..."
+
+                style = p.style_profile_id or "[dim]-[/dim]"
+                updated = p.updated_at.strftime("%Y-%m-%d %H:%M")
+
+                table.add_row(pid, name, model, style, updated)
+
+            console.print(table)
+            console.print("\n[dim]* = active profile[/dim]\n")
+
+        except Exception as e:
+            console.print(f"[error]Failed to list profiles: {e}[/error]")
+
+    def _profile_create(self, args: str) -> None:
+        """Create a new profile interactively."""
+        if not args:
+            console.print("[warning]Usage: /profile create <name>[/warning]")
+            return
+
+        try:
+            name = args.strip()
+            console.print(f"\n[bold]Creating profile: {name}[/bold]\n")
+
+            # Get optional settings
+            description = console.input("[dim]Description (optional):[/dim] ").strip()
+
+            model = console.input(f"[dim]Model (default: {self.tl.config.provider.model}):[/dim] ").strip()
+            if not model:
+                model = self.tl.config.provider.model
+
+            system_prompt = console.input("[dim]System prompt (optional, multiline with \\n):[/dim] ").strip()
+            system_prompt = system_prompt.replace("\\n", "\n")
+
+            style_id = console.input("[dim]Style profile ID (optional):[/dim] ").strip() or None
+
+            color = console.input("[dim]Color hex (optional, e.g., #6366f1):[/dim] ").strip() or None
+
+            # Create the profile
+            profile = self.tl.create_profile(
+                name=name,
+                description=description,
+                primary_model=model,
+                system_prompt=system_prompt,
+                style_profile_id=style_id,
+                color=color,
+            )
+
+            console.print(f"\n[success]Created profile: {profile.name} ({profile.id[:8]}...)[/success]")
+            console.print(f"[dim]Switch to it with: /profile switch {profile.id[:8]}[/dim]\n")
+
+        except KeyboardInterrupt:
+            console.print("\n[dim]Cancelled.[/dim]")
+        except Exception as e:
+            console.print(f"[error]Failed to create profile: {e}[/error]")
+
+    def _profile_switch(self, args: str) -> None:
+        """Switch to a profile."""
+        if not args:
+            console.print("[warning]Usage: /profile switch <profile_id or name>[/warning]")
+            return
+
+        try:
+            identifier = args.strip()
+
+            # Try to find by ID first (or partial ID)
+            profiles = self.tl.list_profiles()
+            match = None
+
+            for p in profiles:
+                if p.id.startswith(identifier) or p.name.lower() == identifier.lower():
+                    match = p
+                    break
+
+            if not match:
+                console.print(f"[error]Profile not found: {identifier}[/error]")
+                return
+
+            self.tl.switch_profile(match.id)
+            self.identity = match.name  # Update REPL identity
+
+            console.print(f"\n[success]Switched to profile: {match.name}[/success]")
+            console.print(f"[dim]Model: {match.primary_model}[/dim]")
+            if match.style_profile_id:
+                console.print(f"[dim]Style: {match.style_profile_id}[/dim]")
+            console.print()
+
+        except Exception as e:
+            console.print(f"[error]Failed to switch profile: {e}[/error]")
+
+    def _profile_show(self, args: str) -> None:
+        """Show profile details."""
+        if not args:
+            # Show active profile
+            profile = self.tl.get_active_profile()
+            if not profile:
+                console.print("[dim]No active profile. Use /profile show <id> to view one.[/dim]")
+                return
+        else:
+            # Find by ID or name
+            identifier = args.strip()
+            profiles = self.tl.list_profiles()
+            profile = None
+
+            for p in profiles:
+                if p.id.startswith(identifier) or p.name.lower() == identifier.lower():
+                    profile = p
+                    break
+
+            if not profile:
+                console.print(f"[error]Profile not found: {identifier}[/error]")
+                return
+
+        try:
+            active = self.tl.get_active_profile()
+            is_active = active and profile.id == active.id
+
+            console.print(f"\n[bold]Profile: {profile.name}[/bold]")
+            if is_active:
+                console.print("[green](active)[/green]")
+
+            console.print(f"\n[dim]ID:[/dim] {profile.id}")
+            console.print(f"[dim]Description:[/dim] {profile.description or '[none]'}")
+            console.print(f"[dim]Model:[/dim] {profile.primary_model}")
+            console.print(f"[dim]Temperature:[/dim] {profile.temperature}")
+            console.print(f"[dim]Style:[/dim] {profile.style_profile_id or '[none]'}")
+            console.print(f"[dim]Memory Scope:[/dim] {profile.memory_scope}")
+            console.print(f"[dim]Access Shared:[/dim] {profile.access_shared_memories}")
+            console.print(f"[dim]Color:[/dim] {profile.color or '[none]'}")
+            console.print(f"[dim]Created:[/dim] {profile.created_at.strftime('%Y-%m-%d %H:%M')}")
+            console.print(f"[dim]Updated:[/dim] {profile.updated_at.strftime('%Y-%m-%d %H:%M')}")
+
+            if profile.system_prompt:
+                console.print("\n[dim]System Prompt:[/dim]")
+                prompt = profile.system_prompt
+                if len(prompt) > 200:
+                    prompt = prompt[:200] + "..."
+                console.print(f"  {prompt}")
+
+            console.print()
+
+        except Exception as e:
+            console.print(f"[error]Failed to show profile: {e}[/error]")
+
+    def _profile_delete(self, args: str) -> None:
+        """Delete a profile."""
+        if not args:
+            console.print("[warning]Usage: /profile delete <profile_id>[/warning]")
+            return
+
+        try:
+            identifier = args.strip()
+
+            # Find by ID or name
+            profiles = self.tl.list_profiles()
+            profile = None
+
+            for p in profiles:
+                if p.id.startswith(identifier) or p.name.lower() == identifier.lower():
+                    profile = p
+                    break
+
+            if not profile:
+                console.print(f"[error]Profile not found: {identifier}[/error]")
+                return
+
+            # Confirm deletion
+            confirm = console.input(f"[warning]Delete profile '{profile.name}'? (y/N):[/warning] ")
+            if confirm.lower() != 'y':
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            success = self.tl.delete_profile(profile.id)
+            if success:
+                console.print(f"[success]Deleted profile: {profile.name}[/success]")
+            else:
+                console.print(f"[error]Failed to delete profile[/error]")
+
+        except KeyboardInterrupt:
+            console.print("\n[dim]Cancelled.[/dim]")
+        except Exception as e:
+            console.print(f"[error]Failed to delete profile: {e}[/error]")
+
+    def _profile_export(self, args: str) -> None:
+        """Export a profile to JSON."""
+        if not args:
+            console.print("[warning]Usage: /profile export <profile_id> [--include-memories][/warning]")
+            return
+
+        try:
+            parts = args.split()
+            identifier = parts[0]
+            include_memories = "--include-memories" in args or "-m" in args
+
+            # Find by ID or name
+            profiles = self.tl.list_profiles()
+            profile = None
+
+            for p in profiles:
+                if p.id.startswith(identifier) or p.name.lower() == identifier.lower():
+                    profile = p
+                    break
+
+            if not profile:
+                console.print(f"[error]Profile not found: {identifier}[/error]")
+                return
+
+            export_data = self.tl.export_profile(profile.id, include_memories=include_memories)
+
+            # Save to file
+            import json
+            filename = f"profile_{profile.name.lower().replace(' ', '_')}_{profile.id[:8]}.json"
+            with open(filename, 'w') as f:
+                json.dump(export_data, f, indent=2)
+
+            console.print(f"\n[success]Exported profile to: {filename}[/success]")
+            if include_memories:
+                console.print(f"[dim]Included {len(export_data.get('memories', []))} memories[/dim]")
+            console.print()
+
+        except Exception as e:
+            console.print(f"[error]Failed to export profile: {e}[/error]")
+
+    def _profile_import(self, args: str) -> None:
+        """Import a profile from JSON."""
+        if not args:
+            console.print("[warning]Usage: /profile import <file.json>[/warning]")
+            return
+
+        try:
+            import json
+            filename = args.strip()
+
+            with open(filename, 'r') as f:
+                export_data = json.load(f)
+
+            profile = self.tl.import_profile(export_data)
+
+            console.print(f"\n[success]Imported profile: {profile.name} ({profile.id[:8]}...)[/success]")
+            console.print(f"[dim]Switch to it with: /profile switch {profile.id[:8]}[/dim]\n")
+
+        except FileNotFoundError:
+            console.print(f"[error]File not found: {args}[/error]")
+        except json.JSONDecodeError:
+            console.print(f"[error]Invalid JSON file[/error]")
+        except Exception as e:
+            console.print(f"[error]Failed to import profile: {e}[/error]")
+
+    def _profile_clear(self) -> None:
+        """Clear the active profile."""
+        try:
+            active = self.tl.get_active_profile()
+            if not active:
+                console.print("[dim]No active profile to clear.[/dim]")
+                return
+
+            self.tl.clear_profile()
+            self.identity = self.identity or "Fable"
+
+            console.print("[success]Cleared active profile. Using default settings.[/success]")
+
+        except Exception as e:
+            console.print(f"[error]Failed to clear profile: {e}[/error]")
+
 
 def main() -> int:
     """Main entry point for the CLI."""
@@ -686,13 +1026,116 @@ def main() -> int:
     memory_parser = subparsers.add_parser("memory", help="Memory management")
     memory_sub = memory_parser.add_subparsers(dest="memory_command")
 
-    memory_sub.add_parser("list", help="List memory capsules")
+    memory_list_parser = memory_sub.add_parser("list", help="List memory capsules")
+    memory_list_parser.add_argument(
+        "--model",
+        help="Filter by model scope (use 'shared' for shared memories)"
+    )
+    memory_list_parser.add_argument(
+        "--include-shared",
+        action="store_true",
+        default=True,
+        help="Include shared memories when filtering by model (default: true)"
+    )
+    memory_list_parser.add_argument(
+        "--no-shared",
+        action="store_true",
+        help="Exclude shared memories when filtering by model"
+    )
+
     memory_sub.add_parser("stats", help="Show memory statistics")
     memory_sub.add_parser("export", help="Export memories to JSON")
     memory_sub.add_parser("decay", help="Run decay cycle")
 
     import_parser = memory_sub.add_parser("import", help="Import memories from JSON")
     import_parser.add_argument("file", help="JSON file to import")
+
+    # Model scope subcommands
+    scope_parser = memory_sub.add_parser("scope", help="Model scope management")
+    scope_sub = scope_parser.add_subparsers(dest="scope_command")
+
+    scope_sub.add_parser("status", help="Show per-model isolation status")
+    scope_sub.add_parser("stats", help="Show memory counts per model")
+
+    scope_enable = scope_sub.add_parser("enable", help="Enable per-model memory isolation")
+    scope_enable.add_argument(
+        "--default-shared",
+        action="store_true",
+        help="Make new memories shared by default"
+    )
+
+    scope_sub.add_parser("disable", help="Disable per-model memory isolation")
+
+    scope_share = scope_sub.add_parser("share", help="Make a memory shared across all models")
+    scope_share.add_argument("capsule_id", help="Memory ID to share")
+
+    scope_assign = scope_sub.add_parser("assign", help="Assign a memory to a specific model")
+    scope_assign.add_argument("capsule_id", help="Memory ID to assign")
+    scope_assign.add_argument("--model", help="Model to assign to (default: current model)")
+
+    # Embeddings commands
+    embeddings_parser = subparsers.add_parser("embeddings", help="Embedding management for semantic search")
+    embeddings_sub = embeddings_parser.add_subparsers(dest="embeddings_command")
+
+    embeddings_generate_parser = embeddings_sub.add_parser("generate", help="Generate embeddings for memories and conversations")
+    embeddings_generate_parser.add_argument(
+        "--memories-only",
+        action="store_true",
+        help="Only generate embeddings for memories (skip conversations)"
+    )
+    embeddings_generate_parser.add_argument(
+        "--conversations-only",
+        action="store_true",
+        help="Only generate embeddings for conversations (skip memories)"
+    )
+
+    embeddings_sub.add_parser("stats", help="Show embedding statistics")
+
+    embeddings_enable_parser = embeddings_sub.add_parser("enable", help="Enable embeddings")
+    embeddings_enable_parser.add_argument(
+        "--provider",
+        default="local",
+        choices=["local", "openai", "nous"],
+        help="Embedding provider (default: local)"
+    )
+    embeddings_enable_parser.add_argument(
+        "--model",
+        default="all-MiniLM-L6-v2",
+        help="Model name (default: all-MiniLM-L6-v2)"
+    )
+
+    embeddings_sub.add_parser("disable", help="Disable embeddings")
+
+    # Search command
+    search_parser = subparsers.add_parser("search", help="Search memories and conversations")
+    search_parser.add_argument("query", help="Search query")
+    search_parser.add_argument(
+        "--semantic",
+        action="store_true",
+        help="Use semantic search (requires embeddings)"
+    )
+    search_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum results (default: 10)"
+    )
+    search_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Minimum similarity threshold for semantic search (default: 0.5)"
+    )
+    search_parser.add_argument(
+        "--memories-only",
+        action="store_true",
+        help="Only search memories"
+    )
+    search_parser.add_argument(
+        "--conversations-only",
+        action="store_true",
+        help="Only search conversations"
+    )
 
     # Serve command
     serve_parser = subparsers.add_parser("serve", help="Start web UI and API server")
@@ -727,9 +1170,10 @@ def main() -> int:
 
     style_create_parser = style_sub.add_parser("create", help="Create a new style profile")
     style_create_parser.add_argument("name", help="Style profile name/ID")
-    style_create_parser.add_argument("--tone", default="helpful, clear", help="Base tone")
-    style_create_parser.add_argument("--permission", "-p", action="append", dest="permissions", help="Add permission")
-    style_create_parser.add_argument("--constraint", "-c", action="append", dest="constraints", help="Add constraint")
+    style_create_parser.add_argument("--tone", default="", help="Base tone (for structured styles)")
+    style_create_parser.add_argument("--permission", "-p", action="append", dest="permissions", help="Add permission (for structured styles)")
+    style_create_parser.add_argument("--constraint", "-c", action="append", dest="constraints", help="Add constraint (for structured styles)")
+    style_create_parser.add_argument("--freeform", "-f", dest="freeform_description", help="Freeform style definition (use instead of structured fields)")
 
     style_edit_parser = style_sub.add_parser("edit", help="Edit a style profile")
     style_edit_parser.add_argument("name", help="Style profile name to edit")
@@ -742,6 +1186,75 @@ def main() -> int:
 
     style_delete_parser = style_sub.add_parser("delete", help="Delete a style profile")
     style_delete_parser.add_argument("name", help="Style profile name to delete")
+
+    # Memory Type command
+    memtype_parser = subparsers.add_parser("memory-type", help="Custom memory type management")
+    memtype_sub = memtype_parser.add_subparsers(dest="memory_type_command")
+
+    memtype_sub.add_parser("list", help="List all memory types")
+
+    memtype_create_parser = memtype_sub.add_parser("create", help="Create a new custom memory type")
+    memtype_create_parser.add_argument("type_id", help="Type identifier (e.g., creative_project)")
+    memtype_create_parser.add_argument("--name", help="Display name (defaults to type_id)")
+    memtype_create_parser.add_argument("--description", "-d", default="", help="Type description")
+    memtype_create_parser.add_argument(
+        "--field", "-f",
+        action="append",
+        dest="fields",
+        help="Field definition: name:type[:required]. E.g., title:string:required or notes:text"
+    )
+    memtype_create_parser.add_argument("--template", "-t", help="Display template, e.g., '{title} ({status})'")
+    memtype_create_parser.add_argument("--icon", default="file-text", help="Icon name for UI")
+
+    memtype_show_parser = memtype_sub.add_parser("show", help="Show a memory type definition")
+    memtype_show_parser.add_argument("type_id", help="Type identifier to show")
+
+    memtype_delete_parser = memtype_sub.add_parser("delete", help="Delete a custom memory type")
+    memtype_delete_parser.add_argument("type_id", help="Type identifier to delete")
+    memtype_delete_parser.add_argument("--force", "-f", action="store_true", help="Skip confirmation")
+
+    memtype_sub.add_parser("examples", help="List available example types")
+
+    memtype_import_parser = memtype_sub.add_parser("import", help="Import an example type")
+    memtype_import_parser.add_argument(
+        "type_id",
+        help="Example type to import: creative_project, book_note, dream_log, location"
+    )
+
+    # Profile command
+    profile_parser = subparsers.add_parser("profile", help="Profile management")
+    profile_sub = profile_parser.add_subparsers(dest="profile_command")
+
+    profile_sub.add_parser("list", help="List all profiles")
+
+    profile_create_parser = profile_sub.add_parser("create", help="Create a new profile")
+    profile_create_parser.add_argument("name", help="Profile display name")
+    profile_create_parser.add_argument("--model", "-m", help="Primary model to use")
+    profile_create_parser.add_argument("--description", "-d", default="", help="Profile description")
+    profile_create_parser.add_argument("--system-prompt", "-s", help="System prompt")
+    profile_create_parser.add_argument("--style", help="Style profile ID to use")
+    profile_create_parser.add_argument("--color", help="Hex color for UI (e.g., #6366f1)")
+    profile_create_parser.add_argument("--temperature", type=float, default=0.7, help="Inference temperature (default: 0.7)")
+
+    profile_switch_parser = profile_sub.add_parser("switch", help="Switch to a profile")
+    profile_switch_parser.add_argument("identifier", help="Profile ID or name")
+
+    profile_show_parser = profile_sub.add_parser("show", help="Show profile details")
+    profile_show_parser.add_argument("identifier", nargs="?", help="Profile ID or name (omit for active profile)")
+
+    profile_delete_parser = profile_sub.add_parser("delete", help="Delete a profile")
+    profile_delete_parser.add_argument("identifier", help="Profile ID or name")
+    profile_delete_parser.add_argument("--force", "-f", action="store_true", help="Skip confirmation")
+
+    profile_export_parser = profile_sub.add_parser("export", help="Export a profile to JSON")
+    profile_export_parser.add_argument("identifier", help="Profile ID or name")
+    profile_export_parser.add_argument("--include-memories", "-m", action="store_true", help="Include profile-scoped memories")
+    profile_export_parser.add_argument("--output", "-o", help="Output file path")
+
+    profile_import_parser = profile_sub.add_parser("import", help="Import a profile from JSON")
+    profile_import_parser.add_argument("file", help="JSON file to import")
+
+    profile_sub.add_parser("clear", help="Clear the active profile")
 
     # Seed command
     seed_parser = subparsers.add_parser("seed", help="Load a seed dream")
@@ -939,6 +1452,10 @@ def main() -> int:
 
     elif args.command == "memory":
         return cmd_memory(args)
+    elif args.command == "embeddings":
+        return cmd_embeddings(args)
+    elif args.command == "search":
+        return cmd_search(args)
     elif args.command == "serve":
         return cmd_serve(args)
     elif args.command == "init":
@@ -947,6 +1464,10 @@ def main() -> int:
         return cmd_config(args)
     elif args.command == "style":
         return cmd_style(args)
+    elif args.command == "memory-type":
+        return cmd_memory_type(args)
+    elif args.command == "profile":
+        return cmd_profile(args)
     elif args.command == "seed":
         return cmd_seed(args)
     elif args.command == "import":
@@ -968,11 +1489,28 @@ def main() -> int:
 def cmd_memory(args: argparse.Namespace) -> int:
     """Memory management commands."""
     from threadlight import Threadlight
+    from threadlight.memory.schemas import CapsuleFilter
 
     tl = Threadlight(enable_memory=True)
 
     if args.memory_command == "list":
-        capsules = tl.memory.list(limit=50)
+        # Build filter based on arguments
+        model_filter = getattr(args, 'model', None)
+        no_shared = getattr(args, 'no_shared', False)
+        include_shared = not no_shared
+
+        if model_filter:
+            if model_filter.lower() == 'shared':
+                # Show only shared memories
+                filter_obj = CapsuleFilter(model_scope=None, include_shared=True)
+                capsules = tl.memory.list(limit=50, filter=filter_obj)
+                # Filter to only shared (model_scope is None)
+                capsules = [c for c in capsules if c.model_scope is None]
+            else:
+                filter_obj = CapsuleFilter(model_scope=model_filter, include_shared=include_shared)
+                capsules = tl.memory.list(limit=50, filter=filter_obj)
+        else:
+            capsules = tl.memory.list(limit=50)
         format_memory_table(capsules)
 
     elif args.memory_command == "stats":
@@ -1002,8 +1540,332 @@ def cmd_memory(args: argparse.Namespace) -> int:
         console.print(f"Decayed: {result['decayed']}")
         console.print(f"Now dormant: {result['dormant']}")
 
+    elif args.memory_command == "scope":
+        scope_cmd = getattr(args, 'scope_command', None)
+
+        if scope_cmd == "status":
+            enabled = tl.config.memory.per_model_isolation
+            default_shared = tl.config.memory.default_shared
+            current_model = tl.config.current_model
+
+            console.print("[bold]Per-Model Memory Isolation Status[/bold]")
+            console.print(f"  Enabled: {'Yes' if enabled else 'No'}")
+            console.print(f"  Default shared: {'Yes' if default_shared else 'No'}")
+            console.print(f"  Current model: {current_model or 'Not set'}")
+
+        elif scope_cmd == "stats":
+            if hasattr(tl.storage, 'count_capsules_by_model'):
+                counts = tl.storage.count_capsules_by_model()
+            else:
+                counts = {}
+
+            console.print("[bold]Memory Counts by Model[/bold]")
+            shared_count = counts.get(None, 0)
+            console.print(f"  Shared (all models): {shared_count}")
+
+            for model, count in sorted(counts.items()):
+                if model is not None:
+                    console.print(f"  {model}: {count}")
+
+            total = sum(counts.values())
+            console.print(f"\n  Total: {total}")
+
+        elif scope_cmd == "enable":
+            default_shared = getattr(args, 'default_shared', False)
+            tl.set_per_model_isolation(True)
+            if default_shared:
+                tl.set_default_shared(True)
+            console.print("[success]Per-model memory isolation enabled[/success]")
+            if default_shared:
+                console.print("  New memories will be shared by default")
+            else:
+                console.print("  New memories will be scoped to the current model")
+
+        elif scope_cmd == "disable":
+            tl.set_per_model_isolation(False)
+            console.print("[success]Per-model memory isolation disabled[/success]")
+            console.print("  All memories are now accessible by all models")
+
+        elif scope_cmd == "share":
+            capsule_id = args.capsule_id
+            success = tl.share_memory(capsule_id)
+            if success:
+                console.print(f"[success]Memory {capsule_id} is now shared across all models[/success]")
+            else:
+                console.print(f"[error]Failed to share memory {capsule_id}[/error]")
+                tl.close()
+                return 1
+
+        elif scope_cmd == "assign":
+            capsule_id = args.capsule_id
+            model = getattr(args, 'model', None) or tl.config.current_model
+            if not model:
+                console.print("[error]No model specified and no current model set[/error]")
+                console.print("  Use --model to specify the target model")
+                tl.close()
+                return 1
+            success = tl.assign_memory_to_model(capsule_id, model)
+            if success:
+                console.print(f"[success]Memory {capsule_id} assigned to model {model}[/success]")
+            else:
+                console.print(f"[error]Failed to assign memory {capsule_id} to {model}[/error]")
+                tl.close()
+                return 1
+
+        else:
+            console.print("Use 'threadlight memory scope --help' for commands")
+
     else:
         console.print("Use 'threadlight memory --help' for commands")
+
+    tl.close()
+    return 0
+
+
+def cmd_embeddings(args: argparse.Namespace) -> int:
+    """Embedding management commands."""
+    from threadlight import Threadlight
+
+    tl = Threadlight(enable_memory=True)
+
+    if args.embeddings_command == "generate":
+        if not tl.config.memory.embeddings.enabled:
+            console.print("[error]Embeddings not enabled.[/error]")
+            console.print("[dim]Run 'threadlight embeddings enable' first.[/dim]")
+            tl.close()
+            return 1
+
+        include_memories = not getattr(args, 'conversations_only', False)
+        include_conversations = not getattr(args, 'memories_only', False)
+
+        console.print("[bold]Generating embeddings...[/bold]")
+        console.print(f"  Provider: {tl.config.memory.embeddings.provider}")
+        console.print(f"  Model: {tl.config.memory.embeddings.model}")
+        console.print(f"  Memories: {include_memories}")
+        console.print(f"  Conversations: {include_conversations}")
+        console.print()
+
+        # Progress callback
+        last_update = [0, 0]  # [capsules, messages]
+
+        def progress_callback(stats):
+            if stats.capsules_updated - last_update[0] >= 50 or stats.messages_updated - last_update[1] >= 100:
+                console.print(
+                    f"  [dim]Progress: {stats.capsules_updated} capsules, "
+                    f"{stats.messages_updated} messages[/dim]"
+                )
+                last_update[0] = stats.capsules_updated
+                last_update[1] = stats.messages_updated
+
+        with console.status("[dim]Generating embeddings (this may take a while)...[/dim]", spinner="dots"):
+            try:
+                stats = tl.generate_embeddings(
+                    include_memories=include_memories,
+                    include_messages=include_conversations,
+                )
+            except Exception as e:
+                console.print(f"[error]Failed to generate embeddings: {e}[/error]")
+                tl.close()
+                return 1
+
+        console.print("\n[bold green]Embedding generation complete![/bold green]")
+        console.print(f"  Capsules processed: {stats.capsules_processed}")
+        console.print(f"  Capsules updated: {stats.capsules_updated}")
+        console.print(f"  Messages processed: {stats.messages_processed}")
+        console.print(f"  Messages updated: {stats.messages_updated}")
+        if stats.errors > 0:
+            console.print(f"  [yellow]Errors: {stats.errors}[/yellow]")
+        console.print(f"  Duration: {stats.duration_seconds:.1f}s")
+
+    elif args.embeddings_command == "stats":
+        if not tl.config.memory.embeddings.enabled:
+            console.print("[dim]Embeddings not enabled.[/dim]")
+            console.print("[dim]Run 'threadlight embeddings enable' to enable.[/dim]")
+            tl.close()
+            return 0
+
+        try:
+            stats = tl.get_embedding_stats()
+        except Exception as e:
+            console.print(f"[error]Failed to get stats: {e}[/error]")
+            tl.close()
+            return 1
+
+        console.print("\n[bold]Embedding Statistics[/bold]")
+        console.print(f"  Provider: {stats.get('provider', 'unknown')}")
+        console.print(f"  Dimension: {stats.get('dimension', 'unknown')}")
+
+        capsules = stats.get("capsules", {})
+        console.print(f"\n[bold]Memory Capsules:[/bold]")
+        console.print(f"  Total: {capsules.get('total', 0)}")
+        console.print(f"  With embeddings: {capsules.get('with_embeddings', 0)}")
+        coverage = capsules.get('coverage', 0)
+        coverage_color = "green" if coverage >= 0.9 else "yellow" if coverage >= 0.5 else "red"
+        console.print(f"  Coverage: [{coverage_color}]{coverage*100:.1f}%[/{coverage_color}]")
+
+        messages = stats.get("messages", {})
+        console.print(f"\n[bold]Messages:[/bold]")
+        console.print(f"  Total: {messages.get('total', 0)}")
+        console.print(f"  With embeddings: {messages.get('with_embeddings', 0)}")
+        msg_coverage = messages.get('coverage', 0)
+        msg_coverage_color = "green" if msg_coverage >= 0.9 else "yellow" if msg_coverage >= 0.5 else "red"
+        console.print(f"  Coverage: [{msg_coverage_color}]{msg_coverage*100:.1f}%[/{msg_coverage_color}]")
+
+    elif args.embeddings_command == "enable":
+        provider = getattr(args, 'provider', 'local')
+        model = getattr(args, 'model', 'all-MiniLM-L6-v2')
+
+        tl.config.memory.embeddings.enabled = True
+        tl.config.memory.embeddings.provider = provider
+        tl.config.memory.embeddings.model = model
+        tl.save_config()
+
+        console.print("[success]Embeddings enabled![/success]")
+        console.print(f"  Provider: {provider}")
+        console.print(f"  Model: {model}")
+        console.print("\n[dim]Run 'threadlight embeddings generate' to generate embeddings.[/dim]")
+
+    elif args.embeddings_command == "disable":
+        tl.config.memory.embeddings.enabled = False
+        tl.save_config()
+        console.print("[success]Embeddings disabled.[/success]")
+
+    else:
+        console.print("Use 'threadlight embeddings --help' for commands")
+
+    tl.close()
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    """Search memories and conversations."""
+    from threadlight import Threadlight
+
+    tl = Threadlight(enable_memory=True)
+
+    query = args.query
+    limit = getattr(args, 'limit', 10)
+    use_semantic = getattr(args, 'semantic', False)
+    memories_only = getattr(args, 'memories_only', False)
+    conversations_only = getattr(args, 'conversations_only', False)
+    threshold = getattr(args, 'threshold', 0.5)
+
+    if use_semantic:
+        if not tl.config.memory.embeddings.enabled:
+            console.print("[error]Semantic search requires embeddings.[/error]")
+            console.print("[dim]Run 'threadlight embeddings enable' and 'threadlight embeddings generate' first.[/dim]")
+            tl.close()
+            return 1
+
+        console.print(f"[bold]Semantic search for:[/bold] {query}")
+        console.print(f"[dim]Threshold: {threshold}, Limit: {limit}[/dim]\n")
+
+        results = []
+
+        with console.status("[dim]Searching...[/dim]", spinner="dots"):
+            try:
+                if not conversations_only:
+                    memory_results = tl.search_memories_semantic(
+                        query=query,
+                        limit=limit,
+                        threshold=threshold,
+                    )
+                    results.extend(memory_results)
+
+                if not memories_only:
+                    conv_results = tl.search_conversations_semantic(
+                        query=query,
+                        limit=limit,
+                        threshold=threshold,
+                    )
+                    results.extend(conv_results)
+
+            except Exception as e:
+                console.print(f"[error]Search failed: {e}[/error]")
+                tl.close()
+                return 1
+
+        # Sort and limit results
+        results.sort(key=lambda r: r.similarity_score, reverse=True)
+        results = results[:limit]
+
+        if not results:
+            console.print("[dim]No results found.[/dim]")
+            tl.close()
+            return 0
+
+        console.print(f"[bold]Results ({len(results)} found):[/bold]\n")
+
+        table = Table(border_style="dim")
+        table.add_column("Type", style="cyan", width=10)
+        table.add_column("Score", style="green", width=8)
+        table.add_column("Content", style="white", overflow="ellipsis")
+        table.add_column("Source", style="dim", width=20)
+
+        for result in results:
+            result_dict = result.to_dict()
+            result_type = result_dict.get("type", "unknown")
+
+            if result_type == "capsule":
+                content = result_dict.get("content", {})
+                # Try to get a preview
+                preview = ""
+                if "seed" in content:
+                    preview = content.get("content", {}).get("seed", "")[:60]
+                elif "entity" in content:
+                    preview = f"{content.get('content', {}).get('entity', '')}: {content.get('content', {}).get('summary', '')[:40]}"
+                elif "name" in content:
+                    preview = f"{content.get('content', {}).get('name', '')}: {content.get('content', {}).get('description', '')[:40]}"
+                else:
+                    preview = str(content.get("content", {}))[:60]
+                source = f"capsule:{result_dict.get('capsule_type', '')}"
+            else:
+                preview = result_dict.get("content", "")[:60]
+                source = result_dict.get("conversation_name", "")[:20] or "[conversation]"
+
+            similarity = result_dict.get("similarity_score", 0)
+
+            table.add_row(
+                result_type,
+                f"{similarity:.2f}",
+                preview + ("..." if len(preview) == 60 else ""),
+                source,
+            )
+
+        console.print(table)
+
+    else:
+        # Keyword search (existing functionality)
+        console.print(f"[bold]Keyword search for:[/bold] {query}\n")
+
+        with console.status("[dim]Searching...[/dim]", spinner="dots"):
+            if not conversations_only:
+                capsules = tl.recall(query, limit=limit)
+                if capsules:
+                    format_memory_table(capsules, f"Memories matching '{query}'")
+
+            if not memories_only:
+                results = tl.search_conversations(query, limit=limit)
+                if results:
+                    console.print(f"\n[bold]Conversations matching '{query}':[/bold]\n")
+
+                    table = Table(border_style="dim")
+                    table.add_column("Conversation", style="white", width=20)
+                    table.add_column("Role", style="cyan", width=10)
+                    table.add_column("Content", style="white", overflow="ellipsis")
+
+                    for result in results:
+                        msg = result.message
+                        conv_name = result.conversation_name or "[unnamed]"
+                        if len(conv_name) > 20:
+                            conv_name = conv_name[:17] + "..."
+
+                        role_label = "You" if msg.role == "user" else "Assistant"
+                        content = msg.content[:60] + ("..." if len(msg.content) > 60 else "")
+
+                        table.add_row(conv_name, role_label, content)
+
+                    console.print(table)
 
     tl.close()
     return 0
@@ -1251,14 +2113,24 @@ def cmd_style(args: argparse.Namespace) -> int:
             tl.close()
             return 1
 
+        # Check if using freeform mode
+        freeform_description = getattr(args, 'freeform_description', None)
+        use_freeform = bool(freeform_description)
+
         profile = tl.create_style_profile(
             style_id=args.name,
-            tone_base=args.tone,
+            tone_base=args.tone if not use_freeform else "",
             permissions=args.permissions or [],
             constraints=args.constraints or [],
+            freeform_description=freeform_description or "",
+            use_freeform=use_freeform,
         )
         tl.save_style_profile(profile)
-        console.print(f"[success]Created style profile: {args.name}[/success]")
+
+        if use_freeform:
+            console.print(f"[success]Created freeform style profile: {args.name}[/success]")
+        else:
+            console.print(f"[success]Created style profile: {args.name}[/success]")
         tl.close()
 
     elif args.style_command == "edit":
@@ -1364,15 +2236,23 @@ def cmd_style(args: argparse.Namespace) -> int:
                 return 1
 
             console.print(f"\n[bold]Style: {args.name}[/bold]\n")
-            style_dict = {
-                "style_id": profile.style_id,
-                "tone_base": profile.tone_base,
-                "permissions": profile.permissions,
-                "constraints": profile.constraints,
-                "vocal_motifs": profile.vocal_motifs,
-                "forbidden_patterns": profile.forbidden_patterns,
-            }
-            console.print(yaml.dump(style_dict, default_flow_style=False))
+
+            # Check if freeform style
+            if profile.use_freeform and profile.freeform_description:
+                console.print("[dim]Type: Freeform[/dim]\n")
+                console.print("[bold]Style Definition:[/bold]")
+                console.print(profile.freeform_description)
+            else:
+                console.print("[dim]Type: Structured[/dim]\n")
+                style_dict = {
+                    "style_id": profile.style_id,
+                    "tone_base": profile.tone_base,
+                    "permissions": profile.permissions,
+                    "constraints": profile.constraints,
+                    "vocal_motifs": profile.vocal_motifs,
+                    "forbidden_patterns": profile.forbidden_patterns,
+                }
+                console.print(yaml.dump(style_dict, default_flow_style=False))
 
         tl.close()
 
@@ -1396,6 +2276,471 @@ def cmd_style(args: argparse.Namespace) -> int:
 
     else:
         console.print("Use 'threadlight style --help' for commands")
+
+    return 0
+
+
+def cmd_memory_type(args: argparse.Namespace) -> int:
+    """Custom memory type management commands."""
+    from threadlight import Threadlight
+    from threadlight.capsules import (
+        FieldDefinition,
+        CustomTypeDefinition,
+        EXAMPLE_TYPES,
+        list_example_types,
+        get_example_type,
+    )
+
+    if args.memory_type_command == "list":
+        tl = Threadlight(enable_memory=True)
+        types = tl.list_memory_types(include_builtin=False)
+
+        console.print("\n[bold]Custom Memory Types[/bold]\n")
+
+        if not types:
+            console.print("[dim]No custom memory types defined.[/dim]")
+            console.print("\nCreate one with: threadlight memory-type create <type_id>")
+            console.print("Or import an example: threadlight memory-type import <example_id>")
+        else:
+            table = Table(border_style="dim")
+            table.add_column("Type ID", style="cyan")
+            table.add_column("Fields", style="white")
+            table.add_column("Description", style="dim")
+
+            for t in types:
+                fields = t.get("fields", [])
+                field_names = [f.get("name", "") for f in fields]
+                table.add_row(
+                    t.get("type_id", ""),
+                    ", ".join(field_names[:5]) + ("..." if len(field_names) > 5 else ""),
+                    (t.get("description") or "")[:50],
+                )
+
+            console.print(table)
+
+        console.print()
+        tl.close()
+
+    elif args.memory_type_command == "create":
+        tl = Threadlight(enable_memory=True)
+
+        # Check if type already exists
+        existing = tl.get_memory_type(args.type_id)
+        if existing:
+            console.print(f"[error]Memory type already exists: {args.type_id}[/error]")
+            tl.close()
+            return 1
+
+        # Parse fields
+        fields = []
+        for field_str in args.fields or []:
+            parts = field_str.split(":")
+            if len(parts) < 2:
+                console.print(f"[error]Invalid field format: {field_str}[/error]")
+                console.print("Expected format: name:type[:required]")
+                tl.close()
+                return 1
+
+            name = parts[0]
+            field_type = parts[1]
+            required = len(parts) > 2 and parts[2].lower() == "required"
+
+            if field_type not in ("string", "text", "number", "date", "list"):
+                console.print(f"[error]Invalid field type: {field_type}[/error]")
+                console.print("Valid types: string, text, number, date, list")
+                tl.close()
+                return 1
+
+            fields.append({
+                "name": name,
+                "type": field_type,
+                "required": required,
+            })
+
+        if not fields:
+            console.print("[error]At least one field is required[/error]")
+            console.print("Use: --field name:type[:required]")
+            tl.close()
+            return 1
+
+        # Generate display name from type_id
+        display_name = args.name if args.name else args.type_id.replace("_", " ").title()
+
+        # Create type definition
+        type_def = tl.create_memory_type(
+            type_id=args.type_id,
+            display_name=display_name,
+            fields=fields,
+            description=args.description or "",
+            display_template=args.template or "",
+        )
+
+        console.print(f"[success]Created memory type: {args.type_id}[/success]")
+        console.print(f"  Fields: {', '.join(f['name'] for f in fields)}")
+        if args.template:
+            console.print(f"  Display template: {args.template}")
+
+        tl.close()
+
+    elif args.memory_type_command == "show":
+        tl = Threadlight(enable_memory=True)
+
+        type_def = tl.get_memory_type(args.type_id)
+        if not type_def:
+            console.print(f"[error]Memory type not found: {args.type_id}[/error]")
+            tl.close()
+            return 1
+
+        console.print(f"\n[bold]Memory Type: {type_def.get('type_id', '')}[/bold]\n")
+
+        description = type_def.get("description")
+        if description:
+            console.print(f"[dim]{description}[/dim]\n")
+
+        console.print("[bold]Fields:[/bold]")
+        for field in type_def.get("fields", []):
+            required = field.get("required", False)
+            req_mark = " [yellow](required)[/yellow]" if required else ""
+            desc = f" - {field.get('description', '')}" if field.get("description") else ""
+            field_type = field.get("field_type") or field.get("type", "string")
+            console.print(f"  {field.get('name', '')}: {field_type}{req_mark}{desc}")
+
+        display_template = type_def.get("display_template")
+        if display_template:
+            console.print(f"\n[bold]Display Template:[/bold] {display_template}")
+
+        console.print()
+        tl.close()
+
+    elif args.memory_type_command == "delete":
+        tl = Threadlight(enable_memory=True)
+
+        type_def = tl.get_memory_type(args.type_id)
+        if not type_def:
+            console.print(f"[error]Memory type not found: {args.type_id}[/error]")
+            tl.close()
+            return 1
+
+        if not args.force:
+            console.print(f"[warning]This will delete memory type '{args.type_id}'[/warning]")
+            console.print("Existing memories of this type will become orphaned.")
+            confirm = input("Type 'yes' to confirm: ")
+            if confirm.lower() != "yes":
+                console.print("[dim]Cancelled.[/dim]")
+                tl.close()
+                return 0
+
+        success = tl.delete_memory_type(args.type_id)
+        if success:
+            console.print(f"[success]Deleted memory type: {args.type_id}[/success]")
+        else:
+            console.print(f"[error]Failed to delete memory type: {args.type_id}[/error]")
+            tl.close()
+            return 1
+
+        tl.close()
+
+    elif args.memory_type_command == "examples":
+        console.print("\n[bold]Example Memory Types[/bold]\n")
+        console.print("[dim]These are pre-defined type templates you can import.[/dim]\n")
+
+        table = Table(border_style="dim")
+        table.add_column("ID", style="cyan")
+        table.add_column("Fields", style="white")
+        table.add_column("Description", style="dim")
+
+        for type_id in list_example_types():
+            example = get_example_type(type_id)
+            if example:
+                field_names = [f.name for f in example.fields]
+                table.add_row(
+                    type_id,
+                    ", ".join(field_names[:4]) + ("..." if len(field_names) > 4 else ""),
+                    (example.description or "")[:40],
+                )
+
+        console.print(table)
+        console.print("\nImport with: threadlight memory-type import <example_id>")
+        console.print()
+
+    elif args.memory_type_command == "import":
+        tl = Threadlight(enable_memory=True)
+
+        # Check if already exists
+        existing = tl.get_memory_type(args.type_id)
+        if existing:
+            console.print(f"[error]Memory type already exists: {args.type_id}[/error]")
+            tl.close()
+            return 1
+
+        type_def = tl.import_example_type(args.type_id)
+        if not type_def:
+            console.print(f"[error]Example type not found: {args.type_id}[/error]")
+            console.print("Use 'threadlight memory-type examples' to see available examples.")
+            tl.close()
+            return 1
+
+        console.print(f"[success]Imported memory type: {args.type_id}[/success]")
+        console.print(f"  Fields: {', '.join(f.name for f in type_def.fields)}")
+
+        tl.close()
+
+    else:
+        console.print("Use 'threadlight memory-type --help' for commands")
+
+    return 0
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    """Profile management commands."""
+    from threadlight import Threadlight
+    import json
+
+    if args.profile_command == "list":
+        tl = Threadlight(enable_memory=True)
+        profiles = tl.list_profiles()
+        active = tl.get_active_profile()
+
+        if not profiles:
+            console.print("\n[dim]No profiles found. Create one with:[/dim]")
+            console.print("  threadlight profile create <name>\n")
+            tl.close()
+            return 0
+
+        console.print("\n[bold]Profiles[/bold]\n")
+
+        table = Table(border_style="dim")
+        table.add_column("ID", style="dim", width=10)
+        table.add_column("Name", style="white")
+        table.add_column("Model", style="cyan", width=30)
+        table.add_column("Style", style="magenta", width=12)
+        table.add_column("Updated", style="dim", width=16)
+
+        for p in profiles:
+            pid = p.id[:8] + "..."
+            name = p.name
+            if active and p.id == active.id:
+                name = f"[green]* {name}[/green]"
+
+            model = p.primary_model
+            if len(model) > 30:
+                model = model[:27] + "..."
+
+            style = p.style_profile_id or "-"
+            updated = p.updated_at.strftime("%Y-%m-%d %H:%M")
+
+            table.add_row(pid, name, model, style, updated)
+
+        console.print(table)
+        console.print("\n[dim]* = active profile[/dim]\n")
+        tl.close()
+
+    elif args.profile_command == "create":
+        tl = Threadlight(enable_memory=True)
+
+        model = args.model or tl.config.provider.model
+        profile = tl.create_profile(
+            name=args.name,
+            description=args.description,
+            primary_model=model,
+            system_prompt=args.system_prompt or "",
+            style_profile_id=args.style,
+            color=args.color,
+            temperature=args.temperature,
+        )
+
+        console.print(f"\n[success]Created profile: {profile.name}[/success]")
+        console.print(f"  ID: {profile.id}")
+        console.print(f"  Model: {profile.primary_model}")
+        console.print("\nSwitch to it with:")
+        console.print(f"  threadlight profile switch {profile.id[:8]}\n")
+        tl.close()
+
+    elif args.profile_command == "switch":
+        tl = Threadlight(enable_memory=True)
+
+        # Find by ID or name
+        profiles = tl.list_profiles()
+        match = None
+        identifier = args.identifier
+
+        for p in profiles:
+            if p.id.startswith(identifier) or p.name.lower() == identifier.lower():
+                match = p
+                break
+
+        if not match:
+            console.print(f"[error]Profile not found: {identifier}[/error]")
+            tl.close()
+            return 1
+
+        tl.switch_profile(match.id)
+        console.print(f"\n[success]Switched to profile: {match.name}[/success]")
+        console.print(f"  Model: {match.primary_model}")
+        if match.style_profile_id:
+            console.print(f"  Style: {match.style_profile_id}")
+        console.print()
+        tl.close()
+
+    elif args.profile_command == "show":
+        tl = Threadlight(enable_memory=True)
+
+        if args.identifier:
+            # Find by ID or name
+            profiles = tl.list_profiles()
+            profile = None
+            for p in profiles:
+                if p.id.startswith(args.identifier) or p.name.lower() == args.identifier.lower():
+                    profile = p
+                    break
+            if not profile:
+                console.print(f"[error]Profile not found: {args.identifier}[/error]")
+                tl.close()
+                return 1
+        else:
+            profile = tl.get_active_profile()
+            if not profile:
+                console.print("[dim]No active profile. Use /profile show <id> to view one.[/dim]")
+                tl.close()
+                return 0
+
+        active = tl.get_active_profile()
+        is_active = active and profile.id == active.id
+
+        console.print(f"\n[bold]Profile: {profile.name}[/bold]")
+        if is_active:
+            console.print("[green](active)[/green]")
+
+        console.print(f"\n[dim]ID:[/dim] {profile.id}")
+        console.print(f"[dim]Description:[/dim] {profile.description or '[none]'}")
+        console.print(f"[dim]Model:[/dim] {profile.primary_model}")
+        console.print(f"[dim]Temperature:[/dim] {profile.temperature}")
+        console.print(f"[dim]Style:[/dim] {profile.style_profile_id or '[none]'}")
+        console.print(f"[dim]Memory Scope:[/dim] {profile.memory_scope}")
+        console.print(f"[dim]Access Shared:[/dim] {profile.access_shared_memories}")
+        console.print(f"[dim]Color:[/dim] {profile.color or '[none]'}")
+        console.print(f"[dim]Created:[/dim] {profile.created_at.strftime('%Y-%m-%d %H:%M')}")
+        console.print(f"[dim]Updated:[/dim] {profile.updated_at.strftime('%Y-%m-%d %H:%M')}")
+
+        if profile.system_prompt:
+            console.print("\n[dim]System Prompt:[/dim]")
+            prompt = profile.system_prompt
+            if len(prompt) > 300:
+                prompt = prompt[:300] + "..."
+            console.print(f"  {prompt}")
+
+        console.print()
+        tl.close()
+
+    elif args.profile_command == "delete":
+        tl = Threadlight(enable_memory=True)
+
+        # Find by ID or name
+        profiles = tl.list_profiles()
+        profile = None
+        for p in profiles:
+            if p.id.startswith(args.identifier) or p.name.lower() == args.identifier.lower():
+                profile = p
+                break
+
+        if not profile:
+            console.print(f"[error]Profile not found: {args.identifier}[/error]")
+            tl.close()
+            return 1
+
+        if not args.force:
+            console.print(f"[warning]This will delete profile '{profile.name}'[/warning]")
+            confirm = input("Type 'yes' to confirm: ")
+            if confirm.lower() != "yes":
+                console.print("[dim]Cancelled.[/dim]")
+                tl.close()
+                return 0
+
+        success = tl.delete_profile(profile.id)
+        if success:
+            console.print(f"[success]Deleted profile: {profile.name}[/success]")
+        else:
+            console.print(f"[error]Failed to delete profile[/error]")
+            tl.close()
+            return 1
+
+        tl.close()
+
+    elif args.profile_command == "export":
+        tl = Threadlight(enable_memory=True)
+
+        # Find by ID or name
+        profiles = tl.list_profiles()
+        profile = None
+        for p in profiles:
+            if p.id.startswith(args.identifier) or p.name.lower() == args.identifier.lower():
+                profile = p
+                break
+
+        if not profile:
+            console.print(f"[error]Profile not found: {args.identifier}[/error]")
+            tl.close()
+            return 1
+
+        export_data = tl.export_profile(
+            profile.id,
+            include_memories=args.include_memories,
+        )
+
+        # Determine output file
+        if args.output:
+            filename = args.output
+        else:
+            safe_name = profile.name.lower().replace(' ', '_').replace('/', '_')
+            filename = f"profile_{safe_name}_{profile.id[:8]}.json"
+
+        with open(filename, 'w') as f:
+            json.dump(export_data, f, indent=2)
+
+        console.print(f"\n[success]Exported profile to: {filename}[/success]")
+        if args.include_memories:
+            mem_count = len(export_data.get('memories', []))
+            console.print(f"[dim]Included {mem_count} memories[/dim]")
+        console.print()
+        tl.close()
+
+    elif args.profile_command == "import":
+        tl = Threadlight(enable_memory=True)
+
+        try:
+            with open(args.file, 'r') as f:
+                export_data = json.load(f)
+        except FileNotFoundError:
+            console.print(f"[error]File not found: {args.file}[/error]")
+            tl.close()
+            return 1
+        except json.JSONDecodeError:
+            console.print(f"[error]Invalid JSON file: {args.file}[/error]")
+            tl.close()
+            return 1
+
+        profile = tl.import_profile(export_data)
+        console.print(f"\n[success]Imported profile: {profile.name}[/success]")
+        console.print(f"  ID: {profile.id}")
+        console.print("\nSwitch to it with:")
+        console.print(f"  threadlight profile switch {profile.id[:8]}\n")
+        tl.close()
+
+    elif args.profile_command == "clear":
+        tl = Threadlight(enable_memory=True)
+        active = tl.get_active_profile()
+
+        if not active:
+            console.print("[dim]No active profile to clear.[/dim]")
+            tl.close()
+            return 0
+
+        tl.clear_profile()
+        console.print("[success]Cleared active profile. Using default settings.[/success]")
+        tl.close()
+
+    else:
+        console.print("Use 'threadlight profile --help' for commands")
 
     return 0
 

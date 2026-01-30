@@ -20,6 +20,20 @@ from threadlight.capsules.base import (
     CapsuleRegistry,
     register_capsule_type,
     get_capsule_class,
+    CustomTypeCapsule,
+    register_custom_type_definition,
+    unregister_custom_type_definition,
+    get_custom_type_definition,
+    list_custom_type_definitions,
+    is_custom_type,
+)
+from threadlight.capsules.custom_types import (
+    FieldDefinition,
+    CustomTypeDefinition,
+    EXAMPLE_TYPES,
+    get_example_type,
+    list_example_types,
+    FIELD_TYPES,
 )
 from threadlight.capsules.relational import RelationalThread, create_relational
 from threadlight.capsules.myth_seed import MythSeed, create_myth_seed, FOUNDATIONAL_SEEDS
@@ -55,6 +69,19 @@ __all__ = [
     "StyleProfile",
     "WitnessMoment",
     "ImportedMemory",
+    "CustomTypeCapsule",
+    # Custom type system
+    "FieldDefinition",
+    "CustomTypeDefinition",
+    "register_custom_type_definition",
+    "unregister_custom_type_definition",
+    "get_custom_type_definition",
+    "list_custom_type_definitions",
+    "is_custom_type",
+    "EXAMPLE_TYPES",
+    "get_example_type",
+    "list_example_types",
+    "FIELD_TYPES",
     # Factory functions
     "create_capsule",
     "capsule_from_simple",

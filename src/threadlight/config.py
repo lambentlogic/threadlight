@@ -2,14 +2,16 @@
 Configuration management for Threadlight.
 
 Supports environment variables, configuration files, and programmatic configuration.
+Includes per-model configuration profiles and automatic config persistence.
 """
 
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -74,15 +76,31 @@ class ConversationConfig:
 
 
 @dataclass
+class EmbeddingsConfig:
+    """Configuration for semantic search embeddings."""
+
+    enabled: bool = False  # Whether embeddings are enabled
+    provider: str = "local"  # "local", "openai", or "nous"
+    model: str = "all-MiniLM-L6-v2"  # Model name for the provider
+    auto_generate: bool = True  # Generate embeddings automatically on save
+    batch_size: int = 100  # Batch size for bulk operations
+    similarity_threshold: float = 0.5  # Minimum similarity for search results
+
+
+@dataclass
 class MemoryConfig:
     """Configuration for memory system."""
 
     decay: DecayConfig = field(default_factory=DecayConfig)
     proposals: ProposalConfig = field(default_factory=ProposalConfig)
     conversation: ConversationConfig = field(default_factory=ConversationConfig)
+    embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
     max_capsules_per_request: int = 5
     similarity_threshold: float = 0.7
-    enable_embeddings: bool = False
+    enable_embeddings: bool = False  # Deprecated: use embeddings.enabled instead
+    # Per-model memory isolation
+    per_model_isolation: bool = False  # When true, memories are scoped to specific models
+    default_shared: bool = False  # When per_model_isolation is true, whether new memories are shared by default
 
 
 @dataclass
@@ -116,8 +134,55 @@ class IdentityConfig:
 
 
 @dataclass
+class ModelConfig:
+    """Configuration for a specific model."""
+
+    model_id: str
+    system_prompt: str = "You are a helpful AI assistant."
+    style_profile: Optional[str] = None
+    memory_enabled: bool = True
+    decay_enabled: bool = False
+    temperature: float = 0.7
+    max_tokens: Optional[int] = None
+    top_p: float = 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Export model config as dictionary."""
+        return {
+            "model_id": self.model_id,
+            "system_prompt": self.system_prompt,
+            "style_profile": self.style_profile,
+            "memory": {
+                "enabled": self.memory_enabled,
+                "decay_enabled": self.decay_enabled,
+            },
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ModelConfig":
+        """Create ModelConfig from dictionary."""
+        memory_data = data.get("memory", {})
+        return cls(
+            model_id=data.get("model_id", "unknown"),
+            system_prompt=data.get("system_prompt", "You are a helpful AI assistant."),
+            style_profile=data.get("style_profile"),
+            memory_enabled=memory_data.get("enabled", True) if isinstance(memory_data, dict) else True,
+            decay_enabled=memory_data.get("decay_enabled", False) if isinstance(memory_data, dict) else False,
+            temperature=data.get("temperature", 0.7),
+            max_tokens=data.get("max_tokens"),
+            top_p=data.get("top_p", 1.0),
+        )
+
+
+@dataclass
 class ThreadlightConfig:
-    """Main configuration for Threadlight."""
+    """Main configuration for Threadlight.
+
+    Supports per-model configuration profiles and automatic persistence.
+    """
 
     provider: ProviderConfig = field(default_factory=ProviderConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
@@ -125,6 +190,18 @@ class ThreadlightConfig:
     style: StyleConfig = field(default_factory=StyleConfig)
     identity: IdentityConfig = field(default_factory=IdentityConfig)
     custom_styles: dict[str, CustomStyleConfig] = field(default_factory=dict)
+
+    # Model-specific configurations
+    current_model: str = "Hermes-4.3-36B"
+    model_configs: dict[str, ModelConfig] = field(default_factory=dict)
+
+    # Auto-save configuration (not persisted)
+    _auto_save: bool = field(default=False, repr=False)
+    _config_path: Optional[Path] = field(default=None, repr=False)
+    _save_timer: Optional[threading.Timer] = field(default=None, repr=False)
+    _save_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _save_debounce_ms: int = field(default=500, repr=False)
+    _on_save_callback: Optional[Callable[[], None]] = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls) -> ThreadlightConfig:
@@ -264,8 +341,25 @@ class ThreadlightConfig:
                     soft_memory_limit=cv.get("soft_memory_limit", config.memory.conversation.soft_memory_limit),
                     current_session_weight=cv.get("current_session_weight", config.memory.conversation.current_session_weight),
                 )
+            if "embeddings" in m:
+                em = m["embeddings"]
+                config.memory.embeddings = EmbeddingsConfig(
+                    enabled=em.get("enabled", config.memory.embeddings.enabled),
+                    provider=em.get("provider", config.memory.embeddings.provider),
+                    model=em.get("model", config.memory.embeddings.model),
+                    auto_generate=em.get("auto_generate", config.memory.embeddings.auto_generate),
+                    batch_size=em.get("batch_size", config.memory.embeddings.batch_size),
+                    similarity_threshold=em.get("similarity_threshold", config.memory.embeddings.similarity_threshold),
+                )
             config.memory.max_capsules_per_request = m.get(
                 "max_capsules", config.memory.max_capsules_per_request
+            )
+            # Per-model memory isolation settings
+            config.memory.per_model_isolation = m.get(
+                "per_model_isolation", config.memory.per_model_isolation
+            )
+            config.memory.default_shared = m.get(
+                "default_shared", config.memory.default_shared
             )
 
         if "style" in data:
@@ -296,6 +390,16 @@ class ThreadlightConfig:
                     vocal_motifs=style_data.get("vocal_motifs", []),
                     forbidden_patterns=style_data.get("forbidden_patterns", []),
                 )
+
+        # Parse current model
+        if "current_model" in data:
+            config.current_model = data["current_model"]
+
+        # Parse model configs
+        if "model_configs" in data:
+            for model_id, model_data in data["model_configs"].items():
+                model_data["model_id"] = model_id
+                config.model_configs[model_id] = ModelConfig.from_dict(model_data)
 
         return config
 
@@ -330,7 +434,17 @@ class ThreadlightConfig:
                     "soft_memory_limit": self.memory.conversation.soft_memory_limit,
                     "current_session_weight": self.memory.conversation.current_session_weight,
                 },
+                "embeddings": {
+                    "enabled": self.memory.embeddings.enabled,
+                    "provider": self.memory.embeddings.provider,
+                    "model": self.memory.embeddings.model,
+                    "auto_generate": self.memory.embeddings.auto_generate,
+                    "batch_size": self.memory.embeddings.batch_size,
+                    "similarity_threshold": self.memory.embeddings.similarity_threshold,
+                },
                 "max_capsules": self.memory.max_capsules_per_request,
+                "per_model_isolation": self.memory.per_model_isolation,
+                "default_shared": self.memory.default_shared,
             },
             "style": {
                 "default_profile": self.style.default_profile,
@@ -352,13 +466,18 @@ class ThreadlightConfig:
                 }
                 for style_id, style in self.custom_styles.items()
             },
+            "current_model": self.current_model,
+            "model_configs": {
+                model_id: model_config.to_dict()
+                for model_id, model_config in self.model_configs.items()
+            },
         }
         return result
 
     def save_to_file(self, path: Optional[str | Path] = None) -> Path:
         """Save configuration to a YAML file."""
         if path is None:
-            path = self.get_user_config_dir() / "config.yaml"
+            path = self._config_path or self.get_user_config_dir() / "config.yaml"
         else:
             path = Path(path)
 
@@ -368,3 +487,270 @@ class ThreadlightConfig:
             yaml.dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
 
         return path
+
+    # === Model Configuration Management ===
+
+    def get_model_config(self, model_id: Optional[str] = None) -> ModelConfig:
+        """Get config for specific model, or default if not found.
+
+        Args:
+            model_id: Model identifier. If None, uses current_model.
+
+        Returns:
+            ModelConfig for the specified model
+        """
+        model_id = model_id or self.current_model
+
+        if model_id in self.model_configs:
+            return self.model_configs[model_id]
+
+        # Check for a default config
+        if "default" in self.model_configs:
+            default_config = self.model_configs["default"]
+            # Create a copy with the new model_id
+            return ModelConfig(
+                model_id=model_id,
+                system_prompt=default_config.system_prompt,
+                style_profile=default_config.style_profile,
+                memory_enabled=default_config.memory_enabled,
+                decay_enabled=default_config.decay_enabled,
+                temperature=default_config.temperature,
+                max_tokens=default_config.max_tokens,
+                top_p=default_config.top_p,
+            )
+
+        # Return a new default config
+        return ModelConfig(
+            model_id=model_id,
+            system_prompt=self.identity.system_prompt,
+            style_profile=self.style.default_profile,
+            memory_enabled=True,
+            decay_enabled=self.memory.decay.enabled,
+            temperature=0.7,
+        )
+
+    def set_model_config(self, model_id: str, config: ModelConfig) -> None:
+        """Set config for specific model.
+
+        Args:
+            model_id: Model identifier
+            config: ModelConfig to set
+        """
+        self.model_configs[model_id] = config
+        self._trigger_auto_save()
+
+    def update_model_config(self, model_id: str, **kwargs: Any) -> ModelConfig:
+        """Update specific fields of a model config.
+
+        Args:
+            model_id: Model identifier
+            **kwargs: Fields to update
+
+        Returns:
+            Updated ModelConfig
+        """
+        config = self.get_model_config(model_id)
+
+        for key, value in kwargs.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+
+        self.model_configs[model_id] = config
+        self._trigger_auto_save()
+        return config
+
+    def list_model_configs(self) -> list[str]:
+        """List all configured model IDs.
+
+        Returns:
+            List of model identifiers
+        """
+        return list(self.model_configs.keys())
+
+    def delete_model_config(self, model_id: str) -> bool:
+        """Delete a model config.
+
+        Args:
+            model_id: Model identifier to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        if model_id in self.model_configs:
+            del self.model_configs[model_id]
+            self._trigger_auto_save()
+            return True
+        return False
+
+    def copy_model_config(self, source_model_id: str, target_model_id: str) -> ModelConfig:
+        """Copy settings from one model to another.
+
+        Args:
+            source_model_id: Model to copy from
+            target_model_id: Model to copy to
+
+        Returns:
+            The new ModelConfig
+        """
+        source = self.get_model_config(source_model_id)
+        new_config = ModelConfig(
+            model_id=target_model_id,
+            system_prompt=source.system_prompt,
+            style_profile=source.style_profile,
+            memory_enabled=source.memory_enabled,
+            decay_enabled=source.decay_enabled,
+            temperature=source.temperature,
+            max_tokens=source.max_tokens,
+            top_p=source.top_p,
+        )
+        self.model_configs[target_model_id] = new_config
+        self._trigger_auto_save()
+        return new_config
+
+    def set_as_default(self, model_id: str) -> None:
+        """Set a model's config as the default for new models.
+
+        Args:
+            model_id: Model whose config to use as default
+        """
+        source = self.get_model_config(model_id)
+        self.model_configs["default"] = ModelConfig(
+            model_id="default",
+            system_prompt=source.system_prompt,
+            style_profile=source.style_profile,
+            memory_enabled=source.memory_enabled,
+            decay_enabled=source.decay_enabled,
+            temperature=source.temperature,
+            max_tokens=source.max_tokens,
+            top_p=source.top_p,
+        )
+        self._trigger_auto_save()
+
+    # === Auto-Save Functionality ===
+
+    def enable_auto_save(
+        self,
+        path: Optional[Path] = None,
+        debounce_ms: int = 500,
+        on_save: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """Enable automatic saving when config changes.
+
+        Args:
+            path: Path to save to. Defaults to ~/.config/threadlight/config.yaml
+            debounce_ms: Milliseconds to wait after last change before saving
+            on_save: Optional callback to invoke after saving
+        """
+        self._auto_save = True
+        self._config_path = path or Path(os.path.expanduser("~/.config/threadlight/config.yaml"))
+        self._save_debounce_ms = debounce_ms
+        self._on_save_callback = on_save
+
+    def disable_auto_save(self) -> None:
+        """Disable automatic saving."""
+        self._auto_save = False
+        with self._save_lock:
+            if self._save_timer:
+                self._save_timer.cancel()
+                self._save_timer = None
+
+    def _trigger_auto_save(self) -> None:
+        """Trigger a debounced auto-save if enabled."""
+        if not self._auto_save:
+            return
+
+        with self._save_lock:
+            # Cancel any pending save
+            if self._save_timer:
+                self._save_timer.cancel()
+
+            # Schedule a new save
+            self._save_timer = threading.Timer(
+                self._save_debounce_ms / 1000.0,
+                self._do_auto_save,
+            )
+            self._save_timer.daemon = True
+            self._save_timer.start()
+
+    def _do_auto_save(self) -> None:
+        """Perform the actual auto-save."""
+        try:
+            self.save_to_file(self._config_path)
+            if self._on_save_callback:
+                self._on_save_callback()
+        except Exception:
+            # Silently fail auto-save to not interrupt the application
+            pass
+
+    def mark_changed(self) -> None:
+        """Manually trigger an auto-save.
+
+        Call this after making direct changes to nested config objects.
+        """
+        self._trigger_auto_save()
+
+    @classmethod
+    def load(
+        cls,
+        path: Optional[Path] = None,
+        auto_save: bool = True,
+        debounce_ms: int = 500,
+    ) -> "ThreadlightConfig":
+        """Load config from file and optionally enable auto-save.
+
+        Args:
+            path: Path to load from. Auto-detects if not provided.
+            auto_save: Whether to enable auto-saving
+            debounce_ms: Milliseconds to wait before saving
+
+        Returns:
+            ThreadlightConfig instance
+        """
+        # Determine path
+        if path is None:
+            path = cls._get_config_path()
+
+        # Load or create config
+        if path and path.exists():
+            config = cls.from_file(path)
+            config._config_path = path
+        else:
+            config = cls.from_env()
+            config._config_path = path or Path(os.path.expanduser("~/.config/threadlight/config.yaml"))
+
+        # Enable auto-save if requested
+        if auto_save:
+            config.enable_auto_save(config._config_path, debounce_ms)
+
+        return config
+
+    # === Migration Helper ===
+
+    def migrate_to_model_configs(self) -> None:
+        """Migrate existing config to per-model configuration.
+
+        Creates a model config for the current model based on existing settings.
+        This is useful for existing users upgrading to the new config format.
+        """
+        if self.current_model not in self.model_configs:
+            self.model_configs[self.current_model] = ModelConfig(
+                model_id=self.current_model,
+                system_prompt=self.identity.system_prompt,
+                style_profile=self.style.default_profile,
+                memory_enabled=True,
+                decay_enabled=self.memory.decay.enabled,
+                temperature=0.7,
+            )
+
+        # Also create a default config
+        if "default" not in self.model_configs:
+            self.model_configs["default"] = ModelConfig(
+                model_id="default",
+                system_prompt="You are a helpful AI assistant.",
+                style_profile=None,
+                memory_enabled=True,
+                decay_enabled=False,
+                temperature=0.7,
+            )
+
+        self._trigger_auto_save()
