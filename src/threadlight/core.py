@@ -1601,6 +1601,36 @@ class Threadlight:
             from threadlight.embeddings.manager import EmbeddingStats
             return EmbeddingStats(errors=1)
 
+    def clear_all_embeddings(self) -> dict[str, Any]:
+        """
+        Clear all embeddings from memories and messages.
+
+        This is useful when switching embedding models, as embeddings from
+        different models are incompatible (different dimensions/semantic spaces).
+
+        Returns:
+            Dictionary with counts: {"count": N, "capsules_cleared": X, "messages_cleared": Y}
+        """
+        manager = self._get_embedding_manager()
+        if manager is None:
+            return {
+                "count": 0,
+                "capsules_cleared": 0,
+                "messages_cleared": 0,
+            }
+
+        try:
+            result = manager.clear_all_embeddings()
+            total = result["capsules_cleared"] + result["messages_cleared"]
+            return {
+                "count": total,
+                "capsules_cleared": result["capsules_cleared"],
+                "messages_cleared": result["messages_cleared"],
+            }
+        except Exception as e:
+            logger.error(f"Failed to clear embeddings: {e}")
+            raise
+
     def get_embedding_stats(self) -> dict[str, Any]:
         """
         Get statistics about embedding coverage.

@@ -1282,6 +1282,27 @@ class SQLiteStorage(StorageBackend):
         ).fetchone()
         return result[0] if result else 0
 
+    def clear_all_message_embeddings(self) -> int:
+        """
+        Clear all embeddings from messages.
+
+        This is an optimized bulk operation for use when switching
+        embedding models.
+
+        Returns:
+            Number of messages that had embeddings cleared
+        """
+        conn = self._ensure_connected()
+
+        # Count how many we'll clear
+        count = self.count_messages_with_embeddings()
+
+        # Clear all embeddings in one statement
+        conn.execute("UPDATE messages SET embedding = NULL WHERE embedding IS NOT NULL")
+        conn.commit()
+
+        return count
+
     def search_messages_by_embedding(
         self,
         embedding: list[float],

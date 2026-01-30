@@ -52,6 +52,7 @@ function threadlightApp() {
         embeddingStats: {},
         semanticSearch: false,
         generatingEmbeddings: false,
+        clearingEmbeddings: false,
         embeddingProgress: {
             totalItems: 0,
             processed: 0,
@@ -1184,6 +1185,42 @@ function threadlightApp() {
             } else if (data.type === 'error') {
                 this.embeddingProgress.statusText = 'Error: ' + data.error;
                 this.showToast('Embedding generation error: ' + data.error, 'error');
+            }
+        },
+
+        async clearEmbeddings() {
+            const confirmed = await this.showConfirm({
+                title: 'Clear All Embeddings?',
+                message: 'This will delete all existing embeddings. You will need to regenerate them with the new model. This action cannot be undone.',
+                confirmText: 'Clear All',
+            });
+
+            if (!confirmed) return;
+
+            this.clearingEmbeddings = true;
+
+            try {
+                const response = await fetch('/api/embeddings', {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to clear embeddings');
+                }
+
+                const result = await response.json();
+                this.showToast(
+                    `Cleared ${result.count} embeddings (${result.capsules_cleared} memories, ${result.messages_cleared} messages)`,
+                    'success'
+                );
+
+                // Refresh stats to show 0 coverage
+                await this.loadEmbeddingStats();
+            } catch (error) {
+                this.showToast('Failed to clear embeddings: ' + error.message, 'error');
+            } finally {
+                this.clearingEmbeddings = false;
             }
         },
 

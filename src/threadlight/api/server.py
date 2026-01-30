@@ -2007,6 +2007,32 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             logger.error(f"Failed to enable embeddings: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.delete("/api/embeddings")
+    async def clear_embeddings():
+        """
+        Clear all embeddings from memories and messages.
+
+        This is useful when switching embedding models, as embeddings from
+        different models are incompatible (different dimensions/semantic spaces).
+        After clearing, you'll need to regenerate embeddings with the new model.
+        """
+        tl = get_threadlight()
+
+        try:
+            result = tl.clear_all_embeddings()
+
+            return {
+                "status": "cleared",
+                "count": result["count"],
+                "capsules_cleared": result["capsules_cleared"],
+                "messages_cleared": result["messages_cleared"],
+                "message": f"Cleared {result['count']} embeddings ({result['capsules_cleared']} memories, {result['messages_cleared']} messages)",
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to clear embeddings: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     # ========================================================================
     # Conversation Management Endpoints
     # ========================================================================

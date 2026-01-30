@@ -1169,6 +1169,19 @@
                                     </div>
 
                                     <p x-show="!generatingEmbeddings" class="text-xs text-threadlight-muted mt-2">Generate embeddings for memories and messages that don't have them yet.</p>
+
+                                    <!-- Clear Embeddings Button -->
+                                    <div class="mt-4 pt-3 border-t border-threadlight-border/30">
+                                        <button @click="clearEmbeddings()"
+                                            :disabled="generatingEmbeddings || clearingEmbeddings"
+                                            class="px-4 py-2 bg-red-600/20 text-red-400 hover:bg-red-600/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                            <span x-show="!clearingEmbeddings">Clear All Embeddings</span>
+                                            <span x-show="clearingEmbeddings">Clearing...</span>
+                                        </button>
+                                        <p class="text-xs text-threadlight-muted mt-2">
+                                            Clear all embeddings (useful when switching models). You'll need to regenerate them after.
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
                         </div>

@@ -493,6 +493,51 @@ class EmbeddingManager:
         results.sort(key=lambda r: r.similarity_score, reverse=True)
         return results[:limit]
 
+    def clear_all_embeddings(self) -> dict[str, int]:
+        """
+        Clear all embeddings from memories and messages.
+
+        This is useful when switching embedding models, as embeddings from
+        different models are incompatible (different dimensions/semantic spaces).
+
+        Returns:
+            Dictionary with counts: {"capsules_cleared": N, "messages_cleared": M}
+        """
+        capsules_cleared = 0
+        messages_cleared = 0
+
+        # Clear capsule embeddings
+        all_capsules = self.storage.list_capsules(CapsuleFilter(limit=10000))
+        for capsule in all_capsules:
+            if capsule.embedding is not None:
+                capsule.embedding = None
+                self.storage.update_capsule(capsule)
+                capsules_cleared += 1
+
+        # Clear message embeddings
+        if hasattr(self.storage, 'clear_all_message_embeddings'):
+            # Use optimized storage method if available
+            messages_cleared = self.storage.clear_all_message_embeddings()
+        else:
+            # Fallback: iterate through conversations
+            conversations = self.storage.list_conversations(limit=1000)
+            for conv in conversations:
+                messages = self.storage.get_messages(conv.id, limit=10000)
+                for message in messages:
+                    if message.embedding is not None:
+                        message.embedding = None
+                        self.storage.save_message(message)
+                        messages_cleared += 1
+
+        logger.info(
+            f"Cleared embeddings: {capsules_cleared} capsules, {messages_cleared} messages"
+        )
+
+        return {
+            "capsules_cleared": capsules_cleared,
+            "messages_cleared": messages_cleared,
+        }
+
     def get_embedding_stats(self) -> dict[str, Any]:
         """Get statistics about embedding coverage."""
         all_capsules = self.storage.list_capsules(CapsuleFilter(limit=10000))
