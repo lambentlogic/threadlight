@@ -238,6 +238,39 @@ class GenerateEmbeddingsRequest(BaseModel):
     include_conversations: bool = True
 
 
+class SemanticSearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+    threshold: float = 0.5
+    include_memories: bool = True
+    include_conversations: bool = True
+
+
+class FieldDefinitionRequest(BaseModel):
+    name: str
+    type: str  # "string", "text", "number", "date", "list"
+    required: bool = True
+    default: Optional[Any] = None
+    help_text: str = ""
+
+
+class MemoryTypeRequest(BaseModel):
+    type_id: str
+    display_name: str
+    description: str = ""
+    fields: list[FieldDefinitionRequest]
+    display_template: str = ""
+    icon: str = "file-text"
+
+
+class MemoryTypeUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    fields: Optional[list[FieldDefinitionRequest]] = None
+    display_template: Optional[str] = None
+    icon: Optional[str] = None
+
+
 # ============================================================================
 # Global State
 # ============================================================================
@@ -1705,13 +1738,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     # Semantic Search Endpoints
     # ========================================================================
 
-    class SemanticSearchRequest(BaseModel):
-        query: str
-        limit: int = 10
-        threshold: float = 0.5
-        include_memories: bool = True
-        include_conversations: bool = True
-
     @app.post("/api/search/semantic")
     async def semantic_search(request: SemanticSearchRequest):
         """
@@ -2088,28 +2114,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     # ========================================================================
     # Memory Type Management Endpoints
     # ========================================================================
-
-    class FieldDefinitionRequest(BaseModel):
-        name: str
-        type: str  # "string", "text", "number", "date", "list"
-        required: bool = True
-        default: Optional[Any] = None
-        help_text: str = ""
-
-    class MemoryTypeRequest(BaseModel):
-        type_id: str
-        display_name: str
-        description: str = ""
-        fields: list[FieldDefinitionRequest]
-        display_template: str = ""
-        icon: str = "file-text"
-
-    class MemoryTypeUpdateRequest(BaseModel):
-        display_name: Optional[str] = None
-        description: Optional[str] = None
-        fields: Optional[list[FieldDefinitionRequest]] = None
-        display_template: Optional[str] = None
-        icon: Optional[str] = None
 
     @app.get("/api/memory-types")
     async def list_memory_types(include_builtin: bool = True):
