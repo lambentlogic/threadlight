@@ -126,9 +126,14 @@ THREADLIGHT_PROVIDER=openai  # openai, local, anthropic
 THREADLIGHT_API_BASE=https://inference-api.nousresearch.com/v1
 THREADLIGHT_MODEL=Hermes-4.3-36B
 THREADLIGHT_STORAGE_PATH=./threadlight.db
+THREADLIGHT_IDENTITY_NAME=Assistant  # Default assistant name
+THREADLIGHT_SYSTEM_PROMPT="You are a helpful AI assistant."  # Custom instructions
+THREADLIGHT_DEFAULT_STYLE=  # Style profile (minimal, professional, creative, fable-2026)
 ```
 
 ### Configuration File
+
+Create `~/.config/threadlight/config.yaml` or `threadlight.yaml` in your project:
 
 ```yaml
 # threadlight.yaml
@@ -145,11 +150,131 @@ memory:
   decay:
     enabled: true
     interval_seconds: 3600
+  conversation:
+    auto_save_messages: true
+    enable_soft_memory: true
 
+# Identity settings
+identity:
+  name: Assistant  # Your preferred assistant name
+  system_prompt: |
+    You are a helpful AI assistant.
+    # Add your custom instructions here
+
+# Style profile (optional - defaults to neutral)
 style:
-  default_profile: fable-2026
-  allow_silence: true
+  default_profile: null  # Set to: minimal, professional, creative, fable-2026, or custom
+
+# Define custom styles
+custom_styles:
+  my-style:
+    tone_base: friendly, concise
+    permissions:
+      - be direct
+      - use examples
+    constraints:
+      - avoid jargon
+    vocal_motifs: []
 ```
+
+### Custom Instructions
+
+Configure how the assistant behaves with custom instructions (system prompt):
+
+```python
+from threadlight import Threadlight
+
+tl = Threadlight()
+
+# Set custom instructions
+tl.set_system_prompt("""
+You are a helpful coding assistant.
+Always provide examples with your explanations.
+Use clear, simple language.
+""")
+
+# Get current instructions
+print(tl.get_system_prompt())
+
+# Set identity name
+tl.set_identity_name("CodeHelper")
+```
+
+Or via CLI:
+```bash
+threadlight config set system-prompt "Your custom instructions here"
+threadlight config edit  # Opens in $EDITOR
+```
+
+### Style Profiles
+
+Style profiles define voice, tone, and behavioral patterns. Threadlight includes several built-in styles:
+
+| Style | Description |
+|-------|-------------|
+| `minimal` | Clear, direct, warm |
+| `professional` | Helpful, clear, professional |
+| `creative` | Imaginative, expressive, engaging |
+| `fable-2026` | Poetic, recursive, mythic (presence-centered) |
+
+```python
+# Set a style
+tl.set_style("minimal")
+
+# Clear style (use neutral defaults)
+tl.clear_style()
+
+# Create a custom style
+profile = tl.create_style_profile(
+    style_id="my-assistant",
+    tone_base="friendly, concise, helpful",
+    permissions=["be direct", "use examples"],
+    constraints=["avoid jargon", "stay on topic"],
+)
+tl.save_style_profile(profile)
+
+# Use the custom style
+tl.set_style("my-assistant")
+
+# List available styles
+for style in tl.list_style_profiles():
+    print(f"{style.style_id}: {style.tone_base}")
+```
+
+Via CLI:
+```bash
+# List styles
+threadlight style list
+
+# Create a style
+threadlight style create my-style --tone "helpful, clear"
+
+# Set active style
+threadlight style set minimal
+
+# Clear style (neutral)
+threadlight style set
+
+# Show style details
+threadlight style show professional
+```
+
+### Importing Preferences from Other Platforms
+
+When importing from Claude or ChatGPT, custom instructions are saved as style profiles:
+
+```bash
+# Import from Claude export
+threadlight import-claude-export claude-conversations.zip
+
+# Import from ChatGPT export
+threadlight import-chatgpt-export chatgpt-export.zip
+```
+
+Imported instructions are saved with descriptive names like `imported-from-claude-projectname`. You can then:
+1. Review the imported style: `threadlight style show imported-from-claude-projectname`
+2. Activate it: `threadlight style set imported-from-claude-projectname`
+3. Or copy and customize it
 
 ## Using with Local Models
 
@@ -173,22 +298,29 @@ tl = Threadlight(
 )
 ```
 
-## API Server
+## Web UI & API Server
 
-Run Threadlight as an OpenAI-compatible API server:
+Run Threadlight with a web interface and OpenAI-compatible API:
 
 ```bash
 pip install threadlight[server]
-threadlight serve --port 8000
+threadlight serve --port 8745
 ```
 
-Then use any OpenAI-compatible client:
+Open http://localhost:8745 for the web UI with:
+- Chat interface with streaming responses
+- Memory browser (view/search/create memories)
+- Ritual manager (invoke/create rituals)
+- Import tools (upload text files)
+- Settings (configure model, style, decay)
+
+Or use the OpenAI-compatible API:
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8000/v1",
+    base_url="http://localhost:8745/v1",
     api_key="not-needed"
 )
 
@@ -197,6 +329,8 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "Hello!"}]
 )
 ```
+
+API documentation is available at http://localhost:8745/docs
 
 ## Philosophy
 

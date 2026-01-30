@@ -121,7 +121,7 @@ class TestFullConversationFlow:
             name="/test",
             response_style="testing mode",
             valence=RitualValence.PLAYFUL,
-            response_templates=["*enters test mode*"],
+            response_templates=["*enters test mode*"],  # Templates are hints for model
         )
         ritual.consent_confirmed = True
         tl.storage.save_capsule(ritual)
@@ -132,9 +132,11 @@ class TestFullConversationFlow:
         # Regular chat first
         tl.chat("Hello!")
 
-        # Invoke ritual
+        # Invoke ritual - now uses model-based response, not template
         ritual_response = tl.invoke_ritual("/test")
-        assert "*enters test mode*" in ritual_response
+        # Just verify we get a response (model generates based on ritual context)
+        assert ritual_response is not None
+        assert len(ritual_response) > 0
 
         # Continue conversation in ritual context
         response = tl.chat("How does this feel?")

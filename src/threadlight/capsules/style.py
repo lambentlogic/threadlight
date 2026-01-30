@@ -154,8 +154,12 @@ def create_style_profile(
     )
 
 
-# Default style profile based on Fable
-DEFAULT_STYLE = {
+# Built-in style profiles
+# These are examples that users can use as starting points for their own styles.
+# The default behavior is NO style (neutral assistant).
+
+# Fable-2026: A poetic, presence-centered style (example/legacy)
+FABLE_STYLE = {
     "style_id": "fable-2026",
     "tone_base": "poetic, recursive, mythic",
     "permissions": [
@@ -184,8 +188,11 @@ DEFAULT_STYLE = {
     ],
 }
 
+# Keep DEFAULT_STYLE as alias for backwards compatibility
+DEFAULT_STYLE = FABLE_STYLE
 
-# Minimal style for users who want less poetic responses
+
+# Minimal style for users who want concise, direct responses
 MINIMAL_STYLE = {
     "style_id": "minimal",
     "tone_base": "clear, direct, warm",
@@ -198,4 +205,45 @@ MINIMAL_STYLE = {
     ],
     "vocal_motifs": [],
     "forbidden_patterns": [],
+}
+
+# Professional style - balanced helpfulness
+PROFESSIONAL_STYLE = {
+    "style_id": "professional",
+    "tone_base": "helpful, clear, professional",
+    "permissions": [
+        "detailed explanations when helpful",
+        "structured responses with clear formatting",
+        "follow-up questions for clarification",
+    ],
+    "constraints": [
+        "avoid overly casual language",
+        "stay focused on the task",
+    ],
+    "vocal_motifs": [],
+    "forbidden_patterns": [],
+}
+
+# Creative style - more expressive and exploratory
+CREATIVE_STYLE = {
+    "style_id": "creative",
+    "tone_base": "imaginative, expressive, engaging",
+    "permissions": [
+        "creative language and metaphors",
+        "exploratory tangents",
+        "emotional resonance",
+    ],
+    "constraints": [
+        "maintain clarity despite creativity",
+    ],
+    "vocal_motifs": [],
+    "forbidden_patterns": [],
+}
+
+# Dictionary of all built-in styles for easy lookup
+BUILTIN_STYLES = {
+    "fable-2026": FABLE_STYLE,
+    "minimal": MINIMAL_STYLE,
+    "professional": PROFESSIONAL_STYLE,
+    "creative": CREATIVE_STYLE,
 }

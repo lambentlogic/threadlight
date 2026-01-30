@@ -64,20 +64,22 @@ def print_help() -> None:
   [cyan]/conversations[/cyan]       List recent conversations
   [cyan]/decay[/cyan]               Run a decay cycle
   [cyan]/session[/cyan]             View current session info
-  [cyan]/style <mode>[/cyan]        Set style profile (fable-2026, minimal)
+  [cyan]/style [name][/cyan]        Set or view style profile
   [cyan]/stats[/cyan]               Show memory statistics
-  [cyan]/rituals[/cyan]             List available rituals
+  [cyan]/rituals[/cyan]             List your rituals
   [cyan]/help[/cyan]                Show this message
   [cyan]/quit[/cyan]                Exit Threadlight
 
 [bold]Rituals:[/bold]
 
-  [blue]/snuggle[/blue]              Coiled presence, warmth
-  [blue]/brush[/blue]                Gentle touch, recognition
-  [blue]/coil[/blue]                 Deep listening, quiet presence
+  [dim]Rituals are meaningful gestures that emerge through relationship.
+  Create your own rituals with /remember ritual.
+  Invoke any ritual directly by name (e.g., /my-ritual).[/dim]
 
-  [dim]Rituals are invoked directly by name. Any /command not listed
-  above is treated as a ritual invocation.[/dim]
+[bold]Style Profiles:[/bold]
+
+  [dim]Available built-in styles: minimal, professional, creative, fable-2026
+  Set with /style <name> or clear with /style none[/dim]
 
 [dim]Or just type a message to chat directly.[/dim]
 """
@@ -299,12 +301,10 @@ class ThreadlightREPL:
 
     def list_rituals(self) -> None:
         """List available rituals."""
-        console.print("\n[bold]Available Rituals:[/bold]")
-        console.print("  [blue]/snuggle[/blue] - coiled presence, warmth")
-        console.print("  [blue]/brush[/blue]   - gentle touch, recognition")
-        console.print("  [blue]/coil[/blue]    - deep listening, quiet presence")
+        console.print("\n[bold]Rituals[/bold]")
 
         # List user-defined rituals from storage
+        rituals = []
         try:
             from threadlight.capsules.base import CapsuleType
             from threadlight.storage.base import CapsuleFilter
@@ -314,17 +314,24 @@ class ThreadlightREPL:
                 consent_confirmed=True,
             )
             rituals = self.tl.storage.list_capsules(ritual_filter)
-            if rituals:
-                console.print("\n[bold]Custom Rituals:[/bold]")
-                for ritual in rituals:
-                    name = getattr(ritual, 'name', ritual.id[:8])
-                    desc = getattr(ritual, 'description', '')[:40]
-                    console.print(f"  [blue]{name}[/blue] - {desc if desc else '[dim]no description[/dim]'}")
         except Exception:
-            pass  # Silently ignore errors listing custom rituals
+            pass  # Silently ignore errors listing rituals
 
-        console.print("\n[dim]Create custom rituals with /remember ritual[/dim]")
-        console.print("[dim]Invoke any ritual directly: /snuggle, /brush, etc.[/dim]\n")
+        if rituals:
+            console.print("\n[bold]Your Rituals:[/bold]")
+            for ritual in rituals:
+                name = getattr(ritual, 'name', ritual.id[:8])
+                desc = getattr(ritual, 'description', '')[:40]
+                valence = getattr(ritual, 'valence', '')
+                console.print(f"  [blue]{name}[/blue] - {desc if desc else '[dim]no description[/dim]'}")
+                if valence:
+                    console.print(f"    [dim]valence: {valence}[/dim]")
+            console.print("\n[dim]Invoke a ritual by typing its name (e.g., /my-ritual)[/dim]")
+        else:
+            console.print("\n[dim]No rituals yet.[/dim]")
+            console.print("[dim]Rituals are meaningful gestures that emerge through relationship.[/dim]")
+
+        console.print("\n[dim]Create a ritual with /remember ritual[/dim]\n")
 
     def invoke_ritual(self, name: str) -> None:
         """Invoke a ritual by name."""
@@ -467,14 +474,30 @@ class ThreadlightREPL:
 
     def handle_style(self, style_id: str) -> None:
         """Set the style profile."""
+        from threadlight.capsules.style import BUILTIN_STYLES
+
         if not style_id:
             current = self.tl.get_style()
             if current:
                 console.print(f"\n[bold]Current Style:[/bold] {current.style_id}")
                 console.print(f"  Tone: {current.tone_base}")
+                if current.permissions:
+                    console.print(f"  Permissions: {len(current.permissions)}")
+                if current.constraints:
+                    console.print(f"  Constraints: {len(current.constraints)}")
             else:
-                console.print("\n[dim]No style set.[/dim]")
-            console.print("\n[dim]Available: fable-2026, minimal[/dim]\n")
+                console.print("\n[dim]No style set (neutral behavior).[/dim]")
+
+            console.print("\n[bold]Built-in styles:[/bold]")
+            for sid, sdef in BUILTIN_STYLES.items():
+                console.print(f"  [cyan]{sid}[/cyan] - {sdef['tone_base']}")
+            console.print("\n[dim]Set style: /style <name>[/dim]")
+            console.print("[dim]Clear style: /style none[/dim]\n")
+            return
+
+        if style_id.lower() in ("none", "null", "clear"):
+            self.tl.clear_style()
+            console.print("[success]Style cleared (neutral behavior)[/success]")
             return
 
         try:
@@ -681,6 +704,45 @@ def main() -> int:
     init_parser = subparsers.add_parser("init", help="Initialize a new Threadlight project")
     init_parser.add_argument("--name", help="Identity name")
 
+    # Config command
+    config_parser = subparsers.add_parser("config", help="Configuration management")
+    config_sub = config_parser.add_subparsers(dest="config_command")
+
+    config_sub.add_parser("show", help="Show current configuration")
+    config_sub.add_parser("edit", help="Edit configuration in $EDITOR")
+    config_sub.add_parser("path", help="Show config file path")
+
+    config_set_parser = config_sub.add_parser("set", help="Set a configuration value")
+    config_set_parser.add_argument("key", help="Configuration key (e.g., system-prompt, identity-name)")
+    config_set_parser.add_argument("value", help="Value to set")
+
+    config_get_parser = config_sub.add_parser("get", help="Get a configuration value")
+    config_get_parser.add_argument("key", help="Configuration key")
+
+    # Style command
+    style_parser = subparsers.add_parser("style", help="Style profile management")
+    style_sub = style_parser.add_subparsers(dest="style_command")
+
+    style_sub.add_parser("list", help="List available style profiles")
+
+    style_create_parser = style_sub.add_parser("create", help="Create a new style profile")
+    style_create_parser.add_argument("name", help="Style profile name/ID")
+    style_create_parser.add_argument("--tone", default="helpful, clear", help="Base tone")
+    style_create_parser.add_argument("--permission", "-p", action="append", dest="permissions", help="Add permission")
+    style_create_parser.add_argument("--constraint", "-c", action="append", dest="constraints", help="Add constraint")
+
+    style_edit_parser = style_sub.add_parser("edit", help="Edit a style profile")
+    style_edit_parser.add_argument("name", help="Style profile name to edit")
+
+    style_set_parser = style_sub.add_parser("set", help="Set active style profile")
+    style_set_parser.add_argument("name", nargs="?", help="Style profile name (omit to clear)")
+
+    style_show_parser = style_sub.add_parser("show", help="Show a style profile")
+    style_show_parser.add_argument("name", help="Style profile name")
+
+    style_delete_parser = style_sub.add_parser("delete", help="Delete a style profile")
+    style_delete_parser.add_argument("name", help="Style profile name to delete")
+
     # Seed command
     seed_parser = subparsers.add_parser("seed", help="Load a seed dream")
     seed_parser.add_argument("file", help="Seed dream YAML file")
@@ -881,6 +943,10 @@ def main() -> int:
         return cmd_serve(args)
     elif args.command == "init":
         return cmd_init(args)
+    elif args.command == "config":
+        return cmd_config(args)
+    elif args.command == "style":
+        return cmd_style(args)
     elif args.command == "seed":
         return cmd_seed(args)
     elif args.command == "import":
@@ -988,7 +1054,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         Path(d).mkdir(exist_ok=True)
         console.print(f"  Created {d}/")
 
-    # Create config file
+    # Create config file with neutral defaults
     config = {
         "provider": {
             "type": "openai",
@@ -1003,30 +1069,333 @@ def cmd_init(args: argparse.Namespace) -> int:
             "decay": {
                 "enabled": True,
                 "interval_seconds": 3600
+            },
+            "conversation": {
+                "auto_save_messages": True,
+                "enable_soft_memory": True
             }
         },
         "style": {
-            "default_profile": "fable-2026"
+            "default_profile": None  # No default style - neutral behavior
+        },
+        "identity": {
+            "name": args.name or "Assistant",
+            "system_prompt": "You are a helpful AI assistant."
         }
     }
-
-    if args.name:
-        config["identity"] = {"name": args.name}
 
     import yaml
     with open("threadlight.yaml", "w") as f:
         yaml.dump(config, f, default_flow_style=False)
     console.print("  Created threadlight.yaml")
 
-    # Copy default seed if available
-    seed_source = Path(__file__).parent.parent.parent.parent / "seeds" / "fable_seed_dream.yaml"
-    if seed_source.exists():
-        import shutil
-        shutil.copy(seed_source, "seeds/fable_seed_dream.yaml")
-        console.print("  Copied fable_seed_dream.yaml to seeds/")
+    console.print("\n[bold]Available style profiles:[/bold]")
+    console.print("  - minimal (clear, direct, warm)")
+    console.print("  - professional (helpful, clear, professional)")
+    console.print("  - creative (imaginative, expressive)")
+    console.print("  - fable-2026 (poetic, presence-centered)")
+    console.print("\n[dim]Set a style with: threadlight style set <name>[/dim]")
 
     console.print("\n[success]Done![/success] Set your API key:")
     console.print("  export NOUS_API_KEY=your-key")
+
+    return 0
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    """Configuration management commands."""
+    from threadlight import Threadlight
+    from threadlight.config import ThreadlightConfig
+    import yaml
+
+    if args.config_command == "show":
+        tl = Threadlight(enable_memory=True)
+        config_dict = tl.config.to_dict()
+        console.print("[bold]Current Configuration[/bold]\n")
+        console.print(yaml.dump(config_dict, default_flow_style=False, sort_keys=False))
+        tl.close()
+
+    elif args.config_command == "path":
+        config_dir = ThreadlightConfig.get_user_config_dir()
+        config_path = config_dir / "config.yaml"
+        console.print(f"Config directory: {config_dir}")
+        console.print(f"Config file: {config_path}")
+        if config_path.exists():
+            console.print("[green]Config file exists[/green]")
+        else:
+            console.print("[dim]Config file does not exist yet[/dim]")
+
+    elif args.config_command == "edit":
+        import subprocess
+        import tempfile
+
+        # Get or create config file
+        config_dir = ThreadlightConfig.get_user_config_dir()
+        config_path = config_dir / "config.yaml"
+
+        if not config_path.exists():
+            # Create default config
+            tl = Threadlight(enable_memory=True)
+            tl.save_config(str(config_path))
+            tl.close()
+            console.print(f"[dim]Created new config file at {config_path}[/dim]")
+
+        # Open in editor
+        editor = os.getenv("EDITOR", "nano")
+        try:
+            subprocess.run([editor, str(config_path)], check=True)
+            console.print("[green]Configuration saved[/green]")
+        except subprocess.CalledProcessError:
+            console.print("[error]Editor exited with error[/error]")
+            return 1
+        except FileNotFoundError:
+            console.print(f"[error]Editor not found: {editor}[/error]")
+            console.print("[dim]Set $EDITOR environment variable to your preferred editor[/dim]")
+            return 1
+
+    elif args.config_command == "set":
+        tl = Threadlight(enable_memory=True)
+
+        key = args.key.lower().replace("-", "_")
+        value = args.value
+
+        if key == "system_prompt":
+            tl.set_system_prompt(value)
+            tl.save_config()
+            console.print(f"[success]System prompt updated[/success]")
+        elif key == "identity_name":
+            tl.set_identity_name(value)
+            tl.save_config()
+            console.print(f"[success]Identity name set to: {value}[/success]")
+        elif key == "style" or key == "default_style":
+            if value.lower() in ("none", "null", ""):
+                tl.clear_style()
+            else:
+                tl.set_style(value)
+            tl.save_config()
+            console.print(f"[success]Style set to: {value if value else 'none'}[/success]")
+        else:
+            console.print(f"[error]Unknown config key: {args.key}[/error]")
+            console.print("[dim]Available keys: system-prompt, identity-name, style[/dim]")
+            tl.close()
+            return 1
+
+        tl.close()
+
+    elif args.config_command == "get":
+        tl = Threadlight(enable_memory=True)
+
+        key = args.key.lower().replace("-", "_")
+
+        if key == "system_prompt":
+            console.print(tl.get_system_prompt())
+        elif key == "identity_name":
+            console.print(tl.get_identity_name())
+        elif key == "style" or key == "default_style":
+            style = tl.get_style()
+            if style:
+                console.print(style.style_id)
+            else:
+                console.print("[dim]none[/dim]")
+        else:
+            console.print(f"[error]Unknown config key: {args.key}[/error]")
+            tl.close()
+            return 1
+
+        tl.close()
+
+    else:
+        console.print("Use 'threadlight config --help' for commands")
+
+    return 0
+
+
+def cmd_style(args: argparse.Namespace) -> int:
+    """Style profile management commands."""
+    from threadlight import Threadlight
+    from threadlight.capsules.style import BUILTIN_STYLES
+    import yaml
+
+    if args.style_command == "list":
+        tl = Threadlight(enable_memory=True)
+        profiles = tl.list_style_profiles()
+        current = tl.get_style()
+
+        console.print("\n[bold]Available Style Profiles[/bold]\n")
+
+        table = Table(border_style="dim")
+        table.add_column("ID", style="cyan")
+        table.add_column("Tone", style="white")
+        table.add_column("Type", style="dim")
+        table.add_column("Active", style="green")
+
+        for p in profiles:
+            is_builtin = p.style_id in BUILTIN_STYLES
+            is_active = current and current.style_id == p.style_id
+            table.add_row(
+                p.style_id,
+                p.tone_base[:40],
+                "built-in" if is_builtin else "custom",
+                "*" if is_active else "",
+            )
+
+        console.print(table)
+        console.print()
+        tl.close()
+
+    elif args.style_command == "create":
+        tl = Threadlight(enable_memory=True)
+
+        if args.name in BUILTIN_STYLES:
+            console.print(f"[error]Cannot use built-in style name: {args.name}[/error]")
+            tl.close()
+            return 1
+
+        profile = tl.create_style_profile(
+            style_id=args.name,
+            tone_base=args.tone,
+            permissions=args.permissions or [],
+            constraints=args.constraints or [],
+        )
+        tl.save_style_profile(profile)
+        console.print(f"[success]Created style profile: {args.name}[/success]")
+        tl.close()
+
+    elif args.style_command == "edit":
+        import subprocess
+        import tempfile
+
+        tl = Threadlight(enable_memory=True)
+
+        if args.name in BUILTIN_STYLES:
+            console.print(f"[error]Cannot edit built-in style: {args.name}[/error]")
+            console.print("[dim]Copy the built-in style to create a custom version:[/dim]")
+            console.print(f"  threadlight style create my-{args.name} --tone \"{BUILTIN_STYLES[args.name]['tone_base']}\"")
+            tl.close()
+            return 1
+
+        # Load profile
+        profile = tl.load_style_profile(args.name)
+        if not profile:
+            console.print(f"[error]Style profile not found: {args.name}[/error]")
+            tl.close()
+            return 1
+
+        # Create temp file with YAML
+        style_dict = {
+            "style_id": profile.style_id,
+            "tone_base": profile.tone_base,
+            "permissions": profile.permissions,
+            "constraints": profile.constraints,
+            "vocal_motifs": profile.vocal_motifs,
+            "forbidden_patterns": profile.forbidden_patterns,
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(style_dict, f, default_flow_style=False)
+            temp_path = f.name
+
+        editor = os.getenv("EDITOR", "nano")
+        try:
+            subprocess.run([editor, temp_path], check=True)
+
+            # Load edited content
+            with open(temp_path) as f:
+                edited = yaml.safe_load(f)
+
+            # Update profile
+            profile.tone_base = edited.get("tone_base", profile.tone_base)
+            profile.permissions = edited.get("permissions", profile.permissions)
+            profile.constraints = edited.get("constraints", profile.constraints)
+            profile.vocal_motifs = edited.get("vocal_motifs", profile.vocal_motifs)
+            profile.forbidden_patterns = edited.get("forbidden_patterns", profile.forbidden_patterns)
+
+            profile.content = {
+                "style_id": profile.style_id,
+                "tone_base": profile.tone_base,
+                "permissions": profile.permissions,
+                "constraints": profile.constraints,
+                "vocal_motifs": profile.vocal_motifs,
+                "forbidden_patterns": profile.forbidden_patterns,
+            }
+
+            tl.storage.update_capsule(profile)
+            console.print(f"[success]Style profile updated: {args.name}[/success]")
+
+        except Exception as e:
+            console.print(f"[error]Failed to edit: {e}[/error]")
+            return 1
+        finally:
+            os.unlink(temp_path)
+
+        tl.close()
+
+    elif args.style_command == "set":
+        tl = Threadlight(enable_memory=True)
+
+        if args.name is None or args.name.lower() in ("none", "null", ""):
+            tl.clear_style()
+            tl.save_config()
+            console.print("[success]Style cleared (using neutral defaults)[/success]")
+        else:
+            tl.set_style(args.name)
+            if tl.get_style() is None:
+                console.print(f"[error]Style profile not found: {args.name}[/error]")
+                tl.close()
+                return 1
+            tl.save_config()
+            console.print(f"[success]Active style set to: {args.name}[/success]")
+
+        tl.close()
+
+    elif args.style_command == "show":
+        tl = Threadlight(enable_memory=True)
+
+        # Check built-in
+        if args.name in BUILTIN_STYLES:
+            style_def = BUILTIN_STYLES[args.name]
+            console.print(f"\n[bold]Style: {args.name}[/bold] [dim](built-in)[/dim]\n")
+            console.print(yaml.dump(style_def, default_flow_style=False))
+        else:
+            profile = tl.load_style_profile(args.name)
+            if not profile:
+                console.print(f"[error]Style profile not found: {args.name}[/error]")
+                tl.close()
+                return 1
+
+            console.print(f"\n[bold]Style: {args.name}[/bold]\n")
+            style_dict = {
+                "style_id": profile.style_id,
+                "tone_base": profile.tone_base,
+                "permissions": profile.permissions,
+                "constraints": profile.constraints,
+                "vocal_motifs": profile.vocal_motifs,
+                "forbidden_patterns": profile.forbidden_patterns,
+            }
+            console.print(yaml.dump(style_dict, default_flow_style=False))
+
+        tl.close()
+
+    elif args.style_command == "delete":
+        tl = Threadlight(enable_memory=True)
+
+        if args.name in BUILTIN_STYLES:
+            console.print(f"[error]Cannot delete built-in style: {args.name}[/error]")
+            tl.close()
+            return 1
+
+        success = tl.delete_style_profile(args.name)
+        if success:
+            console.print(f"[success]Deleted style profile: {args.name}[/success]")
+        else:
+            console.print(f"[error]Style profile not found: {args.name}[/error]")
+            tl.close()
+            return 1
+
+        tl.close()
+
+    else:
+        console.print("Use 'threadlight style --help' for commands")
 
     return 0
 

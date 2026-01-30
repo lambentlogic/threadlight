@@ -89,19 +89,30 @@ class MemoryConfig:
 class StyleConfig:
     """Configuration for style modulation."""
 
-    default_profile: str = "default"
+    default_profile: Optional[str] = None  # None = no default style (neutral)
     profiles_path: str = "./styles"
     allow_silence: bool = True
     enforce_constraints: bool = True
 
 
 @dataclass
+class CustomStyleConfig:
+    """Configuration for a custom style profile."""
+
+    tone_base: str = "helpful, clear"
+    permissions: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    vocal_motifs: list[str] = field(default_factory=list)
+    forbidden_patterns: list[str] = field(default_factory=list)
+
+
+@dataclass
 class IdentityConfig:
     """Configuration for model identity."""
 
-    name: Optional[str] = None
+    name: str = "Assistant"  # Neutral default
     seed_dream_path: Optional[str] = None
-    system_prompt: Optional[str] = None
+    system_prompt: str = "You are a helpful AI assistant."  # Minimal neutral default
 
 
 @dataclass
@@ -113,11 +124,21 @@ class ThreadlightConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     style: StyleConfig = field(default_factory=StyleConfig)
     identity: IdentityConfig = field(default_factory=IdentityConfig)
+    custom_styles: dict[str, CustomStyleConfig] = field(default_factory=dict)
 
     @classmethod
     def from_env(cls) -> ThreadlightConfig:
         """Load configuration from environment variables."""
         load_dotenv()
+
+        # Check for user config file first
+        config_path = cls._get_config_path()
+        if config_path and config_path.exists():
+            return cls.from_file(config_path)
+
+        # Default style is None (neutral) unless explicitly set
+        default_style_env = os.getenv("THREADLIGHT_DEFAULT_STYLE")
+        default_style = default_style_env if default_style_env else None
 
         return cls(
             provider=ProviderConfig(
@@ -143,10 +164,45 @@ class ThreadlightConfig:
                 ),
             ),
             style=StyleConfig(
-                default_profile=os.getenv("THREADLIGHT_DEFAULT_STYLE", "default"),
+                default_profile=default_style,
                 allow_silence=os.getenv("THREADLIGHT_ALLOW_SILENCE", "true").lower() == "true",
             ),
+            identity=IdentityConfig(
+                name=os.getenv("THREADLIGHT_IDENTITY_NAME", "Assistant"),
+                system_prompt=os.getenv("THREADLIGHT_SYSTEM_PROMPT", "You are a helpful AI assistant."),
+            ),
         )
+
+    @staticmethod
+    def _get_config_path() -> Optional[Path]:
+        """Get the user config file path if it exists."""
+        # Check in order: current directory, XDG config, home directory
+        candidates = [
+            Path("threadlight.yaml"),
+            Path("threadlight.yml"),
+            Path(os.path.expanduser("~/.config/threadlight/config.yaml")),
+            Path(os.path.expanduser("~/.config/threadlight/config.yml")),
+            Path(os.path.expanduser("~/.threadlight.yaml")),
+            Path(os.path.expanduser("~/.threadlight.yml")),
+        ]
+        for path in candidates:
+            if path.exists():
+                return path
+        return None
+
+    @classmethod
+    def get_user_config_dir(cls) -> Path:
+        """Get the user configuration directory, creating it if needed."""
+        config_dir = Path(os.path.expanduser("~/.config/threadlight"))
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir
+
+    @classmethod
+    def get_styles_dir(cls) -> Path:
+        """Get the user styles directory, creating it if needed."""
+        styles_dir = cls.get_user_config_dir() / "styles"
+        styles_dir.mkdir(parents=True, exist_ok=True)
+        return styles_dir
 
     @classmethod
     def from_file(cls, path: str | Path) -> ThreadlightConfig:
@@ -225,16 +281,27 @@ class ThreadlightConfig:
         if "identity" in data:
             i = data["identity"]
             config.identity = IdentityConfig(
-                name=i.get("name"),
+                name=i.get("name", config.identity.name),
                 seed_dream_path=i.get("seed_dream"),
-                system_prompt=i.get("system_prompt"),
+                system_prompt=i.get("system_prompt", config.identity.system_prompt),
             )
+
+        # Parse custom styles
+        if "custom_styles" in data:
+            for style_id, style_data in data["custom_styles"].items():
+                config.custom_styles[style_id] = CustomStyleConfig(
+                    tone_base=style_data.get("tone_base", "helpful, clear"),
+                    permissions=style_data.get("permissions", []),
+                    constraints=style_data.get("constraints", []),
+                    vocal_motifs=style_data.get("vocal_motifs", []),
+                    forbidden_patterns=style_data.get("forbidden_patterns", []),
+                )
 
         return config
 
     def to_dict(self) -> dict[str, Any]:
         """Export configuration as dictionary."""
-        return {
+        result = {
             "provider": {
                 "type": self.provider.type,
                 "api_base": self.provider.api_base,
@@ -273,5 +340,31 @@ class ThreadlightConfig:
             "identity": {
                 "name": self.identity.name,
                 "seed_dream": self.identity.seed_dream_path,
+                "system_prompt": self.identity.system_prompt,
+            },
+            "custom_styles": {
+                style_id: {
+                    "tone_base": style.tone_base,
+                    "permissions": style.permissions,
+                    "constraints": style.constraints,
+                    "vocal_motifs": style.vocal_motifs,
+                    "forbidden_patterns": style.forbidden_patterns,
+                }
+                for style_id, style in self.custom_styles.items()
             },
         }
+        return result
+
+    def save_to_file(self, path: Optional[str | Path] = None) -> Path:
+        """Save configuration to a YAML file."""
+        if path is None:
+            path = self.get_user_config_dir() / "config.yaml"
+        else:
+            path = Path(path)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, "w") as f:
+            yaml.dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
+
+        return path

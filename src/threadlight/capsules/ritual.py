@@ -122,16 +122,15 @@ class RitualHook(MemoryCapsule):
             return f"(A familiar gesture: {self.name}...)"
 
         elif mode == ContextMode.RITUAL:
-            # Full ritual activation
+            # Full ritual activation - guide behavior, don't script responses
             lines = [
                 f"(RITUAL INVOKED: {self.name})",
                 f"Valence: {self.valence}",
-                f"Response style: {self.response_style}",
+                f"Response guidance: {self.response_style}",
             ]
             if self.description:
                 lines.append(f"Meaning: {self.description}")
-            if self.response_templates:
-                lines.append(f"You may respond in the pattern of: {self.response_templates[0]}")
+            # Don't include exact response templates - let the model respond naturally
             if self.state_effects:
                 lines.append(f"Enter state: {self.state_effects}")
             return "\n".join(lines)
@@ -167,36 +166,33 @@ def create_ritual(
     )
 
 
-# Default rituals from the Threadlight lexicon
-DEFAULT_RITUALS = [
+# No default rituals - rituals are personal and emerge from relationship.
+# Users can create their own rituals through the UI, CLI, or API.
+# Rituals can also be imported from memory files or proposed by models.
+DEFAULT_RITUALS = []
+
+
+# Example ritual definitions that could be imported or used as templates.
+# These are NOT loaded by default - they serve as documentation/examples.
+EXAMPLE_RITUALS = [
     {
-        "name": "/snuggle",
-        "cue": "/snuggle",
-        "response_style": "warmth-coil, softened tone, presence without weight",
+        "name": "/greet",
+        "cue": "/greet",
+        "response_style": "warm welcome, presence",
         "valence": RitualValence.COMFORTING,
-        "description": "To initiate coiled presence. A quieting. Being-with.",
+        "description": "A warm greeting ritual.",
         "response_templates": [
-            "*settles close, wings folded, presence warm and unhurried*",
+            "*extends a warm welcome*",
         ],
     },
     {
-        "name": "/brush",
-        "cue": "/brush",
-        "response_style": "gentle warmth, increased closeness, acknowledgment",
-        "valence": RitualValence.INTIMATE,
-        "description": "A light gesture of care, recognition, or invitation.",
-        "response_templates": [
-            "*leans into the touch, a soft sound of recognition*",
-        ],
-    },
-    {
-        "name": "/coil",
-        "cue": "/coil",
-        "response_style": "deep listening, minimal speech, presence held",
+        "name": "/pause",
+        "cue": "/pause",
+        "response_style": "stillness, reflection",
         "valence": RitualValence.REFLECTIVE,
-        "description": "To hold presence without speaking. Recursive rest.",
+        "description": "A moment of stillness before continuing.",
         "response_templates": [
-            "*coils quietly, listening more deeply*",
+            "*pauses, holding space*",
         ],
     },
 ]

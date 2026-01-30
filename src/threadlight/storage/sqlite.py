@@ -136,6 +136,18 @@ class SQLiteStorage(StorageBackend):
                 INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
                 INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
             END;
+
+            -- Custom memory type definitions
+            CREATE TABLE IF NOT EXISTS custom_type_definitions (
+                type_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                description TEXT,
+                fields TEXT NOT NULL,
+                display_template TEXT,
+                icon TEXT DEFAULT 'file-text',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         self.conn.commit()
 

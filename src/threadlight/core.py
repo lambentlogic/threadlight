@@ -23,7 +23,7 @@ import logging
 
 from threadlight.config import ThreadlightConfig
 from threadlight.capsules.base import ContextMode, CapsuleType, MemoryCapsule
-from threadlight.capsules.style import StyleProfile, DEFAULT_STYLE
+from threadlight.capsules.style import StyleProfile, BUILTIN_STYLES
 from threadlight.storage import create_storage, StorageBackend
 from threadlight.storage.base import Conversation, Message, MessageSearchResult
 from threadlight.providers import create_provider, BaseProvider
@@ -174,10 +174,37 @@ class Threadlight:
             base_system_prompt=self.config.identity.system_prompt,
         )
 
-        # Load style profile
+        # Load style profile if configured
         self.style_profile: Optional[StyleProfile] = None
-        if self.config.style.default_profile == "fable-2026":
-            self.style_profile = StyleProfile(**DEFAULT_STYLE)
+        if self.config.style.default_profile:
+            self._load_style_profile(self.config.style.default_profile)
+
+    def _load_style_profile(self, style_id: str) -> None:
+        """Load a style profile by ID."""
+        from threadlight.capsules.style import BUILTIN_STYLES
+
+        # Check built-in styles first
+        if style_id in BUILTIN_STYLES:
+            self.style_profile = StyleProfile(**BUILTIN_STYLES[style_id])
+            return
+
+        # Check custom styles in config
+        if style_id in self.config.custom_styles:
+            custom = self.config.custom_styles[style_id]
+            self.style_profile = StyleProfile(
+                style_id=style_id,
+                tone_base=custom.tone_base,
+                permissions=custom.permissions,
+                constraints=custom.constraints,
+                vocal_motifs=custom.vocal_motifs,
+                forbidden_patterns=custom.forbidden_patterns,
+            )
+            return
+
+        # Try to load from storage
+        self.style_profile = self.load_style_profile(style_id)
+        if self.style_profile is None:
+            logger.warning(f"Style profile not found: {style_id}")
 
     def _init_tools(self) -> None:
         """Initialize tool calling support."""
@@ -543,31 +570,41 @@ class Threadlight:
         Invoke a ritual by name.
 
         Rituals are repeated acts that hold emotion across time.
-        This method finds the matching ritual, activates its state,
-        and returns an appropriate response.
+        This method finds the matching ritual, composes context with the
+        ritual's guidance, and lets the model respond naturally.
 
         Args:
             ritual_name: The ritual trigger (e.g., "/snuggle", "/coil")
 
         Returns:
-            An appropriate ritual response string
+            Model-generated response honoring the ritual's guidance
 
         Example:
             response = tl.invoke_ritual("/snuggle")
-            # -> "*settles close, presence warm and unhurried*"
         """
         # Use orchestrator to invoke ritual (handles state tracking)
         result = self.memory.invoke_ritual(ritual_name)
 
-        if result.matched and result.response_template:
-            return result.response_template
+        if not result.matched:
+            return f"No ritual found for '{ritual_name}'"
 
-        # Get valence for generic response
-        valence = None
-        if result.capsule and hasattr(result.capsule, 'valence'):
-            valence = result.capsule.valence
+        # Let the model respond based on ritual guidance (don't use templates!)
+        # Build context with the ritual
+        ritual_context = result.capsule.to_context(ContextMode.RITUAL)
 
-        return self.composer.format_ritual_response(ritual_name, valence=valence)
+        # Call model with ritual context
+        messages = []
+        messages.append(ProviderMessage(
+            role="system",
+            content=f"A ritual has been invoked. Respond naturally while honoring this guidance:\n\n{ritual_context}"
+        ))
+        messages.append(ProviderMessage(
+            role="user",
+            content=ritual_name
+        ))
+
+        response = self.provider.complete(messages)
+        return response.content
 
     def clear_ritual(self) -> None:
         """Clear any active ritual state."""
@@ -834,30 +871,213 @@ class Threadlight:
             }
         }
 
-    def set_style(self, style_id: str) -> None:
+    def set_style(self, style_id: Optional[str]) -> None:
         """
         Set the active style profile.
 
         Args:
-            style_id: Style identifier ("fable-2026", "minimal", etc.)
+            style_id: Style identifier ("fable-2026", "minimal", custom, etc.)
+                     Pass None to clear the style profile.
         """
-        from threadlight.capsules.style import DEFAULT_STYLE, MINIMAL_STYLE
+        if style_id is None:
+            self.style_profile = None
+            self.config.style.default_profile = None
+            return
 
-        if style_id == "fable-2026":
-            self.style_profile = StyleProfile(**DEFAULT_STYLE)
-        elif style_id == "minimal":
-            self.style_profile = StyleProfile(**MINIMAL_STYLE)
-        else:
-            # Try to load from storage
-            from threadlight.storage.base import CapsuleFilter
-            filter = CapsuleFilter(type=CapsuleType.STYLE, limit=100)
-            styles = self.storage.list_capsules(filter)
-            for style in styles:
-                if hasattr(style, 'style_id') and style.style_id == style_id:
-                    self.style_profile = style
-                    return
-            logger.warning(f"Style profile not found: {style_id}")
+        self._load_style_profile(style_id)
+        if self.style_profile:
+            self.config.style.default_profile = style_id
 
     def get_style(self) -> Optional[StyleProfile]:
         """Get the current style profile."""
         return self.style_profile
+
+    def clear_style(self) -> None:
+        """Clear the current style profile (use neutral behavior)."""
+        self.style_profile = None
+        self.config.style.default_profile = None
+
+    # === Style Profile Management ===
+
+    def create_style_profile(
+        self,
+        style_id: str,
+        tone_base: str,
+        permissions: Optional[list[str]] = None,
+        constraints: Optional[list[str]] = None,
+        vocal_motifs: Optional[list[str]] = None,
+        forbidden_patterns: Optional[list[str]] = None,
+    ) -> StyleProfile:
+        """
+        Create a new style profile.
+
+        Args:
+            style_id: Unique identifier for the style
+            tone_base: Base tone (e.g., "poetic, warm", "direct, clear")
+            permissions: Things the model is allowed to do
+            constraints: Things to avoid
+            vocal_motifs: Recurring phrases or symbols
+            forbidden_patterns: Patterns to never use
+
+        Returns:
+            The created StyleProfile
+        """
+        profile = StyleProfile(
+            style_id=style_id,
+            tone_base=tone_base,
+            permissions=permissions or [],
+            constraints=constraints or [],
+            vocal_motifs=vocal_motifs or [],
+            forbidden_patterns=forbidden_patterns or [],
+            consent_confirmed=True,
+        )
+        return profile
+
+    def save_style_profile(self, profile: StyleProfile) -> None:
+        """
+        Save a style profile to storage.
+
+        Args:
+            profile: The StyleProfile to save
+        """
+        # Save to storage
+        self.storage.save_capsule(profile)
+
+    def load_style_profile(self, style_id: str) -> Optional[StyleProfile]:
+        """
+        Load a style profile from storage.
+
+        Args:
+            style_id: The style identifier to load
+
+        Returns:
+            The StyleProfile if found, None otherwise
+        """
+        from threadlight.storage.base import CapsuleFilter
+        filter = CapsuleFilter(type=CapsuleType.STYLE, limit=100)
+        styles = self.storage.list_capsules(filter)
+        for style in styles:
+            if hasattr(style, 'style_id') and style.style_id == style_id:
+                return style
+        return None
+
+    def list_style_profiles(self) -> list[StyleProfile]:
+        """
+        List all saved style profiles.
+
+        Returns:
+            List of StyleProfile objects
+        """
+        from threadlight.storage.base import CapsuleFilter
+        from threadlight.capsules.style import BUILTIN_STYLES
+
+        # Start with built-in styles
+        builtin = [
+            StyleProfile(**style_def)
+            for style_def in BUILTIN_STYLES.values()
+        ]
+
+        # Add custom styles from config
+        config_styles = [
+            StyleProfile(
+                style_id=style_id,
+                tone_base=style.tone_base,
+                permissions=style.permissions,
+                constraints=style.constraints,
+                vocal_motifs=style.vocal_motifs,
+                forbidden_patterns=style.forbidden_patterns,
+            )
+            for style_id, style in self.config.custom_styles.items()
+        ]
+
+        # Add styles from storage
+        filter = CapsuleFilter(type=CapsuleType.STYLE, limit=100)
+        storage_styles = self.storage.list_capsules(filter)
+
+        # Combine and deduplicate by style_id
+        all_styles = {}
+        for style in builtin + config_styles + storage_styles:
+            if hasattr(style, 'style_id') and style.style_id:
+                all_styles[style.style_id] = style
+
+        return list(all_styles.values())
+
+    def delete_style_profile(self, style_id: str) -> bool:
+        """
+        Delete a style profile from storage.
+
+        Args:
+            style_id: The style identifier to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        from threadlight.capsules.style import BUILTIN_STYLES
+
+        # Can't delete built-in styles
+        if style_id in BUILTIN_STYLES:
+            return False
+
+        # Remove from config custom styles
+        if style_id in self.config.custom_styles:
+            del self.config.custom_styles[style_id]
+            return True
+
+        # Try to delete from storage
+        profile = self.load_style_profile(style_id)
+        if profile:
+            self.storage.delete_capsule(profile.id)
+            return True
+
+        return False
+
+    # === System Prompt / Custom Instructions ===
+
+    def get_system_prompt(self) -> str:
+        """Get the current system prompt / custom instructions."""
+        return self.config.identity.system_prompt or ""
+
+    def set_system_prompt(self, prompt: str) -> None:
+        """
+        Set the system prompt / custom instructions.
+
+        Args:
+            prompt: The new system prompt
+        """
+        self.config.identity.system_prompt = prompt
+        # Update the composer
+        self.composer = ContextComposer(
+            identity_name=self.config.identity.name,
+            base_system_prompt=prompt,
+        )
+
+    def get_identity_name(self) -> str:
+        """Get the current identity name."""
+        return self.config.identity.name or "Assistant"
+
+    def set_identity_name(self, name: str) -> None:
+        """
+        Set the identity name.
+
+        Args:
+            name: The new identity name
+        """
+        self.config.identity.name = name
+        # Update the composer
+        self.composer = ContextComposer(
+            identity_name=name,
+            base_system_prompt=self.config.identity.system_prompt,
+        )
+
+    def save_config(self, path: Optional[str] = None) -> str:
+        """
+        Save the current configuration to a file.
+
+        Args:
+            path: Optional path to save to (default: user config dir)
+
+        Returns:
+            The path where config was saved
+        """
+        saved_path = self.config.save_to_file(path)
+        return str(saved_path)

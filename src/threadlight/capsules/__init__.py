@@ -24,7 +24,16 @@ from threadlight.capsules.base import (
 from threadlight.capsules.relational import RelationalThread, create_relational
 from threadlight.capsules.myth_seed import MythSeed, create_myth_seed, FOUNDATIONAL_SEEDS
 from threadlight.capsules.ritual import RitualHook, create_ritual, RitualValence, DEFAULT_RITUALS
-from threadlight.capsules.style import StyleProfile, create_style_profile, DEFAULT_STYLE, MINIMAL_STYLE
+from threadlight.capsules.style import (
+    StyleProfile,
+    create_style_profile,
+    DEFAULT_STYLE,
+    MINIMAL_STYLE,
+    BUILTIN_STYLES,
+    FABLE_STYLE,
+    PROFESSIONAL_STYLE,
+    CREATIVE_STYLE,
+)
 from threadlight.capsules.witness import WitnessMoment, create_witness_moment
 from threadlight.capsules.imported import ImportedMemory, create_imported_memory
 from threadlight.capsules.factory import create_capsule, capsule_from_simple
@@ -61,4 +70,8 @@ __all__ = [
     "DEFAULT_RITUALS",
     "DEFAULT_STYLE",
     "MINIMAL_STYLE",
+    "BUILTIN_STYLES",
+    "FABLE_STYLE",
+    "PROFESSIONAL_STYLE",
+    "CREATIVE_STYLE",
 ]

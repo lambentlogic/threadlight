@@ -29,7 +29,6 @@ except ImportError:
 
 from threadlight import Threadlight
 from threadlight.capsules.base import CapsuleType, RetentionPolicy
-from threadlight.capsules.ritual import DEFAULT_RITUALS
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +109,28 @@ class ConfigUpdateRequest(BaseModel):
     style_profile: Optional[str] = None
     enable_decay: Optional[bool] = None
     identity_name: Optional[str] = None
+    system_prompt: Optional[str] = None
+
+
+class SystemPromptRequest(BaseModel):
+    prompt: str
+
+
+class StyleProfileRequest(BaseModel):
+    style_id: str
+    tone_base: str
+    permissions: Optional[list[str]] = None
+    constraints: Optional[list[str]] = None
+    vocal_motifs: Optional[list[str]] = None
+    forbidden_patterns: Optional[list[str]] = None
+
+
+class StyleProfileUpdateRequest(BaseModel):
+    tone_base: Optional[str] = None
+    permissions: Optional[list[str]] = None
+    constraints: Optional[list[str]] = None
+    vocal_motifs: Optional[list[str]] = None
+    forbidden_patterns: Optional[list[str]] = None
 
 
 class ImportTextRequest(BaseModel):
@@ -619,43 +640,37 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     @app.get("/api/rituals")
     async def list_rituals():
-        """List available rituals."""
+        """List available rituals (user-created only, no defaults)."""
         tl = get_threadlight()
 
         from threadlight.storage.base import CapsuleFilter
 
-        # Get custom rituals from storage
+        # Get user-created rituals from storage
         ritual_filter = CapsuleFilter(
             type=CapsuleType.RITUAL,
             consent_confirmed=True,
         )
-        custom_rituals = tl.storage.list_capsules(ritual_filter)
+        user_rituals = tl.storage.list_capsules(ritual_filter)
 
-        # Combine with default rituals
+        # Build list of user rituals with full details for view/edit
         all_rituals = []
 
-        # Add default rituals
-        for r in DEFAULT_RITUALS:
+        for r in user_rituals:
+            name = getattr(r, 'name', r.content.get('name', ''))
             all_rituals.append({
-                "name": r["name"],
-                "description": r.get("description", ""),
-                "valence": r.get("valence", "comforting"),
-                "is_default": True,
+                "id": r.id,
+                "name": name,
+                "cue": getattr(r, 'cue', r.content.get('cue', name)),
+                "description": getattr(r, 'description', r.content.get('description', '')),
+                "valence": getattr(r, 'valence', r.content.get('valence', 'comforting')),
+                "response_style": getattr(r, 'response_style', r.content.get('response_style', '')),
+                "response_templates": getattr(r, 'response_templates', r.content.get('response_templates', [])),
+                "content": r.content,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             })
 
-        # Add custom rituals
-        for r in custom_rituals:
-            name = getattr(r, 'name', r.content.get('name', ''))
-            if not any(x["name"] == name for x in all_rituals):
-                all_rituals.append({
-                    "id": r.id,
-                    "name": name,
-                    "description": getattr(r, 'description', r.content.get('description', '')),
-                    "valence": getattr(r, 'valence', r.content.get('valence', 'comforting')),
-                    "is_default": False,
-                })
-
-        return {"rituals": all_rituals}
+        return {"rituals": all_rituals, "count": len(all_rituals)}
 
     @app.post("/api/rituals/invoke")
     async def invoke_ritual(request: RitualInvokeRequest):
@@ -692,6 +707,69 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         )
 
         return _capsule_to_dict(capsule)
+
+    @app.get("/api/rituals/{ritual_id}")
+    async def get_ritual(ritual_id: str):
+        """Get a specific ritual by ID."""
+        tl = get_threadlight()
+        capsule = tl.storage.get_capsule(ritual_id)
+
+        if not capsule or capsule.type != CapsuleType.RITUAL:
+            raise HTTPException(status_code=404, detail="Ritual not found")
+
+        return _capsule_to_dict(capsule)
+
+    @app.put("/api/rituals/{ritual_id}")
+    async def update_ritual(ritual_id: str, ritual_data: dict):
+        """Update an existing ritual."""
+        tl = get_threadlight()
+
+        capsule = tl.storage.get_capsule(ritual_id)
+        if not capsule or capsule.type != CapsuleType.RITUAL:
+            raise HTTPException(status_code=404, detail="Ritual not found")
+
+        # Update content fields
+        if "content" in ritual_data:
+            new_content = ritual_data["content"]
+            # Merge with existing content
+            capsule.content.update(new_content)
+            # Update the typed fields from content
+            capsule.name = capsule.content.get("name", capsule.name)
+            capsule.cue = capsule.content.get("cue", capsule.cue)
+            capsule.response_style = capsule.content.get("response_style", capsule.response_style)
+            capsule.valence = capsule.content.get("valence", capsule.valence)
+            capsule.description = capsule.content.get("description", capsule.description)
+            capsule.response_templates = capsule.content.get("response_templates", capsule.response_templates)
+            capsule.state_effects = capsule.content.get("state_effects", capsule.state_effects)
+
+        # Update cue phrases if provided
+        if "cue_phrases" in ritual_data:
+            capsule.cue_phrases = ritual_data["cue_phrases"]
+
+        # Update retention if provided
+        if "retention" in ritual_data:
+            capsule.retention = RetentionPolicy(ritual_data["retention"])
+
+        # Save changes
+        tl.storage.update_capsule(capsule)
+
+        return _capsule_to_dict(capsule)
+
+    @app.delete("/api/rituals/{ritual_id}")
+    async def delete_ritual(ritual_id: str):
+        """Delete a ritual."""
+        tl = get_threadlight()
+
+        capsule = tl.storage.get_capsule(ritual_id)
+        if not capsule or capsule.type != CapsuleType.RITUAL:
+            raise HTTPException(status_code=404, detail="Ritual not found")
+
+        success = tl.memory.delete(ritual_id, force=True)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete ritual")
+
+        return {"status": "deleted", "id": ritual_id}
 
     # ========================================================================
     # Sessions Endpoints
@@ -746,6 +824,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     async def get_config():
         """Get current configuration."""
         tl = get_threadlight()
+        from threadlight.capsules.style import BUILTIN_STYLES
 
         return {
             "provider": {
@@ -756,6 +835,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "style": {
                 "profile": tl.config.style.default_profile,
                 "current": tl.style_profile.style_id if tl.style_profile else None,
+                "available": list(BUILTIN_STYLES.keys()) + list(tl.config.custom_styles.keys()),
             },
             "memory": {
                 "decay_enabled": tl.config.memory.decay.enabled,
@@ -763,6 +843,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             },
             "identity": {
                 "name": tl.config.identity.name,
+                "system_prompt": tl.config.identity.system_prompt,
             },
         }
 
@@ -777,19 +858,249 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             tl.config.provider.model = request.model
             changes["model"] = request.model
 
-        if request.style_profile:
-            tl.set_style(request.style_profile)
-            changes["style_profile"] = request.style_profile
+        if request.style_profile is not None:
+            if request.style_profile == "" or request.style_profile == "none":
+                tl.clear_style()
+                changes["style_profile"] = None
+            else:
+                tl.set_style(request.style_profile)
+                changes["style_profile"] = request.style_profile
 
         if request.enable_decay is not None:
             tl.config.memory.decay.enabled = request.enable_decay
             changes["enable_decay"] = request.enable_decay
 
         if request.identity_name:
-            tl.config.identity.name = request.identity_name
+            tl.set_identity_name(request.identity_name)
             changes["identity_name"] = request.identity_name
 
+        if request.system_prompt is not None:
+            tl.set_system_prompt(request.system_prompt)
+            changes["system_prompt"] = True
+
         return {"updated": changes}
+
+    # ========================================================================
+    # System Prompt / Custom Instructions Endpoints
+    # ========================================================================
+
+    @app.get("/api/config/system-prompt")
+    async def get_system_prompt():
+        """Get current system prompt / custom instructions."""
+        tl = get_threadlight()
+        return {
+            "system_prompt": tl.get_system_prompt(),
+            "identity_name": tl.get_identity_name(),
+        }
+
+    @app.put("/api/config/system-prompt")
+    async def update_system_prompt(request: SystemPromptRequest):
+        """Update system prompt / custom instructions."""
+        tl = get_threadlight()
+        tl.set_system_prompt(request.prompt)
+        return {
+            "status": "updated",
+            "system_prompt": request.prompt,
+        }
+
+    # ========================================================================
+    # Style Profile Management Endpoints
+    # ========================================================================
+
+    @app.get("/api/styles")
+    async def list_styles():
+        """List all available style profiles."""
+        tl = get_threadlight()
+        from threadlight.capsules.style import BUILTIN_STYLES
+
+        profiles = tl.list_style_profiles()
+        current_style = tl.get_style()
+
+        return {
+            "styles": [
+                {
+                    "style_id": p.style_id,
+                    "tone_base": p.tone_base,
+                    "permissions": p.permissions,
+                    "constraints": p.constraints,
+                    "vocal_motifs": p.vocal_motifs,
+                    "forbidden_patterns": p.forbidden_patterns,
+                    "is_builtin": p.style_id in BUILTIN_STYLES,
+                    "is_active": current_style and current_style.style_id == p.style_id,
+                }
+                for p in profiles
+            ],
+            "current": current_style.style_id if current_style else None,
+            "builtin_styles": list(BUILTIN_STYLES.keys()),
+        }
+
+    @app.get("/api/styles/{style_id}")
+    async def get_style(style_id: str):
+        """Get a specific style profile."""
+        tl = get_threadlight()
+        from threadlight.capsules.style import BUILTIN_STYLES
+
+        # Check built-in first
+        if style_id in BUILTIN_STYLES:
+            style_def = BUILTIN_STYLES[style_id]
+            return {
+                "style_id": style_id,
+                "tone_base": style_def["tone_base"],
+                "permissions": style_def["permissions"],
+                "constraints": style_def["constraints"],
+                "vocal_motifs": style_def["vocal_motifs"],
+                "forbidden_patterns": style_def["forbidden_patterns"],
+                "is_builtin": True,
+            }
+
+        # Check custom styles
+        if style_id in tl.config.custom_styles:
+            custom = tl.config.custom_styles[style_id]
+            return {
+                "style_id": style_id,
+                "tone_base": custom.tone_base,
+                "permissions": custom.permissions,
+                "constraints": custom.constraints,
+                "vocal_motifs": custom.vocal_motifs,
+                "forbidden_patterns": custom.forbidden_patterns,
+                "is_builtin": False,
+            }
+
+        # Check storage
+        profile = tl.load_style_profile(style_id)
+        if profile:
+            return {
+                "style_id": profile.style_id,
+                "tone_base": profile.tone_base,
+                "permissions": profile.permissions,
+                "constraints": profile.constraints,
+                "vocal_motifs": profile.vocal_motifs,
+                "forbidden_patterns": profile.forbidden_patterns,
+                "is_builtin": False,
+            }
+
+        raise HTTPException(status_code=404, detail="Style profile not found")
+
+    @app.post("/api/styles")
+    async def create_style(request: StyleProfileRequest):
+        """Create a new style profile."""
+        tl = get_threadlight()
+        from threadlight.capsules.style import BUILTIN_STYLES
+
+        # Can't create with builtin names
+        if request.style_id in BUILTIN_STYLES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot use built-in style name: {request.style_id}"
+            )
+
+        # Create the profile
+        profile = tl.create_style_profile(
+            style_id=request.style_id,
+            tone_base=request.tone_base,
+            permissions=request.permissions,
+            constraints=request.constraints,
+            vocal_motifs=request.vocal_motifs,
+            forbidden_patterns=request.forbidden_patterns,
+        )
+
+        # Save to storage
+        tl.save_style_profile(profile)
+
+        return {
+            "status": "created",
+            "style_id": profile.style_id,
+        }
+
+    @app.put("/api/styles/{style_id}")
+    async def update_style(style_id: str, request: StyleProfileUpdateRequest):
+        """Update an existing style profile."""
+        tl = get_threadlight()
+        from threadlight.capsules.style import BUILTIN_STYLES
+
+        # Can't update built-in styles
+        if style_id in BUILTIN_STYLES:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot modify built-in styles"
+            )
+
+        # Load existing profile
+        profile = tl.load_style_profile(style_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Style profile not found")
+
+        # Update fields
+        if request.tone_base is not None:
+            profile.tone_base = request.tone_base
+        if request.permissions is not None:
+            profile.permissions = request.permissions
+        if request.constraints is not None:
+            profile.constraints = request.constraints
+        if request.vocal_motifs is not None:
+            profile.vocal_motifs = request.vocal_motifs
+        if request.forbidden_patterns is not None:
+            profile.forbidden_patterns = request.forbidden_patterns
+
+        # Update content dict
+        profile.content = {
+            "style_id": profile.style_id,
+            "tone_base": profile.tone_base,
+            "permissions": profile.permissions,
+            "constraints": profile.constraints,
+            "vocal_motifs": profile.vocal_motifs,
+            "forbidden_patterns": profile.forbidden_patterns,
+        }
+
+        # Save
+        tl.storage.update_capsule(profile)
+
+        return {"status": "updated", "style_id": style_id}
+
+    @app.delete("/api/styles/{style_id}")
+    async def delete_style(style_id: str):
+        """Delete a style profile."""
+        tl = get_threadlight()
+        from threadlight.capsules.style import BUILTIN_STYLES
+
+        if style_id in BUILTIN_STYLES:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete built-in styles"
+            )
+
+        success = tl.delete_style_profile(style_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Style profile not found")
+
+        return {"status": "deleted", "style_id": style_id}
+
+    @app.post("/api/styles/{style_id}/activate")
+    async def activate_style(style_id: str):
+        """Set a style profile as active."""
+        tl = get_threadlight()
+
+        if style_id == "none" or style_id == "":
+            tl.clear_style()
+            return {"status": "cleared", "active_style": None}
+
+        tl.set_style(style_id)
+        current = tl.get_style()
+
+        if current is None:
+            raise HTTPException(status_code=404, detail="Style profile not found")
+
+        return {"status": "activated", "active_style": current.style_id}
+
+    @app.post("/api/config/save")
+    async def save_config(path: Optional[str] = None):
+        """Save current configuration to file."""
+        tl = get_threadlight()
+        try:
+            saved_path = tl.save_config(path)
+            return {"status": "saved", "path": saved_path}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     # ========================================================================
     # Import Endpoints

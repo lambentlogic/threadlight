@@ -109,6 +109,13 @@
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
     </style>
 </head>
 <body class="bg-threadlight-bg text-threadlight-text min-h-screen">
@@ -355,17 +362,35 @@
                     </header>
 
                     <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
-                        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                            <template x-for="ritual in rituals" :key="ritual.name">
-                                <div class="bg-threadlight-elevated rounded-xl p-4 hover:bg-threadlight-elevated/80 transition-colors">
+                        <!-- Empty state when no rituals -->
+                        <div x-show="rituals.length === 0" class="text-center py-12 mb-8">
+                            <svg class="w-16 h-16 mx-auto mb-4 text-threadlight-ritual/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+                            </svg>
+                            <h3 class="text-lg font-medium text-threadlight-muted mb-2">No rituals yet</h3>
+                            <p class="text-sm text-threadlight-muted/70 max-w-md mx-auto mb-4">
+                                Rituals are meaningful gestures that emerge through relationship.
+                                They are repeated acts that hold emotion across time.
+                            </p>
+                            <p class="text-xs text-threadlight-muted/50 max-w-sm mx-auto">
+                                Create your first ritual below, or let the model propose one during conversation.
+                            </p>
+                        </div>
+
+                        <!-- Ritual grid when rituals exist -->
+                        <div x-show="rituals.length > 0" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                            <template x-for="ritual in rituals" :key="ritual.id || ritual.name">
+                                <div @click="viewRitual(ritual)" class="bg-threadlight-elevated rounded-xl p-4 hover:bg-threadlight-elevated/80 transition-colors cursor-pointer">
                                     <div class="flex items-center justify-between mb-3">
                                         <span class="text-lg font-medium text-threadlight-ritual" x-text="ritual.name"></span>
-                                        <span x-show="ritual.is_default" class="px-2 py-0.5 text-xs bg-threadlight-ritual/20 text-threadlight-ritual rounded">default</span>
+                                        <svg class="w-4 h-4 text-threadlight-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
                                     </div>
-                                    <p class="text-sm text-threadlight-muted mb-3" x-text="ritual.description"></p>
+                                    <p class="text-sm text-threadlight-muted mb-3 line-clamp-2" x-text="ritual.description || ritual.response_style || 'No description'"></p>
                                     <div class="flex items-center justify-between">
-                                        <span class="px-2 py-1 text-xs bg-threadlight-surface rounded text-threadlight-muted" x-text="ritual.valence"></span>
-                                        <button @click="invokeRitualFromManager(ritual.name)"
+                                        <span class="px-2 py-1 text-xs bg-threadlight-surface rounded text-threadlight-muted" x-text="ritual.valence || 'comforting'"></span>
+                                        <button @click.stop="invokeRitualFromManager(ritual.name)"
                                             class="px-4 py-1 bg-threadlight-ritual/20 text-threadlight-ritual hover:bg-threadlight-ritual/30 rounded-lg text-sm transition-colors">
                                             Invoke
                                         </button>
@@ -386,15 +411,8 @@
                                     </div>
                                     <div>
                                         <label class="block text-sm text-threadlight-muted mb-1">Valence</label>
-                                        <select x-model="newRitual.valence"
-                                            class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
-                                            <option value="comforting">Comforting</option>
-                                            <option value="grounding">Grounding</option>
-                                            <option value="sacred">Sacred</option>
-                                            <option value="playful">Playful</option>
-                                            <option value="intimate">Intimate</option>
-                                            <option value="reflective">Reflective</option>
-                                        </select>
+                                        <input type="text" x-model="newRitual.valence" placeholder="e.g., warm, playful, sacred"
+                                            class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                                     </div>
                                 </div>
                                 <div>
@@ -403,9 +421,20 @@
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                                 </div>
                                 <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Response Template</label>
-                                    <textarea x-model="newRitual.response" placeholder="*the gesture that unfolds...*" rows="2"
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <label class="block text-sm text-threadlight-muted">Response Guidance</label>
+                                        <div class="relative group">
+                                            <svg class="w-3.5 h-3.5 text-threadlight-muted cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                            </svg>
+                                            <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-threadlight-bg border border-threadlight-border rounded-lg text-xs text-threadlight-text w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10 shadow-lg">
+                                                Describe the tone and approach for this ritual, not exact words. The model will respond naturally while honoring this guidance.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <textarea x-model="newRitual.response" placeholder="e.g., Warm, coiling presence with gentle reassurance" rows="2"
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual resize-none"></textarea>
+                                    <p class="text-xs text-threadlight-muted mt-1">Describe how the ritual should feel, not what to say.</p>
                                 </div>
                                 <button type="submit" class="px-6 py-2 bg-threadlight-ritual hover:bg-threadlight-ritual/80 text-white rounded-lg transition-colors">
                                     Create Ritual
@@ -422,6 +451,100 @@
                     <h2 class="text-lg font-semibold mb-6">Settings</h2>
 
                     <div class="max-w-2xl space-y-6">
+                        <!-- Custom Instructions -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-2">Custom Instructions</h3>
+                            <p class="text-sm text-threadlight-muted mb-4">Define how the assistant should behave. This is your system prompt.</p>
+                            <div class="space-y-4">
+                                <div>
+                                    <textarea x-model="config.identity.system_prompt"
+                                        placeholder="You are a helpful AI assistant..."
+                                        rows="6"
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent font-mono text-sm resize-y"></textarea>
+                                </div>
+                                <button @click="updateConfig({system_prompt: config.identity.system_prompt})"
+                                    class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
+                                    Save Instructions
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Identity -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Identity</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Assistant Name</label>
+                                    <input type="text" x-model="config.identity.name"
+                                        @change="updateConfig({identity_name: config.identity.name})"
+                                        placeholder="Assistant"
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Style Profile -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-2">Style Profile</h3>
+                            <p class="text-sm text-threadlight-muted mb-4">Style profiles define voice, tone, and behavioral patterns.</p>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Active Style</label>
+                                    <select x-model="config.style.current" @change="activateStyle(config.style.current); loadSelectedStyleDetails(config.style.current)"
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
+                                        <option value="">None (Neutral)</option>
+                                        <template x-for="style in config.style.available" :key="style">
+                                            <option :value="style" x-text="style"></option>
+                                        </template>
+                                    </select>
+                                    <p class="text-xs text-threadlight-muted mt-2">Built-in styles: minimal, professional, creative, fable-2026</p>
+                                </div>
+
+                                <!-- Style Detail View -->
+                                <div x-show="selectedStyleDetails" class="mt-4 p-4 bg-threadlight-surface border border-threadlight-border rounded-lg">
+                                    <h4 class="font-medium text-threadlight-accent2 mb-3">
+                                        Style: <span x-text="selectedStyleDetails?.style_id"></span>
+                                    </h4>
+                                    <div class="space-y-3 text-sm">
+                                        <div>
+                                            <span class="text-threadlight-muted">Tone:</span>
+                                            <span class="text-threadlight-text ml-2" x-text="selectedStyleDetails?.tone_base || 'Not set'"></span>
+                                        </div>
+                                        <div>
+                                            <span class="text-threadlight-muted">Permissions:</span>
+                                            <span class="text-threadlight-text ml-2" x-text="selectedStyleDetails?.permissions?.length ? selectedStyleDetails.permissions.join(', ') : 'None'"></span>
+                                        </div>
+                                        <div>
+                                            <span class="text-threadlight-muted">Constraints:</span>
+                                            <span class="text-threadlight-text ml-2" x-text="selectedStyleDetails?.constraints?.length ? selectedStyleDetails.constraints.join(', ') : 'None'"></span>
+                                        </div>
+                                        <div>
+                                            <span class="text-threadlight-muted">Vocal Motifs:</span>
+                                            <span class="text-threadlight-text ml-2" x-text="selectedStyleDetails?.vocal_motifs?.length ? selectedStyleDetails.vocal_motifs.join(', ') : 'None'"></span>
+                                        </div>
+                                    </div>
+                                    <div class="mt-4 pt-3 border-t border-threadlight-border flex gap-2">
+                                        <button @click="editStyle(selectedStyleDetails)"
+                                            class="px-3 py-1.5 text-sm bg-threadlight-accent2/20 text-threadlight-accent2 hover:bg-threadlight-accent2/30 rounded-lg transition-colors">
+                                            Edit This Style
+                                        </button>
+                                        <button @click="deleteStyle(selectedStyleDetails?.style_id)"
+                                            x-show="!isBuiltinStyle(selectedStyleDetails?.style_id)"
+                                            class="px-3 py-1.5 text-sm bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="pt-4 border-t border-threadlight-border">
+                                    <button @click="openStyleEditor()"
+                                        class="px-4 py-2 bg-threadlight-accent2/20 text-threadlight-accent2 hover:bg-threadlight-accent2/30 rounded-lg transition-colors">
+                                        Create Custom Style
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Model Configuration -->
                         <div class="bg-threadlight-elevated rounded-xl p-6">
                             <h3 class="font-medium mb-4">Model Configuration</h3>
@@ -429,6 +552,7 @@
                                 <div>
                                     <label class="block text-sm text-threadlight-muted mb-1">Model</label>
                                     <input type="text" x-model="config.provider.model"
+                                        @change="updateConfig({model: config.provider.model})"
                                         class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
                                 </div>
                                 <div>
@@ -439,56 +563,56 @@
                             </div>
                         </div>
 
-                        <!-- Style Profile -->
-                        <div class="bg-threadlight-elevated rounded-xl p-6">
-                            <h3 class="font-medium mb-4">Style Profile</h3>
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Profile</label>
-                                    <select x-model="config.style.profile" @change="updateConfig({style_profile: config.style.profile})"
-                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
-                                        <option value="fable-2026">Fable-2026 (Presence-centered)</option>
-                                        <option value="minimal">Minimal</option>
-                                        <option value="default">Default</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
+                        <!-- Advanced Settings -->
+                        <details class="bg-threadlight-elevated rounded-xl">
+                            <summary class="p-6 cursor-pointer font-medium text-threadlight-muted hover:text-threadlight-text transition-colors">
+                                Advanced Settings
+                            </summary>
+                            <div class="px-6 pb-6 space-y-4">
+                                <!-- Memory Cleanup Section -->
+                                <div class="p-4 bg-threadlight-surface rounded-lg border border-threadlight-border">
+                                    <div class="flex items-center gap-2 mb-3">
+                                        <h4 class="font-medium text-sm">Fade Unused Memories</h4>
+                                        <div class="relative group">
+                                            <svg class="w-4 h-4 text-threadlight-muted cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                            </svg>
+                                            <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-threadlight-bg border border-threadlight-border rounded-lg text-xs text-threadlight-text w-64 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10 shadow-lg">
+                                                <p class="font-medium mb-1">How it works:</p>
+                                                <p>Gradually fades unused memories over time. Memories you access frequently stay strong, while rarely-used ones slowly become dormant.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-xs text-threadlight-muted mb-4">When enabled, memories that haven't been accessed will gradually fade.</p>
 
-                        <!-- Identity -->
-                        <div class="bg-threadlight-elevated rounded-xl p-6">
-                            <h3 class="font-medium mb-4">Identity</h3>
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Name</label>
-                                    <input type="text" x-model="config.identity.name"
-                                        @change="updateConfig({identity_name: config.identity.name})"
-                                        placeholder="Fable"
-                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
-                                </div>
-                            </div>
-                        </div>
+                                    <div class="flex items-center justify-between mb-4">
+                                        <label class="text-sm cursor-pointer" @click="toggleDecay()">Enable memory fading</label>
+                                        <button @click="toggleDecay()"
+                                            :class="config.memory?.decay_enabled ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
+                                            class="w-12 h-6 rounded-full relative transition-colors flex-shrink-0">
+                                            <span :class="config.memory?.decay_enabled ? 'translate-x-6' : 'translate-x-1'"
+                                                class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                        </button>
+                                    </div>
 
-                        <!-- Memory Settings -->
-                        <div class="bg-threadlight-elevated rounded-xl p-6">
-                            <h3 class="font-medium mb-4">Memory</h3>
-                            <div class="space-y-4">
-                                <div class="flex items-center justify-between">
-                                    <span class="text-sm">Decay Enabled</span>
-                                    <button @click="toggleDecay()"
-                                        :class="config.memory?.decay_enabled ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
-                                        class="w-12 h-6 rounded-full relative transition-colors">
-                                        <span :class="config.memory?.decay_enabled ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                    <div class="pt-4 border-t border-threadlight-border/50">
+                                        <button @click="runDecay()" class="px-4 py-2 bg-threadlight-surface border border-threadlight-border text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 rounded-lg transition-colors text-sm">
+                                            Run Memory Cleanup
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Save Configuration -->
+                                <div class="p-4 bg-threadlight-surface rounded-lg border border-threadlight-border">
+                                    <h4 class="font-medium text-sm mb-2">Save Configuration</h4>
+                                    <p class="text-xs text-threadlight-muted mb-4">Save your current settings to a file for persistence across sessions.</p>
+                                    <button @click="saveConfig()"
+                                        class="px-4 py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition-colors text-sm">
+                                        Save to Config File
                                     </button>
                                 </div>
-                                <div class="pt-4 border-t border-threadlight-border">
-                                    <button @click="runDecay()" class="px-4 py-2 bg-threadlight-warm/20 text-threadlight-warm hover:bg-threadlight-warm/30 rounded-lg transition-colors">
-                                        Run Decay Cycle
-                                    </button>
-                                </div>
                             </div>
-                        </div>
+                        </details>
 
                         <!-- Stats -->
                         <div class="bg-threadlight-elevated rounded-xl p-6">
@@ -757,6 +881,225 @@
                                 Create
                             </button>
                             <button type="button" @click="showCreateMemory = false" class="px-6 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Style Editor Modal -->
+        <div x-show="showStyleEditor" x-cloak
+            class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            @click.self="cancelStyleEditor()">
+            <div class="bg-threadlight-surface rounded-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-medium" x-text="editingStyleMode ? 'Edit Style' : 'Create Custom Style'"></h3>
+                        <button @click="cancelStyleEditor()" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <form @submit.prevent="saveStyle()" class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Style ID</label>
+                            <input type="text" x-model="newStyle.style_id" placeholder="my-custom-style"
+                                :disabled="editingStyleMode"
+                                :class="editingStyleMode ? 'cursor-not-allowed opacity-60' : ''"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                            <p class="text-xs text-threadlight-muted mt-1" x-show="!editingStyleMode">Unique identifier (no spaces, use hyphens)</p>
+                            <p class="text-xs text-threadlight-muted mt-1" x-show="editingStyleMode">Style ID cannot be changed</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Tone Base</label>
+                            <input type="text" x-model="newStyle.tone_base" placeholder="helpful, clear, warm"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                            <p class="text-xs text-threadlight-muted mt-1">Describe the base tone (comma-separated adjectives)</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Permissions</label>
+                            <textarea x-model="newStyle.permissionsStr" placeholder="be concise&#10;use metaphors&#10;ask clarifying questions" rows="3"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-y"></textarea>
+                            <p class="text-xs text-threadlight-muted mt-1">Things the model is allowed to do (one per line)</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Constraints</label>
+                            <textarea x-model="newStyle.constraintsStr" placeholder="avoid jargon&#10;don't be too formal&#10;resist filler phrases" rows="3"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-y"></textarea>
+                            <p class="text-xs text-threadlight-muted mt-1">Things to avoid (one per line)</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Vocal Motifs (optional)</label>
+                            <input type="text" x-model="newStyle.vocalMotifsStr" placeholder="recurring phrases, symbols"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                            <p class="text-xs text-threadlight-muted mt-1">Recurring phrases or symbols (comma-separated)</p>
+                        </div>
+
+                        <div class="flex gap-2 pt-4 border-t border-threadlight-border">
+                            <button type="submit" class="px-6 py-2 bg-threadlight-accent2 hover:bg-threadlight-accent2/80 text-white rounded-lg transition-colors">
+                                <span x-text="editingStyleMode ? 'Save Changes' : 'Create Style'"></span>
+                            </button>
+                            <button type="button" @click="cancelStyleEditor()" class="px-6 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ritual Detail Modal -->
+        <div x-show="selectedRitual && !editingRitual" x-cloak
+            class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            @click.self="selectedRitual = null">
+            <div class="bg-threadlight-surface rounded-2xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="px-3 py-1 rounded bg-indigo-500/20 text-indigo-400">Ritual</span>
+                        <button @click="selectedRitual = null" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Name</label>
+                            <p class="text-xl font-medium text-threadlight-ritual" x-text="selectedRitual?.name"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Cue Phrase</label>
+                            <p class="text-threadlight-text" x-text="selectedRitual?.content?.cue || selectedRitual?.name || '-'"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Response Guidance</label>
+                            <p class="text-threadlight-text" x-text="selectedRitual?.response_style || selectedRitual?.content?.response_style || '-'"></p>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">Valence</label>
+                                <span class="px-2 py-1 text-sm bg-threadlight-bg rounded text-threadlight-muted" x-text="selectedRitual?.valence || selectedRitual?.content?.valence || 'comforting'"></span>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">ID</label>
+                                <p class="text-threadlight-muted font-mono text-sm truncate" x-text="selectedRitual?.id"></p>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Description</label>
+                            <p class="text-threadlight-text" x-text="selectedRitual?.description || selectedRitual?.content?.description || '-'"></p>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4 text-sm text-threadlight-muted">
+                            <div>
+                                <label class="block mb-1">Created</label>
+                                <p x-text="formatDate(selectedRitual?.created_at)"></p>
+                            </div>
+                            <div>
+                                <label class="block mb-1">Last Updated</label>
+                                <p x-text="formatDate(selectedRitual?.updated_at || selectedRitual?.created_at)"></p>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2 pt-4 border-t border-threadlight-border">
+                            <button @click="startEditRitual()"
+                                class="px-4 py-2 bg-threadlight-ritual/20 text-threadlight-ritual hover:bg-threadlight-ritual/30 rounded-lg transition-colors">
+                                Edit
+                            </button>
+                            <button @click="invokeRitualFromManager(selectedRitual?.name); selectedRitual = null"
+                                class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
+                                Invoke
+                            </button>
+                            <button @click="deleteRitual(selectedRitual?.id)"
+                                class="px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ritual Edit Modal -->
+        <div x-show="editingRitual" x-cloak
+            class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            @click.self="editingRitual = null">
+            <div class="bg-threadlight-surface rounded-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-medium">Edit Ritual</h3>
+                        <button @click="editingRitual = null" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <form @submit.prevent="updateRitual()" class="space-y-4">
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">Name</label>
+                                <input type="text" x-model="editingRitual.name" placeholder="/your-ritual"
+                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">Valence</label>
+                                <select x-model="editingRitual.valence"
+                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-ritual">
+                                    <option value="comforting">Comforting</option>
+                                    <option value="grounding">Grounding</option>
+                                    <option value="sacred">Sacred</option>
+                                    <option value="playful">Playful</option>
+                                    <option value="intimate">Intimate</option>
+                                    <option value="reflective">Reflective</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Cue Phrase</label>
+                            <input type="text" x-model="editingRitual.cue" placeholder="Trigger phrase (optional)"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
+                            <p class="text-xs text-threadlight-muted mt-1">Leave empty to use the ritual name as the trigger.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Description</label>
+                            <input type="text" x-model="editingRitual.description" placeholder="What this ritual means..."
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2 mb-1">
+                                <label class="block text-sm text-threadlight-muted">Response Guidance</label>
+                                <div class="relative group">
+                                    <svg class="w-3.5 h-3.5 text-threadlight-muted cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                    </svg>
+                                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-threadlight-bg border border-threadlight-border rounded-lg text-xs text-threadlight-text w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10 shadow-lg">
+                                        Describe the tone and approach for this ritual, not exact words. The model will respond naturally while honoring this guidance.
+                                    </div>
+                                </div>
+                            </div>
+                            <textarea x-model="editingRitual.response_style" placeholder="e.g., Warm, coiling presence with gentle reassurance" rows="2"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual resize-none"></textarea>
+                            <p class="text-xs text-threadlight-muted mt-1">Describe how the ritual should feel, not what to say.</p>
+                        </div>
+                        <div class="flex gap-2 pt-4 border-t border-threadlight-border">
+                            <button type="submit" class="px-6 py-2 bg-threadlight-ritual hover:bg-threadlight-ritual/80 text-white rounded-lg transition-colors">
+                                Save Changes
+                            </button>
+                            <button type="button" @click="editingRitual = null" class="px-6 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
                                 Cancel
                             </button>
                         </div>

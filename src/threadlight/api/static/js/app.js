@@ -12,7 +12,7 @@ function threadlightApp() {
         inputMessage: '',
         isTyping: false,
         chatHistory: [],
-        quickRituals: ['/snuggle', '/brush', '/coil'],
+        quickRituals: [],  // Loaded dynamically from user-created rituals
 
         // WebSocket
         ws: null,
@@ -33,6 +33,8 @@ function threadlightApp() {
 
         // Ritual state
         rituals: [],
+        selectedRitual: null,
+        editingRitual: null,
         newRitual: {
             name: '',
             valence: 'comforting',
@@ -43,9 +45,23 @@ function threadlightApp() {
         // Config state
         config: {
             provider: { model: '', api_base: '' },
-            style: { profile: '' },
-            identity: { name: '' },
+            style: { profile: '', current: null, available: [] },
+            identity: { name: '', system_prompt: '' },
             memory: { decay_enabled: true },
+        },
+
+        // Style editing state
+        styles: [],
+        selectedStyle: null,
+        selectedStyleDetails: null,
+        showStyleEditor: false,
+        editingStyleMode: false,  // true when editing existing style, false when creating
+        newStyle: {
+            style_id: '',
+            tone_base: '',
+            permissionsStr: '',
+            constraintsStr: '',
+            vocalMotifsStr: '',
         },
 
         // Stats
@@ -81,6 +97,7 @@ function threadlightApp() {
             await this.loadStats();
             await this.loadRituals();
             await this.loadMemories();
+            await this.loadStyles();
 
             // Connect WebSocket
             this.connectWebSocket();
@@ -413,6 +430,8 @@ function threadlightApp() {
                 const response = await fetch('/api/rituals');
                 const data = await response.json();
                 this.rituals = data.rituals || [];
+                // Update quick rituals from user-created rituals (first 3)
+                this.quickRituals = this.rituals.slice(0, 3).map(r => r.name);
             } catch (error) {
                 console.error('Failed to load rituals:', error);
             }
@@ -430,7 +449,7 @@ function threadlightApp() {
                             valence: this.newRitual.valence,
                             description: this.newRitual.description,
                             response_templates: this.newRitual.response ? [this.newRitual.response] : [],
-                            response_style: 'presence, warmth',
+                            response_style: this.newRitual.response || 'presence, warmth',
                         },
                     }),
                 });
@@ -447,6 +466,80 @@ function threadlightApp() {
                 await this.loadRituals();
             } catch (error) {
                 this.showToast('Failed to create ritual: ' + error.message, 'error');
+            }
+        },
+
+        viewRitual(ritual) {
+            this.selectedRitual = ritual;
+            this.editingRitual = null;
+        },
+
+        startEditRitual() {
+            if (!this.selectedRitual) return;
+
+            // Create a copy for editing with all relevant fields
+            this.editingRitual = {
+                id: this.selectedRitual.id,
+                name: this.selectedRitual.name || this.selectedRitual.content?.name || '',
+                cue: this.selectedRitual.content?.cue || this.selectedRitual.name || '',
+                valence: this.selectedRitual.valence || this.selectedRitual.content?.valence || 'comforting',
+                description: this.selectedRitual.description || this.selectedRitual.content?.description || '',
+                response_style: this.selectedRitual.response_style || this.selectedRitual.content?.response_style || '',
+            };
+        },
+
+        async updateRitual() {
+            if (!this.editingRitual?.id) return;
+
+            try {
+                const response = await fetch(`/api/rituals/${this.editingRitual.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: {
+                            name: this.editingRitual.name,
+                            cue: this.editingRitual.cue || this.editingRitual.name,
+                            valence: this.editingRitual.valence,
+                            description: this.editingRitual.description,
+                            response_style: this.editingRitual.response_style,
+                        },
+                    }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to update ritual');
+                }
+
+                this.showToast('Ritual updated successfully');
+                this.editingRitual = null;
+                this.selectedRitual = null;
+                await this.loadRituals();
+            } catch (error) {
+                this.showToast('Failed to update ritual: ' + error.message, 'error');
+            }
+        },
+
+        async deleteRitual(id) {
+            if (!id) return;
+            if (!confirm('Delete this ritual? This cannot be undone.')) return;
+
+            try {
+                const response = await fetch(`/api/rituals/${id}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to delete ritual');
+                }
+
+                this.showToast('Ritual deleted');
+                this.selectedRitual = null;
+                this.editingRitual = null;
+                await this.loadRituals();
+            } catch (error) {
+                this.showToast('Failed to delete ritual: ' + error.message, 'error');
             }
         },
 
@@ -474,6 +567,19 @@ function threadlightApp() {
             }
         },
 
+        async updateSystemPrompt() {
+            try {
+                await fetch('/api/config/system-prompt', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: this.config.identity.system_prompt }),
+                });
+                this.showToast('Custom instructions updated');
+            } catch (error) {
+                this.showToast('Failed to update custom instructions: ' + error.message, 'error');
+            }
+        },
+
         async toggleDecay() {
             const newValue = !(this.config.memory?.decay_enabled ?? true);
             await this.updateConfig({ enable_decay: newValue });
@@ -483,11 +589,180 @@ function threadlightApp() {
             try {
                 const response = await fetch('/api/decay', { method: 'POST' });
                 const data = await response.json();
-                this.showToast(`Decay cycle complete. Processed: ${data.processed}, Decayed: ${data.decayed}`);
+                this.showToast(`Memory cleanup complete. Processed: ${data.processed}, Faded: ${data.decayed}`);
                 await this.loadStats();
                 await this.loadMemories();
             } catch (error) {
-                this.showToast('Failed to run decay: ' + error.message, 'error');
+                this.showToast('Failed to run memory cleanup: ' + error.message, 'error');
+            }
+        },
+
+        // Style functions
+        async loadStyles() {
+            try {
+                const response = await fetch('/api/styles');
+                const data = await response.json();
+                this.styles = data.styles || [];
+            } catch (error) {
+                console.error('Failed to load styles:', error);
+            }
+        },
+
+        async loadSelectedStyleDetails(styleId) {
+            if (!styleId || styleId === '' || styleId === 'none') {
+                this.selectedStyleDetails = null;
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/styles/${styleId}`);
+                if (response.ok) {
+                    this.selectedStyleDetails = await response.json();
+                } else {
+                    this.selectedStyleDetails = null;
+                }
+            } catch (error) {
+                console.error('Failed to load style details:', error);
+                this.selectedStyleDetails = null;
+            }
+        },
+
+        async activateStyle(styleId) {
+            try {
+                if (styleId === '' || styleId === 'none') {
+                    await this.updateConfig({ style_profile: 'none' });
+                    this.selectedStyleDetails = null;
+                } else {
+                    await this.updateConfig({ style_profile: styleId });
+                }
+                await this.loadStyles();
+            } catch (error) {
+                this.showToast('Failed to activate style: ' + error.message, 'error');
+            }
+        },
+
+        isBuiltinStyle(styleId) {
+            const builtinStyles = ['minimal', 'professional', 'creative', 'fable-2026'];
+            return builtinStyles.includes(styleId);
+        },
+
+        openStyleEditor() {
+            this.editingStyleMode = false;
+            this.newStyle = {
+                style_id: '',
+                tone_base: '',
+                permissionsStr: '',
+                constraintsStr: '',
+                vocalMotifsStr: '',
+            };
+            this.showStyleEditor = true;
+        },
+
+        editStyle(style) {
+            if (!style) return;
+
+            this.editingStyleMode = true;
+            this.newStyle = {
+                style_id: style.style_id,
+                tone_base: style.tone_base || '',
+                permissionsStr: (style.permissions || []).join('\n'),
+                constraintsStr: (style.constraints || []).join('\n'),
+                vocalMotifsStr: (style.vocal_motifs || []).join(', '),
+            };
+            this.showStyleEditor = true;
+        },
+
+        cancelStyleEditor() {
+            this.showStyleEditor = false;
+            this.editingStyleMode = false;
+            this.newStyle = {
+                style_id: '',
+                tone_base: '',
+                permissionsStr: '',
+                constraintsStr: '',
+                vocalMotifsStr: '',
+            };
+        },
+
+        async saveStyle() {
+            const url = this.editingStyleMode
+                ? `/api/styles/${this.newStyle.style_id}`
+                : '/api/styles';
+            const method = this.editingStyleMode ? 'PUT' : 'POST';
+
+            try {
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        style_id: this.newStyle.style_id,
+                        tone_base: this.newStyle.tone_base,
+                        permissions: this.newStyle.permissionsStr.split('\n').map(s => s.trim()).filter(s => s),
+                        constraints: this.newStyle.constraintsStr.split('\n').map(s => s.trim()).filter(s => s),
+                        vocal_motifs: this.newStyle.vocalMotifsStr.split(',').map(s => s.trim()).filter(s => s),
+                    }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || `Failed to ${this.editingStyleMode ? 'update' : 'create'} style`);
+                }
+
+                this.showToast(`Style ${this.editingStyleMode ? 'updated' : 'created'} successfully`);
+                this.showStyleEditor = false;
+                this.editingStyleMode = false;
+                this.newStyle = { style_id: '', tone_base: '', permissionsStr: '', constraintsStr: '', vocalMotifsStr: '' };
+                await this.loadStyles();
+                await this.loadConfig();
+
+                // Reload style details if we just edited the current style
+                if (this.config.style.current) {
+                    await this.loadSelectedStyleDetails(this.config.style.current);
+                }
+            } catch (error) {
+                this.showToast(`Failed to ${this.editingStyleMode ? 'update' : 'create'} style: ` + error.message, 'error');
+            }
+        },
+
+        async deleteStyle(styleId) {
+            if (!styleId) return;
+            if (this.isBuiltinStyle(styleId)) {
+                this.showToast('Cannot delete built-in styles', 'error');
+                return;
+            }
+            if (!confirm('Delete this style profile?')) return;
+
+            try {
+                const response = await fetch(`/api/styles/${styleId}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to delete style');
+                }
+
+                this.showToast('Style deleted');
+                this.selectedStyleDetails = null;
+                await this.loadStyles();
+                await this.loadConfig();
+            } catch (error) {
+                this.showToast('Failed to delete style: ' + error.message, 'error');
+            }
+        },
+
+        // Config save function
+        async saveConfig() {
+            try {
+                const response = await fetch('/api/config/save', {
+                    method: 'POST',
+                });
+                const data = await response.json();
+                if (data.status === 'saved') {
+                    this.showToast('Configuration saved to ' + data.path);
+                }
+            } catch (error) {
+                this.showToast('Failed to save config: ' + error.message, 'error');
             }
         },
 

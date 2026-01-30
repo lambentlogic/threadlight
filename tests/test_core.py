@@ -146,7 +146,7 @@ class TestThreadlightStream:
 
 class TestThreadlightRituals:
     def test_invoke_ritual_known(self, threadlight):
-        """Test invoking a known ritual."""
+        """Test invoking a known ritual returns model-generated response."""
         # First create the ritual
         from threadlight.capsules.ritual import create_ritual, RitualValence
 
@@ -154,14 +154,17 @@ class TestThreadlightRituals:
             name="/snuggle",
             response_style="warmth",
             valence=RitualValence.COMFORTING,
-            response_templates=["*settles close*"],
+            response_templates=["*settles close*"],  # Templates are hints, not outputs
         )
         ritual.consent_confirmed = True
         threadlight.storage.save_capsule(ritual)
 
         response = threadlight.invoke_ritual("/snuggle")
 
-        assert "*settles close*" in response
+        # Model generates response based on ritual context, not template
+        # Just verify we get a non-empty response (mock provider returns greeting)
+        assert response is not None
+        assert len(response) > 0
 
     def test_invoke_ritual_unknown(self, threadlight):
         """Test invoking an unknown ritual."""
