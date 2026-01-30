@@ -988,7 +988,11 @@ function threadlightApp() {
         },
 
         async toggleEmbeddings() {
-            const newState = !this.embeddingsEnabled;
+            const oldState = this.embeddingsEnabled;
+            const newState = !oldState;
+
+            // Optimistically update UI
+            this.embeddingsEnabled = newState;
 
             try {
                 const response = await fetch('/api/embeddings/enable', {
@@ -1003,17 +1007,23 @@ function threadlightApp() {
 
                 if (!response.ok) {
                     const data = await response.json().catch(() => ({}));
-                    throw new Error(data.detail || 'Failed to update embeddings config');
+                    const errorMsg = data.detail || data.error || data.message || 'Failed to update embeddings config';
+                    throw new Error(errorMsg);
                 }
 
-                this.embeddingsEnabled = newState;
                 this.showToast(newState ? 'Embeddings enabled' : 'Embeddings disabled');
 
                 if (newState) {
                     await this.loadEmbeddingStats();
                 }
             } catch (error) {
-                this.showToast('Failed to toggle embeddings: ' + error.message, 'error');
+                // Revert optimistic update on error
+                this.embeddingsEnabled = oldState;
+                // Extract error message safely - handle both Error objects and plain objects
+                const errorMsg = error instanceof Error ? error.message :
+                                 (typeof error === 'string' ? error :
+                                  (error?.detail || error?.error || error?.message || 'Unknown error'));
+                this.showToast('Failed to toggle embeddings: ' + errorMsg, 'error');
             }
         },
 
@@ -1332,7 +1342,12 @@ function threadlightApp() {
 
         // Per-profile memory isolation functions
         async togglePerProfileIsolation() {
-            const newValue = !this.perProfileIsolation;
+            const oldValue = this.perProfileIsolation;
+            const newValue = !oldValue;
+
+            // Optimistically update UI
+            this.perProfileIsolation = newValue;
+
             try {
                 const response = await fetch('/api/memory/isolation', {
                     method: 'PUT',
@@ -1345,10 +1360,10 @@ function threadlightApp() {
 
                 if (!response.ok) {
                     const data = await response.json().catch(() => ({}));
-                    throw new Error(data.detail || 'Failed to update isolation setting');
+                    const errorMsg = data.detail || data.error || data.message || 'Failed to update isolation setting';
+                    throw new Error(errorMsg);
                 }
 
-                this.perProfileIsolation = newValue;
                 this.config.memory.per_profile_isolation = newValue;
                 this.showToast(newValue ? 'Per-profile memory isolation enabled' : 'Memory isolation disabled (shared mode)');
 
@@ -1356,12 +1371,23 @@ function threadlightApp() {
                 await this.loadMemories();
                 await this.loadProfileScopeStats();
             } catch (error) {
-                this.showToast('Failed to toggle isolation: ' + error.message, 'error');
+                // Revert optimistic update on error
+                this.perProfileIsolation = oldValue;
+                // Extract error message safely - handle both Error objects and plain objects
+                const errorMsg = error instanceof Error ? error.message :
+                                 (typeof error === 'string' ? error :
+                                  (error?.detail || error?.error || error?.message || 'Unknown error'));
+                this.showToast('Failed to toggle isolation: ' + errorMsg, 'error');
             }
         },
 
         async toggleDefaultShared() {
-            const newValue = !this.defaultShared;
+            const oldValue = this.defaultShared;
+            const newValue = !oldValue;
+
+            // Optimistically update UI
+            this.defaultShared = newValue;
+
             try {
                 const response = await fetch('/api/memory/isolation', {
                     method: 'PUT',
@@ -1374,14 +1400,20 @@ function threadlightApp() {
 
                 if (!response.ok) {
                     const data = await response.json().catch(() => ({}));
-                    throw new Error(data.detail || 'Failed to update default shared setting');
+                    const errorMsg = data.detail || data.error || data.message || 'Failed to update default shared setting';
+                    throw new Error(errorMsg);
                 }
 
-                this.defaultShared = newValue;
                 this.config.memory.default_shared = newValue;
                 this.showToast(newValue ? 'New memories shared by default' : 'New memories scoped to profile by default');
             } catch (error) {
-                this.showToast('Failed to update setting: ' + error.message, 'error');
+                // Revert optimistic update on error
+                this.defaultShared = oldValue;
+                // Extract error message safely - handle both Error objects and plain objects
+                const errorMsg = error instanceof Error ? error.message :
+                                 (typeof error === 'string' ? error :
+                                  (error?.detail || error?.error || error?.message || 'Unknown error'));
+                this.showToast('Failed to update setting: ' + errorMsg, 'error');
             }
         },
 

@@ -728,9 +728,11 @@
                                 <label class="text-sm text-threadlight-muted cursor-pointer" @click="semanticSearch = !semanticSearch">Semantic</label>
                                 <button @click="semanticSearch = !semanticSearch"
                                     :class="semanticSearch ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
-                                    class="w-10 h-5 rounded-full relative transition-colors flex-shrink-0">
+                                    class="w-10 h-5 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                    :aria-checked="semanticSearch"
+                                    role="switch">
                                     <span :class="semanticSearch ? 'translate-x-5' : 'translate-x-1'"
-                                        class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                        class="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                 </button>
                             </div>
                         </div>
@@ -1069,9 +1071,11 @@
                                     </div>
                                     <button @click="toggleEmbeddings()"
                                         :class="embeddingsEnabled ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
-                                        class="w-12 h-6 rounded-full relative transition-colors flex-shrink-0">
+                                        class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                        :aria-checked="embeddingsEnabled"
+                                        role="switch">
                                         <span :class="embeddingsEnabled ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
 
@@ -1177,9 +1181,11 @@
                                     </div>
                                     <button @click="currentModelConfig.memory_enabled = !currentModelConfig.memory_enabled; updateCurrentModelConfig({memory_enabled: currentModelConfig.memory_enabled})"
                                         :class="currentModelConfig.memory_enabled ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
-                                        class="w-12 h-6 rounded-full relative transition-colors flex-shrink-0">
+                                        class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                        :aria-checked="currentModelConfig.memory_enabled"
+                                        role="switch">
                                         <span :class="currentModelConfig.memory_enabled ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
                                 <div class="flex items-center justify-between">
@@ -1189,9 +1195,11 @@
                                     </div>
                                     <button @click="currentModelConfig.decay_enabled = !currentModelConfig.decay_enabled; updateCurrentModelConfig({decay_enabled: currentModelConfig.decay_enabled})"
                                         :class="currentModelConfig.decay_enabled ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
-                                        class="w-12 h-6 rounded-full relative transition-colors flex-shrink-0">
+                                        class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                        :aria-checked="currentModelConfig.decay_enabled"
+                                        role="switch">
                                         <span :class="currentModelConfig.decay_enabled ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
                                 <div>
@@ -1216,9 +1224,11 @@
                                     </div>
                                     <button @click="togglePerProfileIsolation()"
                                         :class="perProfileIsolation ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
-                                        class="w-12 h-6 rounded-full relative transition-colors flex-shrink-0">
+                                        class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                        :aria-checked="perProfileIsolation"
+                                        role="switch">
                                         <span :class="perProfileIsolation ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
 
@@ -1230,9 +1240,11 @@
                                     </div>
                                     <button @click="toggleDefaultShared()"
                                         :class="defaultShared ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
-                                        class="w-12 h-6 rounded-full relative transition-colors flex-shrink-0">
+                                        class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                        :aria-checked="defaultShared"
+                                        role="switch">
                                         <span :class="defaultShared ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
 
@@ -1291,9 +1303,11 @@
                                         <label class="text-sm cursor-pointer" @click="toggleDecay()">Enable memory fading</label>
                                         <button @click="toggleDecay()"
                                             :class="config.memory?.decay_enabled ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
-                                            class="w-12 h-6 rounded-full relative transition-colors flex-shrink-0">
+                                            class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                            :aria-checked="config.memory?.decay_enabled"
+                                            role="switch">
                                             <span :class="config.memory?.decay_enabled ? 'translate-x-6' : 'translate-x-1'"
-                                                class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                                class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                         </button>
                                     </div>
 
