@@ -995,14 +995,18 @@ function threadlightApp() {
             this.embeddingsEnabled = newState;
 
             try {
+                // Ensure we have valid values (use defaults if undefined)
+                const payload = {
+                    enabled: newState,
+                    provider: this.embeddingsProvider || 'local',
+                    model: this.embeddingsModel || 'all-MiniLM-L6-v2',
+                };
+                console.log('Embeddings toggle payload:', payload);
+
                 const response = await fetch('/api/embeddings/enable', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        enabled: newState,
-                        provider: this.embeddingsProvider,
-                        model: this.embeddingsModel,
-                    }),
+                    body: JSON.stringify(payload),
                 });
 
                 if (!response.ok) {
@@ -1055,14 +1059,18 @@ function threadlightApp() {
             if (!this.embeddingsEnabled) return;
 
             try {
+                // Ensure we have valid values (use defaults if undefined)
+                const payload = {
+                    enabled: true,
+                    provider: this.embeddingsProvider || 'local',
+                    model: this.embeddingsModel || 'all-MiniLM-L6-v2',
+                };
+                console.log('Update embeddings config payload:', payload);
+
                 await fetch('/api/embeddings/enable', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        enabled: true,
-                        provider: this.embeddingsProvider,
-                        model: this.embeddingsModel,
-                    }),
+                    body: JSON.stringify(payload),
                 });
 
                 this.showToast('Embeddings configuration updated');
@@ -1373,13 +1381,17 @@ function threadlightApp() {
             this.perProfileIsolation = newValue;
 
             try {
+                // Ensure we have valid values (use defaults if undefined)
+                const payload = {
+                    enabled: Boolean(newValue),
+                    default_shared: this.defaultShared !== undefined ? this.defaultShared : false,
+                };
+                console.log('Isolation toggle payload:', payload);
+
                 const response = await fetch('/api/memory/isolation', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        enabled: newValue,
-                        default_shared: this.defaultShared,
-                    }),
+                    body: JSON.stringify(payload),
                 });
 
                 if (!response.ok) {
@@ -1437,13 +1449,17 @@ function threadlightApp() {
             this.defaultShared = newValue;
 
             try {
+                // Ensure we have valid values (use defaults if undefined)
+                const payload = {
+                    enabled: Boolean(this.perProfileIsolation),
+                    default_shared: newValue,
+                };
+                console.log('Default shared toggle payload:', payload);
+
                 const response = await fetch('/api/memory/isolation', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        enabled: this.perProfileIsolation,
-                        default_shared: newValue,
-                    }),
+                    body: JSON.stringify(payload),
                 });
 
                 if (!response.ok) {

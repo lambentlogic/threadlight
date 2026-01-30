@@ -2292,7 +2292,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     # ========================================================================
 
     class MemoryIsolationConfigRequest(BaseModel):
-        enabled: bool
+        enabled: bool = False
         default_shared: Optional[bool] = None
 
     class MemoryScopeUpdateRequest(BaseModel):
