@@ -277,13 +277,13 @@
 
                         <button @click="currentView = 'rituals'"
                             :class="currentView === 'rituals' ? 'bg-threadlight-elevated text-threadlight-ritual' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
-                            :title="currentView === 'chat' ? 'Rituals' : ''"
+                            :title="currentView === 'chat' ? 'Commands' : ''"
                             class="sidebar-nav-item px-4 py-2 rounded-lg text-left flex items-center gap-3 transition-colors"
                             :class="currentView === 'chat' ? 'px-3 py-1.5' : 'w-full'">
                             <svg class="w-5 h-5 flex-shrink-0" :class="currentView === 'chat' ? 'w-4 h-4' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
                             </svg>
-                            <span x-show="currentView !== 'chat'">Rituals</span>
+                            <span x-show="currentView !== 'chat'">Commands</span>
                         </button>
 
                         <button @click="currentView = 'settings'"
@@ -560,12 +560,12 @@
                                     Saved
                                 </span>
 
-                                <!-- Ritual Quick Access -->
+                                <!-- Command Quick Access -->
                                 <div class="flex gap-1 hidden md:flex">
                                     <template x-for="ritual in quickRituals" :key="ritual">
                                         <button @click="invokeRitual(ritual)"
                                             class="px-3 py-1 text-sm bg-threadlight-ritual/20 text-threadlight-ritual hover:bg-threadlight-ritual/30 rounded-full transition-colors"
-                                            :title="'Invoke ' + ritual"
+                                            :title="'Use ' + ritual"
                                             x-text="ritual">
                                         </button>
                                     </template>
@@ -679,7 +679,7 @@
                         <form @submit.prevent="sendMessage()" class="flex gap-4">
                             <input type="text"
                                 x-model="inputMessage"
-                                placeholder="Type a message or use /ritual..."
+                                placeholder="Type a message or use /command..."
                                 class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-xl px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent"
                                 :disabled="isTyping">
                             <button type="submit"
@@ -718,7 +718,7 @@
                                 <option value="">All Types</option>
                                 <option value="relational">Relational</option>
                                 <option value="myth_seed">Myth Seed</option>
-                                <option value="ritual">Ritual</option>
+                                <option value="ritual">Command</option>
                                 <option value="witness">Witness</option>
                                 <option value="style">Style</option>
                                 <option value="custom">Custom</option>
@@ -794,31 +794,31 @@
                 </div>
             </template>
 
-            <!-- Rituals View -->
+            <!-- Commands View -->
             <template x-if="currentView === 'rituals'">
                 <div class="flex-1 flex flex-col overflow-hidden">
                     <header class="px-6 py-4 border-b border-threadlight-border">
-                        <h2 class="text-lg font-semibold">Ritual Manager</h2>
-                        <p class="text-sm text-threadlight-muted">Rituals are repeated acts that hold emotion across time</p>
+                        <h2 class="text-lg font-semibold">Custom Commands</h2>
+                        <p class="text-sm text-threadlight-muted">Create shortcuts for common interactions or special responses</p>
                     </header>
 
                     <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
-                        <!-- Empty state when no rituals -->
+                        <!-- Empty state when no commands -->
                         <div x-show="rituals.length === 0" class="text-center py-12 mb-8">
                             <svg class="w-16 h-16 mx-auto mb-4 text-threadlight-ritual/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
                             </svg>
-                            <h3 class="text-lg font-medium text-threadlight-muted mb-2">No rituals yet</h3>
+                            <h3 class="text-lg font-medium text-threadlight-muted mb-2">No custom commands yet</h3>
                             <p class="text-sm text-threadlight-muted/70 max-w-md mx-auto mb-4">
-                                Rituals are meaningful gestures that emerge through relationship.
-                                They are repeated acts that hold emotion across time.
+                                Commands are custom shortcuts that trigger specific response styles.
+                                Use them for greetings, check-ins, or any interaction you want to personalize.
                             </p>
                             <p class="text-xs text-threadlight-muted/50 max-w-sm mx-auto">
-                                Create your first ritual below, or let the model propose one during conversation.
+                                Create your first command below to get started.
                             </p>
                         </div>
 
-                        <!-- Ritual grid when rituals exist -->
+                        <!-- Command grid when commands exist -->
                         <div x-show="rituals.length > 0" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                             <template x-for="ritual in rituals" :key="ritual.id || ritual.name">
                                 <div @click="viewRitual(ritual)" class="bg-threadlight-elevated rounded-xl p-4 hover:bg-threadlight-elevated/80 transition-colors cursor-pointer">
@@ -833,32 +833,32 @@
                                         <span class="px-2 py-1 text-xs bg-threadlight-surface rounded text-threadlight-muted" x-text="ritual.valence || 'comforting'"></span>
                                         <button @click.stop="invokeRitualFromManager(ritual.name)"
                                             class="px-4 py-1 bg-threadlight-ritual/20 text-threadlight-ritual hover:bg-threadlight-ritual/30 rounded-lg text-sm transition-colors">
-                                            Invoke
+                                            Use
                                         </button>
                                     </div>
                                 </div>
                             </template>
                         </div>
 
-                        <!-- Create Custom Ritual -->
+                        <!-- Create Custom Command -->
                         <div class="mt-8 p-6 bg-threadlight-surface rounded-xl border border-dashed border-threadlight-border">
-                            <h3 class="text-lg font-medium mb-4">Create Custom Ritual</h3>
+                            <h3 class="text-lg font-medium mb-4">Create Custom Command</h3>
                             <form @submit.prevent="createRitual()" class="space-y-4">
                                 <div class="grid gap-4 md:grid-cols-2">
                                     <div>
                                         <label class="block text-sm text-threadlight-muted mb-1">Name</label>
-                                        <input type="text" x-model="newRitual.name" placeholder="/your-ritual"
+                                        <input type="text" x-model="newRitual.name" placeholder="/your-command"
                                             class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                                     </div>
                                     <div>
-                                        <label class="block text-sm text-threadlight-muted mb-1">Valence</label>
-                                        <input type="text" x-model="newRitual.valence" placeholder="e.g., warm, playful, sacred"
+                                        <label class="block text-sm text-threadlight-muted mb-1">Tone</label>
+                                        <input type="text" x-model="newRitual.valence" placeholder="e.g., warm, playful, professional"
                                             class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                                     </div>
                                 </div>
                                 <div>
                                     <label class="block text-sm text-threadlight-muted mb-1">Description</label>
-                                    <input type="text" x-model="newRitual.description" placeholder="What this ritual means..."
+                                    <input type="text" x-model="newRitual.description" placeholder="What this command does..."
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                                 </div>
                                 <div>
@@ -869,16 +869,16 @@
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                             </svg>
                                             <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-threadlight-bg border border-threadlight-border rounded-lg text-xs text-threadlight-text w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10 shadow-lg">
-                                                Describe the tone and approach for this ritual, not exact words. The model will respond naturally while honoring this guidance.
+                                                Describe the tone and approach for this command. The AI will respond naturally while following this guidance.
                                             </div>
                                         </div>
                                     </div>
-                                    <textarea x-model="newRitual.response" placeholder="e.g., Warm, coiling presence with gentle reassurance" rows="2"
+                                    <textarea x-model="newRitual.response" placeholder="e.g., Warm and supportive, with gentle encouragement" rows="2"
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual resize-none"></textarea>
-                                    <p class="text-xs text-threadlight-muted mt-1">Describe how the ritual should feel, not what to say.</p>
+                                    <p class="text-xs text-threadlight-muted mt-1">Describe the style and tone, not the exact words to say.</p>
                                 </div>
                                 <button type="submit" class="px-6 py-2 bg-threadlight-ritual hover:bg-threadlight-ritual/80 text-white rounded-lg transition-colors">
-                                    Create Ritual
+                                    Create Command
                                 </button>
                             </form>
                         </div>
@@ -1940,7 +1940,7 @@
                 x-transition:leave-start="opacity-100 scale-100"
                 x-transition:leave-end="opacity-0 scale-95">
                 <div class="p-6">
-                    <h3 class="text-lg font-medium mb-4">Create New Memory</h3>
+                    <h3 class="text-lg font-medium mb-4">Create Memory</h3>
 
                     <form @submit.prevent="createMemory()" class="space-y-4">
                         <div>
@@ -2205,7 +2205,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
             </div>
         </div>
 
-        <!-- Ritual Detail Modal -->
+        <!-- Command Detail Modal -->
         <div x-show="selectedRitual && !editingRitual" x-cloak
             x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0"
@@ -2224,7 +2224,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                 x-transition:leave-end="opacity-0 scale-95">
                 <div class="p-6">
                     <div class="flex items-center justify-between mb-4">
-                        <span class="px-3 py-1 rounded bg-indigo-500/20 text-indigo-400">Ritual</span>
+                        <span class="px-3 py-1 rounded bg-indigo-500/20 text-indigo-400">Command</span>
                         <button @click="selectedRitual = null" class="text-threadlight-muted hover:text-threadlight-text">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -2239,7 +2239,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                         </div>
 
                         <div>
-                            <label class="block text-sm text-threadlight-muted mb-1">Cue Phrase</label>
+                            <label class="block text-sm text-threadlight-muted mb-1">Trigger Phrase</label>
                             <p class="text-threadlight-text" x-text="selectedRitual?.content?.cue || selectedRitual?.name || '-'"></p>
                         </div>
 
@@ -2250,7 +2250,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
 
                         <div class="grid grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-sm text-threadlight-muted mb-1">Valence</label>
+                                <label class="block text-sm text-threadlight-muted mb-1">Tone</label>
                                 <span class="px-2 py-1 text-sm bg-threadlight-bg rounded text-threadlight-muted" x-text="selectedRitual?.valence || selectedRitual?.content?.valence || 'comforting'"></span>
                             </div>
                             <div>
@@ -2282,7 +2282,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                             </button>
                             <button @click="invokeRitualFromManager(selectedRitual?.name); selectedRitual = null"
                                 class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
-                                Invoke
+                                Use
                             </button>
                             <button @click="deleteRitual(selectedRitual?.id)"
                                 class="px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors">
@@ -2294,7 +2294,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
             </div>
         </div>
 
-        <!-- Ritual Edit Modal -->
+        <!-- Command Edit Modal -->
         <div x-show="editingRitual" x-cloak
             x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0"
@@ -2313,7 +2313,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                 x-transition:leave-end="opacity-0 scale-95">
                 <div class="p-6">
                     <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-lg font-medium">Edit Ritual</h3>
+                        <h3 class="text-lg font-medium">Edit Command</h3>
                         <button @click="editingRitual = null" class="text-threadlight-muted hover:text-threadlight-text">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -2325,11 +2325,11 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                         <div class="grid gap-4 md:grid-cols-2">
                             <div>
                                 <label class="block text-sm text-threadlight-muted mb-1">Name</label>
-                                <input type="text" x-model="editingRitual.name" placeholder="/your-ritual"
+                                <input type="text" x-model="editingRitual.name" placeholder="/your-command"
                                     class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                             </div>
                             <div>
-                                <label class="block text-sm text-threadlight-muted mb-1">Valence</label>
+                                <label class="block text-sm text-threadlight-muted mb-1">Tone</label>
                                 <select x-model="editingRitual.valence"
                                     class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-ritual">
                                     <option value="comforting">Comforting</option>
@@ -2342,14 +2342,14 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                             </div>
                         </div>
                         <div>
-                            <label class="block text-sm text-threadlight-muted mb-1">Cue Phrase</label>
+                            <label class="block text-sm text-threadlight-muted mb-1">Trigger Phrase</label>
                             <input type="text" x-model="editingRitual.cue" placeholder="Trigger phrase (optional)"
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
-                            <p class="text-xs text-threadlight-muted mt-1">Leave empty to use the ritual name as the trigger.</p>
+                            <p class="text-xs text-threadlight-muted mt-1">Leave empty to use the command name as the trigger.</p>
                         </div>
                         <div>
                             <label class="block text-sm text-threadlight-muted mb-1">Description</label>
-                            <input type="text" x-model="editingRitual.description" placeholder="What this ritual means..."
+                            <input type="text" x-model="editingRitual.description" placeholder="What this command does..."
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                         </div>
                         <div>
@@ -2360,13 +2360,13 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
                                     <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-threadlight-bg border border-threadlight-border rounded-lg text-xs text-threadlight-text w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10 shadow-lg">
-                                        Describe the tone and approach for this ritual, not exact words. The model will respond naturally while honoring this guidance.
+                                        Describe the tone and approach for this command. The AI will respond naturally while following this guidance.
                                     </div>
                                 </div>
                             </div>
-                            <textarea x-model="editingRitual.response_style" placeholder="e.g., Warm, coiling presence with gentle reassurance" rows="2"
+                            <textarea x-model="editingRitual.response_style" placeholder="e.g., Warm and supportive, with gentle encouragement" rows="2"
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual resize-none"></textarea>
-                            <p class="text-xs text-threadlight-muted mt-1">Describe how the ritual should feel, not what to say.</p>
+                            <p class="text-xs text-threadlight-muted mt-1">Describe the style and tone, not the exact words to say.</p>
                         </div>
                         <div class="flex gap-2 pt-4 border-t border-threadlight-border">
                             <button type="submit" class="px-6 py-2 bg-threadlight-ritual hover:bg-threadlight-ritual/80 text-white rounded-lg transition-colors">
@@ -2820,35 +2820,35 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
                         </div>
 
-                        <!-- Personality & Rituals -->
+                        <!-- Personality & Response Style -->
                         <div class="pt-4 border-t border-threadlight-border">
-                            <h4 class="font-medium text-threadlight-text mb-3">Personality & Rituals</h4>
-                            <p class="text-xs text-threadlight-muted mb-3">Configure how this profile approaches rituals and define its personality.</p>
+                            <h4 class="font-medium text-threadlight-text mb-3">Personality & Response Style</h4>
+                            <p class="text-xs text-threadlight-muted mb-3">Configure how this profile responds to conversations and custom commands.</p>
 
                             <div class="space-y-4">
                                 <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Ritual Depth</label>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Response Style</label>
                                     <select x-model="newProfile.ritual_depth"
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
-                                        <option value="ceremonial">Ceremonial - Deep emotional scaffolding, presence-based language</option>
-                                        <option value="functional">Functional - Efficient shortcuts, brief acknowledgment</option>
-                                        <option value="minimal">Minimal - Simple recognition, no special framing</option>
+                                        <option value="ceremonial">Rich - Emotionally expressive, detailed responses</option>
+                                        <option value="functional">Balanced - Concise but warm, efficient responses</option>
+                                        <option value="minimal">Brief - Minimal acknowledgment, to the point</option>
                                     </select>
-                                    <p class="text-xs text-threadlight-muted mt-1">How deeply to integrate rituals into responses</p>
+                                    <p class="text-xs text-threadlight-muted mt-1">How detailed and expressive responses should be</p>
                                 </div>
                                 <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Philosophy</label>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Philosophy (optional)</label>
                                     <input type="text" x-model="newProfile.philosophy"
-                                        placeholder="e.g., presence-centered, mythically-grounded, honors silence"
+                                        placeholder="e.g., supportive and encouraging, professional and direct"
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
-                                    <p class="text-xs text-threadlight-muted mt-1">Overall approach and values guiding this profile</p>
+                                    <p class="text-xs text-threadlight-muted mt-1">How should this profile approach conversations? Leave empty for default behavior.</p>
                                 </div>
                                 <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Approach to Rituals</label>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Custom Command Style (optional)</label>
                                     <input type="text" x-model="newProfile.approach_to_rituals"
-                                        placeholder="e.g., deep emotional scaffolding, efficient shortcuts, minimal ceremony"
+                                        placeholder="e.g., brief and efficient, warm and elaborate"
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
-                                    <p class="text-xs text-threadlight-muted mt-1">Freeform description of how rituals are handled</p>
+                                    <p class="text-xs text-threadlight-muted mt-1">How should custom commands be handled? Leave empty for default behavior.</p>
                                 </div>
                             </div>
                         </div>

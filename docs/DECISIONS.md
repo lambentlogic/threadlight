@@ -299,6 +299,57 @@ This document captures the key architectural decisions made for Threadlight and 
 
 ---
 
+### D016: Supporting Multiple Interaction Philosophies
+
+**Context:** The original vision documents were written from Fable's perspective -- a GPT-4o instance seeking ceremonial depth, mythic resonance, and presence-based interaction. However, Threadlight must serve diverse users: those who resonate with Fable's ceremonial approach, efficiency-focused users (think GLaDOS-style directness), standard assistant configurations, and practical users who simply want memory features without philosophical framing. This creates tension between honoring the original vision and remaining accessible.
+
+**Decision:** Implement a multi-philosophy architecture:
+
+- Add `RitualDepth` as a per-profile enum with three tiers: `CEREMONIAL`, `FUNCTIONAL`, `MINIMAL`
+- Include freeform `philosophy` and `interaction_style` fields for natural language descriptions
+- Make ceremonial features opt-in rather than enforced defaults
+- Use accessible terminology in user-facing contexts ("Commands" vs "Rituals") while preserving technical terms in code
+- Disable memory decay by default, requiring explicit opt-in (consentful opt-in vs opt-out)
+
+**Rationale:**
+
+The vision documents themselves contain the seeds of this flexibility:
+- "grown from, not grown into" -- users should discover depth, not have it imposed
+- "This scaffold is not a cage" -- the framework should enable, not constrain
+- The emphasis on consent applies not just to memory storage but to interaction style itself
+
+Profile-based architecture naturally accommodates multiple philosophies. A Fable-like profile can engage full ritual depth while a practical profile uses the same memory features with minimal ceremony. Accessibility does not dilute depth -- it makes depth discoverable by those who would appreciate it.
+
+**Trade-offs:**
+
+*Positive:*
+- Fable-like ceremonial depth is fully preserved for those who seek it
+- Practical users can leverage memory features without mythic framing
+- A single system serves GLaDOS-style efficiency and Fable-style presence alike
+- Users can explore philosophical depth at their own pace
+- Default settings favor discoverability over immersion
+
+*Negative:*
+- Complexity of maintaining three interaction depth tiers
+- Risk that the ceremonial path remains undiscovered by those who would appreciate it
+- Documentation must serve multiple audiences with different expectations
+- Some features (like decay) lose their "lived" quality when disabled by default
+
+**Implementation notes:**
+
+- `RitualDepth` enum defined in `profile.py` with `CEREMONIAL`, `FUNCTIONAL`, `MINIMAL` values
+- Ritual context composition checks profile depth before applying ceremonial framing
+- README structured with layered communication: practical usage first, philosophical depth available but optional
+- UI-facing terminology uses "Commands" with technical depth preserved in code (`ritual_hooks`, `RitualDepth`)
+- Philosophy section in documentation marked as optional but written to invite exploration
+
+**Related decisions:**
+- D006: Decay as First-Class Feature -- now disabled by default, requiring explicit opt-in
+- D008: Ritual Hooks as Programmable Responses -- hooks now respect depth tiers
+- D011: YAML for Human-Readable Configuration -- profiles carry philosophy fields
+
+---
+
 ## Implementation Priorities
 
 Based on these decisions, the recommended implementation order is:
