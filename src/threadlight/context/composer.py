@@ -8,7 +8,7 @@ Composition modes shape how memories surface:
 - DIRECT: Factual integration ("You know that...")
 - NARRATIVE: Story-like framing ("You recall...")
 - WHISPER: Subtle tone cues ("There is warmth when...")
-- RITUAL: Ceremonial invocation for ritual hooks
+- RITUAL: Full activation for command invocations
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ class ContextComposer:
         - DIRECT: Factual integration for clear information
         - NARRATIVE: Story-like framing that feels natural
         - WHISPER: Subtle tone cues that influence without stating
-        - RITUAL: Ceremonial invocation for ritual hooks
+        - RITUAL: Full activation for command invocations
 
     Soft Memory Modes:
         - DISABLED: Don't include past conversation history
@@ -185,9 +185,9 @@ class ContextComposer:
             per_capsule_modes: Override mode for specific capsules by ID
             current_message: Current user message (for soft memory relevance)
             profile_philosophy: Natural language description of the profile's approach
-                to interactions (e.g., "presence-centered, honors silence")
-            approach_to_rituals: Natural language description of how rituals/commands
-                should be handled (e.g., "deep emotional scaffolding" or "brief and efficient")
+                to interactions (e.g., "thoughtful and warm" or "concise and efficient")
+            approach_to_rituals: Natural language description of how commands
+                should be handled (e.g., "honor as meaningful moments" or "quick shortcuts")
 
         Returns:
             ComposedContext with composed prompts

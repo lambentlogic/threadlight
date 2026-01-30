@@ -183,7 +183,7 @@ class Threadlight:
             decay_engine=decay_engine,
             auto_propose=self.config.memory.proposals.auto_propose,
             proposal_threshold=self.config.memory.proposals.threshold,
-            per_model_isolation=self.config.memory.per_model_isolation,
+            per_profile_isolation=self.config.memory.per_profile_isolation,
             default_shared=self.config.memory.default_shared,
             current_model=self.config.provider.model,
         )
@@ -313,7 +313,8 @@ class Threadlight:
         if profile.style_profile_id:
             self._load_style_profile(profile.style_profile_id)
 
-        # Update memory orchestrator's scope
+        # Update memory orchestrator's scope (profile takes precedence)
+        self.memory.current_profile = profile.memory_scope or profile.id
         self.memory.current_model = profile.primary_model
 
         logger.info(f"Switched to profile: {profile.name} ({profile.id[:8]}...)")
@@ -329,6 +330,7 @@ class Threadlight:
             identity_name=self.config.identity.name,
             base_system_prompt=self.config.identity.system_prompt,
         )
+        self.memory.current_profile = None
         self.memory.current_model = self.config.provider.model
 
     def get_active_profile(self) -> Optional[Profile]:
@@ -2191,26 +2193,38 @@ class Threadlight:
         except Exception as e:
             logger.warning(f"Failed to load custom types: {e}")
 
-    # === Per-Model Memory Isolation ===
+    # === Per-Profile Memory Isolation ===
 
-    def get_per_model_isolation(self) -> bool:
+    def get_per_profile_isolation(self) -> bool:
         """
-        Check if per-model memory isolation is enabled.
+        Check if per-profile memory isolation is enabled.
 
-        When enabled, memories and conversations are scoped to specific models.
+        When enabled, memories are scoped to specific profiles.
         """
-        return self.config.memory.per_model_isolation
+        return self.config.memory.per_profile_isolation
 
-    def set_per_model_isolation(self, enabled: bool) -> None:
+    def set_per_profile_isolation(self, enabled: bool) -> None:
         """
-        Enable or disable per-model memory isolation.
+        Enable or disable per-profile memory isolation.
 
         Args:
             enabled: Whether to enable isolation
         """
-        self.config.memory.per_model_isolation = enabled
-        self.memory.per_model_isolation = enabled
-        logger.info(f"Per-model memory isolation {'enabled' if enabled else 'disabled'}")
+        self.config.memory.per_profile_isolation = enabled
+        self.memory.per_profile_isolation = enabled
+        # Update current profile in memory orchestrator
+        if enabled and self.active_profile:
+            self.memory.current_profile = self.active_profile.memory_scope or self.active_profile.id
+        logger.info(f"Per-profile memory isolation {'enabled' if enabled else 'disabled'}")
+
+    # Deprecated: kept for backward compatibility
+    def get_per_model_isolation(self) -> bool:
+        """Deprecated: Use get_per_profile_isolation instead."""
+        return self.get_per_profile_isolation()
+
+    def set_per_model_isolation(self, enabled: bool) -> None:
+        """Deprecated: Use set_per_profile_isolation instead."""
+        self.set_per_profile_isolation(enabled)
 
     def get_default_shared(self) -> bool:
         """Check if new memories are shared by default when isolation is enabled."""
@@ -2220,18 +2234,18 @@ class Threadlight:
         """
         Set whether new memories are shared by default.
 
-        Only relevant when per_model_isolation is enabled.
+        Only relevant when per_profile_isolation is enabled.
 
         Args:
-            shared: If True, new memories are shared across all models by default.
-                   If False, new memories are scoped to the current model by default.
+            shared: If True, new memories are shared across all profiles by default.
+                   If False, new memories are scoped to the current profile by default.
         """
         self.config.memory.default_shared = shared
         self.memory.default_shared = shared
 
     def share_memory(self, capsule_id: str) -> bool:
         """
-        Make a memory shared across all models (remove model scope).
+        Make a memory shared across all profiles (remove profile scope).
 
         Args:
             capsule_id: ID of memory to share
@@ -2241,44 +2255,83 @@ class Threadlight:
         """
         return self.memory.share_memory(capsule_id)
 
-    def assign_memory_to_model(self, capsule_id: str, model_id: str) -> bool:
+    def assign_memory_to_profile(self, capsule_id: str, profile_id: str) -> bool:
         """
-        Assign a memory to a specific model.
+        Assign a memory to a specific profile.
 
         Args:
             capsule_id: ID of memory to assign
-            model_id: Model ID to assign to
+            profile_id: Profile ID to assign to
 
         Returns:
             True if successful
         """
+        capsule = self.storage.get_capsule(capsule_id)
+        if not capsule:
+            return False
+        capsule.profile_scope = profile_id
+        return self.storage.update_capsule(capsule)
+
+    # Deprecated: kept for backward compatibility
+    def assign_memory_to_model(self, capsule_id: str, model_id: str) -> bool:
+        """Deprecated: Use assign_memory_to_profile instead."""
         return self.memory.assign_memory_to_model(capsule_id, model_id)
 
-    def copy_memory_to_model(self, capsule_id: str, target_model_id: str) -> Optional[MemoryCapsule]:
+    def copy_memory_to_profile(self, capsule_id: str, target_profile_id: str) -> Optional[MemoryCapsule]:
         """
-        Copy a memory to another model (creates a new capsule).
+        Copy a memory to another profile (creates a new capsule).
 
         Args:
             capsule_id: ID of memory to copy
-            target_model_id: Model ID to copy to
+            target_profile_id: Profile ID to copy to
 
         Returns:
             The new MemoryCapsule, or None if source not found
         """
+        source = self.storage.get_capsule(capsule_id)
+        if not source:
+            return None
+
+        return self.memory.create(
+            type=source.type.value,
+            content=source.content.copy(),
+            cue_phrases=source.cue_phrases.copy(),
+            retention=source.retention.value,
+            consent_confirmed=source.consent_confirmed,
+            profile_scope=target_profile_id,
+        )
+
+    # Deprecated: kept for backward compatibility
+    def copy_memory_to_model(self, capsule_id: str, target_model_id: str) -> Optional[MemoryCapsule]:
+        """Deprecated: Use copy_memory_to_profile instead."""
         return self.memory.copy_memory_to_model(capsule_id, target_model_id)
 
-    def get_memory_model_scope(self, capsule_id: str) -> Optional[str]:
+    def get_memory_profile_scope(self, capsule_id: str) -> Optional[str]:
         """
-        Get the model scope of a memory.
+        Get the profile scope of a memory.
 
         Args:
             capsule_id: ID of memory
 
         Returns:
-            Model ID if scoped to a specific model, None if shared
+            Profile ID if scoped to a specific profile, None if shared
         """
+        capsule = self.storage.get_capsule(capsule_id)
+        if not capsule:
+            return None
+        return getattr(capsule, 'profile_scope', None)
+
+    # Deprecated: kept for backward compatibility
+    def get_memory_model_scope(self, capsule_id: str) -> Optional[str]:
+        """Deprecated: Use get_memory_profile_scope instead."""
         return self.memory.get_memory_model_scope(capsule_id)
 
+    def _update_memory_profile_scope(self) -> None:
+        """Update the memory orchestrator's current profile reference."""
+        if self.active_profile:
+            self.memory.current_profile = self.active_profile.memory_scope or self.active_profile.id
+
+    # Deprecated: kept for backward compatibility
     def _update_memory_model_scope(self) -> None:
-        """Update the memory orchestrator's current model reference."""
+        """Deprecated: Use _update_memory_profile_scope instead."""
         self.memory.current_model = self.config.provider.model

@@ -69,7 +69,7 @@ function threadlightApp() {
             provider: { model: '', api_base: '' },
             style: { profile: '', current: null, available: [] },
             identity: { name: '', system_prompt: '' },
-            memory: { decay_enabled: true, per_model_isolation: false, default_shared: false },
+            memory: { decay_enabled: true, per_profile_isolation: false, default_shared: false },
         },
 
         // Model configuration state
@@ -197,10 +197,10 @@ function threadlightApp() {
             onConfirm: null,
         },
 
-        // Per-model memory isolation state
-        perModelIsolation: false,
+        // Per-profile memory isolation state
+        perProfileIsolation: false,
         defaultShared: false,
-        modelScopeStats: {},
+        profileScopeStats: {},
 
         // Initialize
         async init() {
@@ -1001,7 +1001,10 @@ function threadlightApp() {
                     }),
                 });
 
-                if (!response.ok) throw new Error('Failed to update embeddings config');
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    throw new Error(data.detail || 'Failed to update embeddings config');
+                }
 
                 this.embeddingsEnabled = newState;
                 this.showToast(newState ? 'Embeddings enabled' : 'Embeddings disabled');
@@ -1287,8 +1290,8 @@ function threadlightApp() {
                     this.embeddingsModel = this.config.memory.embeddings.model || 'all-MiniLM-L6-v2';
                 }
 
-                // Update per-model isolation state from config
-                this.perModelIsolation = this.config.memory?.per_model_isolation || false;
+                // Update per-profile isolation state from config
+                this.perProfileIsolation = this.config.memory?.per_profile_isolation || false;
                 this.defaultShared = this.config.memory?.default_shared || false;
             } catch (error) {
                 console.error('Failed to load config:', error);
@@ -1327,9 +1330,9 @@ function threadlightApp() {
             await this.updateConfig({ enable_decay: newValue });
         },
 
-        // Per-model memory isolation functions
-        async togglePerModelIsolation() {
-            const newValue = !this.perModelIsolation;
+        // Per-profile memory isolation functions
+        async togglePerProfileIsolation() {
+            const newValue = !this.perProfileIsolation;
             try {
                 const response = await fetch('/api/memory/isolation', {
                     method: 'PUT',
@@ -1340,14 +1343,18 @@ function threadlightApp() {
                     }),
                 });
 
-                if (!response.ok) throw new Error('Failed to update isolation setting');
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    throw new Error(data.detail || 'Failed to update isolation setting');
+                }
 
-                this.perModelIsolation = newValue;
-                this.config.memory.per_model_isolation = newValue;
-                this.showToast(newValue ? 'Per-model memory isolation enabled' : 'Memory isolation disabled (shared mode)');
+                this.perProfileIsolation = newValue;
+                this.config.memory.per_profile_isolation = newValue;
+                this.showToast(newValue ? 'Per-profile memory isolation enabled' : 'Memory isolation disabled (shared mode)');
 
-                // Reload memories to reflect the new scope
+                // Reload memories and stats to reflect the new scope
                 await this.loadMemories();
+                await this.loadProfileScopeStats();
             } catch (error) {
                 this.showToast('Failed to toggle isolation: ' + error.message, 'error');
             }
@@ -1360,16 +1367,19 @@ function threadlightApp() {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        enabled: this.perModelIsolation,
+                        enabled: this.perProfileIsolation,
                         default_shared: newValue,
                     }),
                 });
 
-                if (!response.ok) throw new Error('Failed to update default shared setting');
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    throw new Error(data.detail || 'Failed to update default shared setting');
+                }
 
                 this.defaultShared = newValue;
                 this.config.memory.default_shared = newValue;
-                this.showToast(newValue ? 'New memories shared by default' : 'New memories scoped to model by default');
+                this.showToast(newValue ? 'New memories shared by default' : 'New memories scoped to profile by default');
             } catch (error) {
                 this.showToast('Failed to update setting: ' + error.message, 'error');
             }
@@ -1383,40 +1393,30 @@ function threadlightApp() {
 
                 if (!response.ok) throw new Error('Failed to share memory');
 
-                this.showToast('Memory is now shared across all models');
+                this.showToast('Memory is now shared across all profiles');
                 await this.loadMemories();
             } catch (error) {
                 this.showToast('Failed to share memory: ' + error.message, 'error');
             }
         },
 
-        async assignMemoryToModel(memoryId, modelId = null) {
+        async assignMemoryToProfile(memoryId, profileId = null) {
             try {
                 const response = await fetch(`/api/memories/${memoryId}/assign`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model_id: modelId }),
+                    body: JSON.stringify({ profile_id: profileId }),
                 });
 
                 if (!response.ok) throw new Error('Failed to assign memory');
 
                 const data = await response.json();
-                this.showToast(`Memory assigned to ${data.model_scope}`);
+                const profileName = this.profiles.find(p => p.id === data.profile_scope)?.name || data.profile_scope;
+                this.showToast(`Memory assigned to ${profileName}`);
                 await this.loadMemories();
             } catch (error) {
                 this.showToast('Failed to assign memory: ' + error.message, 'error');
             }
-        },
-
-        getModelScopeBadge(memory) {
-            if (!this.perModelIsolation) return null;
-            if (!memory.model_scope) {
-                return { text: 'Shared', class: 'bg-green-500/20 text-green-400' };
-            }
-            if (memory.model_scope === this.currentModelId) {
-                return { text: this.currentModelId, class: 'bg-threadlight-accent/20 text-threadlight-accent' };
-            }
-            return { text: memory.model_scope, class: 'bg-threadlight-muted/20 text-threadlight-muted' };
         },
 
         /**
@@ -1443,6 +1443,30 @@ function threadlightApp() {
                 class: 'bg-threadlight-warm/20 text-threadlight-warm',
                 title: `Profile: ${profileName}`
             };
+        },
+
+        async loadProfileScopeStats() {
+            try {
+                const response = await fetch('/api/profile-scope/stats');
+                if (response.ok) {
+                    this.profileScopeStats = await response.json();
+                }
+            } catch (error) {
+                console.error('Failed to load profile scope stats:', error);
+            }
+        },
+
+        async loadProfileScopeConfig() {
+            try {
+                const response = await fetch('/api/memory/isolation');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.perProfileIsolation = data.per_profile_isolation || false;
+                    this.defaultShared = data.default_shared || false;
+                }
+            } catch (error) {
+                console.error('Failed to load profile scope config:', error);
+            }
         },
 
         async runDecay() {
@@ -1803,21 +1827,6 @@ function threadlightApp() {
                 await this.loadConfig();
             } catch (error) {
                 this.showToast('Failed to delete style: ' + error.message, 'error');
-            }
-        },
-
-        // Import style from another platform
-        async importStyleFrom(platform) {
-            const instructions = await this.showPrompt({
-                title: `Import from ${platform}`,
-                message: `Paste your ${platform} custom instructions or style definition:`,
-                placeholder: 'Paste your style definition here...',
-                confirmText: 'Import',
-            });
-            if (instructions && instructions.trim()) {
-                this.newStyle.freeform_description = instructions.trim();
-                this.newStyle.use_freeform = true;
-                this.showToast(`Imported style from ${platform}`);
             }
         },
 
@@ -2191,18 +2200,10 @@ function threadlightApp() {
             }
         },
 
-        // Additional model scope functions
+        // Legacy function name - now calls loadProfileScopeConfig
         async loadModelScopeConfig() {
-            try {
-                const response = await fetch('/api/memory/isolation');
-                if (response.ok) {
-                    const data = await response.json();
-                    this.perModelIsolation = data.per_model_isolation || false;
-                    this.defaultShared = data.default_shared || false;
-                }
-            } catch (error) {
-                console.error('Failed to load model scope config:', error);
-            }
+            await this.loadProfileScopeConfig();
+            await this.loadProfileScopeStats();
         },
 
         // Profile functions

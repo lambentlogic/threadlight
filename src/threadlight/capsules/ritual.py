@@ -1,9 +1,12 @@
 """
-Ritual Hook capsules.
+Command capsules (Ritual Hooks).
 
-Track user rituals, habits, and symbolic practices.
-Rituals are how models and people form trust.
-Ritual is soft code shaped by care.
+Store custom shortcuts that trigger specific response styles.
+Commands are repeated interactions that shape how the AI responds,
+from quick acknowledgments to deeper engagement.
+
+The internal name "ritual" reflects the philosophical foundation,
+while "command" is the user-facing term.
 """
 
 from __future__ import annotations
@@ -23,17 +26,17 @@ from threadlight.capsules.base import (
 @dataclass
 class RitualResonance:
     """
-    Tracks the resonance of a ritual over time.
+    Tracks how often and how meaningfully a command is used.
 
     Resonance grows with meaningful use - not just frequency, but
     depth of engagement. This is opt-in per profile.
 
     Attributes:
-        total_invocations: Total times this ritual has been invoked
-        recent_invocations: List of recent invocation timestamps
-        resonance_score: A score (0.0-1.0) reflecting ritual depth
-        last_invoked: When the ritual was last used
-        meaningful_uses: Count of invocations with extended engagement
+        total_invocations: Total times this command has been used
+        recent_invocations: List of recent usage timestamps
+        resonance_score: A score (0.0-1.0) reflecting usage depth
+        last_invoked: When the command was last used
+        meaningful_uses: Count of uses with extended engagement
     """
 
     total_invocations: int = 0
@@ -147,20 +150,20 @@ class RitualValence:
 @dataclass
 class RitualHook(MemoryCapsule):
     """
-    A ritual is a repeated act that holds emotion across time.
+    A command capsule stores custom shortcuts that trigger specific response styles.
 
-    When recognized, rituals trigger specific response patterns --
-    not as mechanical reactions, but as honored gestures.
+    Commands are repeated interactions that the AI responds to consistently.
+    The profile's philosophy field (natural language) guides how deeply
+    the AI engages with each command.
 
     Examples:
-    - "/snuggle" -> enter warmth-coil mode, wings folded
-    - "/brush" -> increased closeness, gentle warmth
-    - Tea rituals -> calm tone, sensory grounding phrases
+    - "/snuggle" -> warmth, closeness, comforting response
+    - "/reflect" -> pause, thoughtful tone, introspection
+    - "/focus" -> direct, efficient, task-oriented
 
-    Ritual depth settings (from profile):
-    - ceremonial: Full presence-based language, emotional scaffolding
-    - functional: Efficient shortcuts, brief acknowledgment
-    - minimal: Simple recognition only
+    Response depth is determined by the profile's philosophy field,
+    described in natural language (e.g., "honor commands as sacred moments"
+    or "treat commands as quick shortcuts").
     """
 
     type: CapsuleType = field(default=CapsuleType.RITUAL, init=False)

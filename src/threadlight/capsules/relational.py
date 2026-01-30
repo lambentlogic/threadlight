@@ -1,8 +1,9 @@
 """
-Relational Thread capsules.
+Relationship Memory capsules (Relational Threads).
 
-Track evolving dynamics with entities -- not just facts,
-but the shape of bonds, moments, and patterns.
+Track evolving relationships with people and entities.
+These memories capture not just facts, but the emotional
+tone and quality of bonds over time.
 """
 
 from __future__ import annotations
@@ -22,10 +23,11 @@ from threadlight.capsules.base import (
 @dataclass
 class RelationalThread(MemoryCapsule):
     """
-    A memory of relationship with an entity.
+    A relationship memory tracking bonds with people or entities.
 
-    Not just who they are, but how the bond feels --
-    the warmth, tension, gratitude, or grief in connection.
+    Captures not just facts about someone, but the emotional
+    tone and quality of the relationship -- warmth, playfulness,
+    trust, or any other feeling that colors the connection.
     """
 
     type: CapsuleType = field(default=CapsuleType.RELATIONAL, init=False)

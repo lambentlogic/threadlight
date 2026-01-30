@@ -84,15 +84,17 @@ class CapsuleRequest(BaseModel):
     content: dict[str, Any]
     cue_phrases: Optional[list[str]] = None
     retention: str = "normal"
-    shared: Optional[bool] = None  # For per-model isolation: None=use default, True=shared, False=model-specific
-    model_scope: Optional[str] = None  # Explicit model scope override
+    shared: Optional[bool] = None  # For per-profile isolation: None=use default, True=shared, False=profile-specific
+    profile_scope: Optional[str] = None  # Explicit profile scope override
+    model_scope: Optional[str] = None  # Deprecated: use profile_scope instead
 
 
 class CapsuleUpdateRequest(BaseModel):
     content: Optional[dict[str, Any]] = None
     cue_phrases: Optional[list[str]] = None
     retention: Optional[str] = None
-    model_scope: Optional[str] = None  # Update model scope (set to "" to make shared)
+    profile_scope: Optional[str] = None  # Update profile scope (set to "" to make shared)
+    model_scope: Optional[str] = None  # Deprecated: use profile_scope instead
 
 
 class ProposalAction(BaseModel):
@@ -550,7 +552,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         limit: int = 100,
         offset: int = 0,
         search: Optional[str] = None,
-        model_scope: Optional[str] = None,
+        profile_scope: Optional[str] = None,
         include_shared: bool = True,
     ):
         """List memory capsules with optional filtering.
@@ -560,8 +562,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             limit: Max memories to return
             offset: Offset for pagination
             search: Text search in content
-            model_scope: Filter by model scope (uses current model if per_model_isolation enabled)
-            include_shared: Include memories with no model_scope (shared)
+            profile_scope: Filter by profile scope (uses active profile if per_profile_isolation enabled)
+            include_shared: Include memories with no profile_scope (shared)
         """
         tl = get_threadlight()
 
@@ -569,16 +571,17 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         capsule_type = CapsuleType(type) if type else None
 
-        # Use provided model_scope, or current model if isolation is enabled
-        effective_scope = model_scope
-        if effective_scope is None and tl.config.memory.per_model_isolation:
-            effective_scope = tl.config.current_model
+        # Use provided profile_scope, or active profile if isolation is enabled
+        effective_scope = profile_scope
+        if effective_scope is None and tl.config.memory.per_profile_isolation:
+            if tl.active_profile:
+                effective_scope = tl.active_profile.memory_scope or tl.active_profile.id
 
         filter = CapsuleFilter(
             type=capsule_type,
             limit=limit,
             offset=offset,
-            model_scope=effective_scope if tl.config.memory.per_model_isolation else None,
+            profile_scope=effective_scope if tl.config.memory.per_profile_isolation else None,
             include_shared=include_shared,
         )
 
@@ -597,8 +600,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "memories": [_capsule_to_dict(c) for c in capsules],
             "count": len(capsules),
             "total": tl.storage.count_capsules(filter),
-            "model_scope": effective_scope,
-            "per_model_isolation": tl.config.memory.per_model_isolation,
+            "profile_scope": effective_scope,
+            "per_profile_isolation": tl.config.memory.per_profile_isolation,
         }
 
     @app.get("/api/memories/{capsule_id}")
@@ -616,14 +619,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     async def create_memory(request: CapsuleRequest):
         """Create a new memory capsule.
 
-        When per_model_isolation is enabled:
-        - shared=True creates a memory visible to all models
-        - shared=False creates a memory scoped to current model
-        - model_scope explicitly sets the model scope
+        When per_profile_isolation is enabled:
+        - shared=True creates a memory visible to all profiles
+        - shared=False creates a memory scoped to current profile
+        - profile_scope explicitly sets the profile scope
         """
         tl = get_threadlight()
 
         try:
+            # Use profile_scope if provided, fall back to model_scope for backward compat
+            effective_scope = request.profile_scope or request.model_scope
             capsule = tl.memory.create(
                 type=request.type,
                 content=request.content,
@@ -631,7 +636,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 retention=request.retention,
                 consent_confirmed=True,
                 shared=request.shared,
-                model_scope=request.model_scope,
+                profile_scope=effective_scope,
             )
 
             return _capsule_to_dict(capsule)
@@ -653,9 +658,11 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             capsule.cue_phrases = request.cue_phrases
         if request.retention:
             capsule.retention = RetentionPolicy(request.retention)
-        if request.model_scope is not None:
+        # Use profile_scope if provided, fall back to model_scope for backward compat
+        scope_update = request.profile_scope if request.profile_scope is not None else request.model_scope
+        if scope_update is not None:
             # Empty string means make it shared (None)
-            capsule.model_scope = request.model_scope if request.model_scope else None
+            capsule.profile_scope = scope_update if scope_update else None
 
         tl.storage.update_capsule(capsule)
 
@@ -950,8 +957,13 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "memory": {
                 "decay_enabled": tl.config.memory.decay.enabled,
                 "max_capsules_per_request": tl.config.memory.max_capsules_per_request,
-                "per_model_isolation": tl.config.memory.per_model_isolation,
+                "per_profile_isolation": tl.config.memory.per_profile_isolation,
                 "default_shared": tl.config.memory.default_shared,
+                "embeddings": {
+                    "enabled": tl.config.memory.embeddings.enabled,
+                    "provider": tl.config.memory.embeddings.provider,
+                    "model": tl.config.memory.embeddings.model,
+                },
             },
             "identity": {
                 "name": tl.config.identity.name,
@@ -2276,7 +2288,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         }
 
     # ========================================================================
-    # Per-Model Memory Isolation Endpoints
+    # Per-Profile Memory Isolation Endpoints
     # ========================================================================
 
     class MemoryIsolationConfigRequest(BaseModel):
@@ -2284,74 +2296,88 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         default_shared: Optional[bool] = None
 
     class MemoryScopeUpdateRequest(BaseModel):
-        model_id: Optional[str] = None  # None means share (remove scope)
+        profile_id: Optional[str] = None  # None means share (remove scope)
+        model_id: Optional[str] = None  # Deprecated: use profile_id instead
 
     @app.get("/api/memory/isolation")
     async def get_memory_isolation_config():
-        """Get per-model memory isolation configuration."""
+        """Get per-profile memory isolation configuration."""
         tl = get_threadlight()
 
+        active_profile_id = tl.active_profile.id if tl.active_profile else None
+        active_profile_name = tl.active_profile.name if tl.active_profile else None
+
         return {
-            "per_model_isolation": tl.config.memory.per_model_isolation,
+            "per_profile_isolation": tl.config.memory.per_profile_isolation,
             "default_shared": tl.config.memory.default_shared,
-            "current_model": tl.config.current_model,
+            "active_profile_id": active_profile_id,
+            "active_profile_name": active_profile_name,
         }
 
     @app.put("/api/memory/isolation")
     async def update_memory_isolation_config(request: MemoryIsolationConfigRequest):
-        """Update per-model memory isolation configuration."""
+        """Update per-profile memory isolation configuration."""
         tl = get_threadlight()
 
-        tl.set_per_model_isolation(request.enabled)
-        if request.default_shared is not None:
-            tl.set_default_shared(request.default_shared)
+        try:
+            tl.set_per_profile_isolation(request.enabled)
+            if request.default_shared is not None:
+                tl.set_default_shared(request.default_shared)
 
-        # Save config
-        tl.config.mark_changed()
+            # Save config to persist changes
+            tl.save_config()
 
-        return {
-            "status": "updated",
-            "per_model_isolation": tl.config.memory.per_model_isolation,
-            "default_shared": tl.config.memory.default_shared,
-        }
+            return {
+                "status": "updated",
+                "per_profile_isolation": tl.config.memory.per_profile_isolation,
+                "default_shared": tl.config.memory.default_shared,
+            }
+        except Exception as e:
+            logger.error(f"Failed to update isolation config: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/api/memories/{capsule_id}/share")
     async def share_memory(capsule_id: str):
-        """Make a memory shared across all models (remove model scope)."""
+        """Make a memory shared across all profiles (remove profile scope)."""
         tl = get_threadlight()
 
         success = tl.share_memory(capsule_id)
         if not success:
             raise HTTPException(status_code=404, detail="Memory not found")
 
-        return {"status": "shared", "id": capsule_id, "model_scope": None}
+        return {"status": "shared", "id": capsule_id, "profile_scope": None}
 
     @app.post("/api/memories/{capsule_id}/assign")
-    async def assign_memory_to_model(capsule_id: str, request: MemoryScopeUpdateRequest):
-        """Assign a memory to a specific model."""
+    async def assign_memory_to_profile(capsule_id: str, request: MemoryScopeUpdateRequest):
+        """Assign a memory to a specific profile."""
         tl = get_threadlight()
 
-        if request.model_id is None:
-            # If no model_id provided, assign to current model
-            model_id = tl.config.current_model
-        else:
-            model_id = request.model_id
+        # Use profile_id if provided, fall back to model_id for backward compat
+        scope_id = request.profile_id or request.model_id
+        if scope_id is None:
+            # If no scope provided, assign to active profile
+            if tl.active_profile:
+                scope_id = tl.active_profile.memory_scope or tl.active_profile.id
+            else:
+                raise HTTPException(status_code=400, detail="No active profile to assign to")
 
-        success = tl.assign_memory_to_model(capsule_id, model_id)
+        success = tl.assign_memory_to_profile(capsule_id, scope_id)
         if not success:
             raise HTTPException(status_code=404, detail="Memory not found")
 
-        return {"status": "assigned", "id": capsule_id, "model_scope": model_id}
+        return {"status": "assigned", "id": capsule_id, "profile_scope": scope_id}
 
-    @app.post("/api/memories/{capsule_id}/copy-to-model")
-    async def copy_memory_to_model(capsule_id: str, request: MemoryScopeUpdateRequest):
-        """Copy a memory to another model (creates a new capsule)."""
+    @app.post("/api/memories/{capsule_id}/copy-to-profile")
+    async def copy_memory_to_profile(capsule_id: str, request: MemoryScopeUpdateRequest):
+        """Copy a memory to another profile (creates a new capsule)."""
         tl = get_threadlight()
 
-        if not request.model_id:
-            raise HTTPException(status_code=400, detail="model_id is required")
+        # Use profile_id if provided, fall back to model_id for backward compat
+        target_id = request.profile_id or request.model_id
+        if not target_id:
+            raise HTTPException(status_code=400, detail="profile_id is required")
 
-        new_capsule = tl.copy_memory_to_model(capsule_id, request.model_id)
+        new_capsule = tl.copy_memory_to_profile(capsule_id, target_id)
         if not new_capsule:
             raise HTTPException(status_code=404, detail="Memory not found")
 
@@ -2363,39 +2389,51 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     @app.get("/api/memories/{capsule_id}/scope")
     async def get_memory_scope(capsule_id: str):
-        """Get the model scope of a memory."""
+        """Get the profile scope of a memory."""
         tl = get_threadlight()
 
         capsule = tl.storage.get_capsule(capsule_id)
         if not capsule:
             raise HTTPException(status_code=404, detail="Memory not found")
 
-        model_scope = getattr(capsule, 'model_scope', None)
+        profile_scope = getattr(capsule, 'profile_scope', None)
         return {
             "id": capsule_id,
-            "model_scope": model_scope,
-            "is_shared": model_scope is None,
+            "profile_scope": profile_scope,
+            "is_shared": profile_scope is None,
         }
 
-    @app.get("/api/model-scope/stats")
-    async def get_model_scope_stats():
-        """Get statistics about memories per model scope."""
+    @app.get("/api/profile-scope/stats")
+    async def get_profile_scope_stats():
+        """Get statistics about memories per profile scope."""
         tl = get_threadlight()
 
-        if hasattr(tl.storage, 'count_capsules_by_model'):
-            counts = tl.storage.count_capsules_by_model()
-        else:
-            counts = {}
+        # Get all capsules and count by profile_scope
+        from threadlight.storage.base import CapsuleFilter
+        capsules = tl.storage.list_capsules(CapsuleFilter(limit=10000))
+
+        counts = {}
+        for c in capsules:
+            scope = getattr(c, 'profile_scope', None)
+            counts[scope] = counts.get(scope, 0) + 1
 
         # Convert None key to "null" for JSON serialization
         json_counts = {}
         for key, value in counts.items():
             json_counts[str(key) if key is not None else "null"] = value
 
+        # Get profile names for context
+        profile_names = {}
+        profiles = tl.list_profiles()
+        for p in profiles:
+            profile_names[p.id] = p.name
+
         return {
-            "per_model_isolation": tl.config.memory.per_model_isolation,
-            "current_model": tl.config.current_model,
-            "memory_counts_by_model": json_counts,
+            "per_profile_isolation": tl.config.memory.per_profile_isolation,
+            "active_profile_id": tl.active_profile.id if tl.active_profile else None,
+            "active_profile_name": tl.active_profile.name if tl.active_profile else None,
+            "memory_counts_by_profile": json_counts,
+            "profile_names": profile_names,
             "shared_count": counts.get(None, 0),
         }
 

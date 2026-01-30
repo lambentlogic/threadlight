@@ -137,8 +137,8 @@ class Profile:
 
     # Freeform Philosophy - describe interaction style in natural language
     # These fields are PRIMARY - the system interprets them to guide responses
-    philosophy: str = ""  # e.g., "presence-centered, mythically-grounded, honors silence"
-    approach_to_rituals: str = ""  # e.g., "deep emotional scaffolding" or "efficient shortcuts"
+    philosophy: str = ""  # e.g., "thoughtful and warm" or "concise and efficient"
+    approach_to_rituals: str = ""  # e.g., "honor commands as meaningful moments" or "quick shortcuts"
 
     # Metadata
     created_at: datetime = field(default_factory=datetime.now)

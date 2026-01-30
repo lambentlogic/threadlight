@@ -9,7 +9,7 @@ Composition Modes:
 - DIRECT: Factual integration ("You know that...")
 - NARRATIVE: Story-like framing ("You recall...")
 - WHISPER: Subtle tone cues ("There is warmth when...")
-- RITUAL: Ceremonial invocation for ritual hooks
+- RITUAL: Full activation for command invocations
 
 Soft Memory Modes:
 - DISABLED: Don't include past conversation history

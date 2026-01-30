@@ -1,9 +1,9 @@
 """
 Style Profile capsules.
 
-Maintain voice coherence and dynamic flexibility.
-The model's voice should be consistent but not rigid --
-shaped by relationship, not enforced by constraint.
+Define voice, tone, and behavioral patterns for the AI.
+Style profiles maintain consistent personality while allowing
+natural flexibility based on context and conversation.
 """
 
 from __future__ import annotations

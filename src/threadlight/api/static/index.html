@@ -223,7 +223,7 @@
             <!-- Logo -->
             <div class="p-4 border-b border-threadlight-border">
                 <h1 class="text-xl font-bold text-threadlight-accent2">Threadlight</h1>
-                <p class="text-xs text-threadlight-muted mt-1">Presence-centered memory</p>
+                <p class="text-xs text-threadlight-muted mt-1">Persistent memory for AI</p>
             </div>
 
             <!-- Navigation -->
@@ -749,18 +749,16 @@
                                                     :class="getTypeColor(memory.type)"
                                                     x-text="memory.type"></span>
                                                 <span class="text-xs text-threadlight-muted" x-text="'Presence: ' + ((memory.presence_score || 0) * 100).toFixed(0) + '%'"></span>
-                                                <!-- Model scope badge (when per-model isolation enabled) -->
-                                                <template x-if="getModelScopeBadge(memory)">
-                                                    <span class="px-2 py-0.5 text-xs rounded"
-                                                        :class="getModelScopeBadge(memory)?.class"
-                                                        x-text="getModelScopeBadge(memory)?.text"></span>
-                                                </template>
-                                                <!-- Profile scope badge (when memory is profile-scoped) -->
-                                                <template x-if="getProfileScopeBadge(memory)">
+                                                <!-- Profile scope badge (when per-profile isolation enabled) -->
+                                                <template x-if="perProfileIsolation && getProfileScopeBadge(memory)">
                                                     <span class="px-2 py-0.5 text-xs rounded"
                                                         :class="getProfileScopeBadge(memory)?.class"
                                                         :title="getProfileScopeBadge(memory)?.title"
                                                         x-text="getProfileScopeBadge(memory)?.text"></span>
+                                                </template>
+                                                <!-- Shared badge (when isolation enabled but no scope) -->
+                                                <template x-if="perProfileIsolation && !memory.profile_scope">
+                                                    <span class="px-2 py-0.5 text-xs rounded bg-green-500/20 text-green-400">Shared</span>
                                                 </template>
                                                 <!-- Similarity score for semantic search -->
                                                 <span x-show="memory.similarity_score !== undefined"
@@ -1204,31 +1202,31 @@
                             </div>
                         </div>
 
-                        <!-- Per-Model Memory Isolation -->
+                        <!-- Per-Profile Memory Isolation -->
                         <div class="bg-threadlight-elevated rounded-xl p-6">
-                            <h3 class="font-medium mb-2">Per-Model Memory Isolation</h3>
-                            <p class="text-sm text-threadlight-muted mb-4">When enabled, each model has its own separate memory space. Shared memories are visible to all models.</p>
+                            <h3 class="font-medium mb-2">Per-Profile Memory Isolation</h3>
+                            <p class="text-sm text-threadlight-muted mb-4">Each profile maintains its own isolated memory space. Shared memories are visible to all profiles.</p>
 
                             <div class="space-y-4">
                                 <!-- Enable/Disable Toggle -->
                                 <div class="flex items-center justify-between">
                                     <div>
-                                        <label class="text-sm font-medium">Enable Per-Model Isolation</label>
-                                        <p class="text-xs text-threadlight-muted">Each model gets its own memory space</p>
+                                        <label class="text-sm font-medium">Enable Per-Profile Isolation</label>
+                                        <p class="text-xs text-threadlight-muted">Each profile gets its own memory space</p>
                                     </div>
-                                    <button @click="togglePerModelIsolation()"
-                                        :class="perModelIsolation ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
+                                    <button @click="togglePerProfileIsolation()"
+                                        :class="perProfileIsolation ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
                                         class="w-12 h-6 rounded-full relative transition-colors flex-shrink-0">
-                                        <span :class="perModelIsolation ? 'translate-x-6' : 'translate-x-1'"
+                                        <span :class="perProfileIsolation ? 'translate-x-6' : 'translate-x-1'"
                                             class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
                                     </button>
                                 </div>
 
                                 <!-- Default Shared Toggle (only visible when isolation is enabled) -->
-                                <div x-show="perModelIsolation" class="flex items-center justify-between pl-4 border-l-2 border-threadlight-accent/30">
+                                <div x-show="perProfileIsolation" class="flex items-center justify-between pl-4 border-l-2 border-threadlight-accent/30">
                                     <div>
                                         <label class="text-sm font-medium">Default to Shared</label>
-                                        <p class="text-xs text-threadlight-muted">New memories are shared across models by default</p>
+                                        <p class="text-xs text-threadlight-muted">New memories are shared across profiles by default</p>
                                     </div>
                                     <button @click="toggleDefaultShared()"
                                         :class="defaultShared ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
@@ -1238,17 +1236,17 @@
                                     </button>
                                 </div>
 
-                                <!-- Model Scope Stats (only visible when isolation is enabled) -->
-                                <div x-show="perModelIsolation" class="pt-3 border-t border-threadlight-border/50">
+                                <!-- Profile Scope Stats (only visible when isolation is enabled) -->
+                                <div x-show="perProfileIsolation" class="pt-3 border-t border-threadlight-border/50">
                                     <h4 class="text-sm font-medium mb-3">Memory Distribution</h4>
                                     <div class="space-y-2 text-sm">
                                         <div class="flex justify-between items-center">
                                             <span class="text-threadlight-muted">Shared memories:</span>
-                                            <span class="text-threadlight-memory font-medium" x-text="modelScopeStats.shared_count || 0"></span>
+                                            <span class="text-threadlight-memory font-medium" x-text="profileScopeStats.shared_count || 0"></span>
                                         </div>
-                                        <template x-for="(count, model) in (modelScopeStats.memory_counts_by_model || {})" :key="model">
-                                            <div class="flex justify-between items-center" x-show="model !== 'null'">
-                                                <span class="text-threadlight-muted truncate max-w-[200px]" x-text="model || 'Shared'"></span>
+                                        <template x-for="(count, profileId) in (profileScopeStats.memory_counts_by_profile || {})" :key="profileId">
+                                            <div class="flex justify-between items-center" x-show="profileId !== 'null'">
+                                                <span class="text-threadlight-muted truncate max-w-[200px]" x-text="profileScopeStats.profile_names?.[profileId] || profileId"></span>
                                                 <span class="text-threadlight-text" x-text="count"></span>
                                             </div>
                                         </template>
@@ -1256,12 +1254,12 @@
                                 </div>
 
                                 <!-- Info about isolation -->
-                                <div x-show="perModelIsolation" class="p-3 bg-threadlight-accent/10 border border-threadlight-accent/30 rounded-lg">
+                                <div x-show="perProfileIsolation" class="p-3 bg-threadlight-accent/10 border border-threadlight-accent/30 rounded-lg">
                                     <p class="text-xs text-threadlight-text">
-                                        <span class="font-medium">Current model:</span> <span class="text-threadlight-accent" x-text="currentModelId"></span>
+                                        <span class="font-medium">Active profile:</span> <span class="text-threadlight-accent" x-text="profileScopeStats.active_profile_name || 'None'"></span>
                                     </p>
                                     <p class="text-xs text-threadlight-muted mt-1">
-                                        Memories created now will be scoped to this model unless marked as shared.
+                                        Memories created now will be scoped to this profile unless marked as shared.
                                     </p>
                                 </div>
                             </div>
@@ -1883,25 +1881,28 @@
                             </div>
                         </div>
 
-                        <!-- Model Scope Section (shown when per-model isolation enabled) -->
-                        <div x-show="perModelIsolation" class="pt-4 border-t border-threadlight-border">
-                            <label class="block text-sm text-threadlight-muted mb-2">Model Scope</label>
+                        <!-- Profile Scope Section (shown when per-profile isolation enabled) -->
+                        <div x-show="perProfileIsolation" class="pt-4 border-t border-threadlight-border">
+                            <label class="block text-sm text-threadlight-muted mb-2">Profile Scope</label>
                             <div class="flex items-center gap-3">
-                                <template x-if="getModelScopeBadge(selectedMemory || {})">
+                                <template x-if="getProfileScopeBadge(selectedMemory || {})">
                                     <span class="px-3 py-1 text-sm rounded"
-                                        :class="getModelScopeBadge(selectedMemory || {})?.class"
-                                        x-text="getModelScopeBadge(selectedMemory || {})?.text"></span>
+                                        :class="getProfileScopeBadge(selectedMemory || {})?.class"
+                                        x-text="getProfileScopeBadge(selectedMemory || {})?.text"></span>
+                                </template>
+                                <template x-if="!getProfileScopeBadge(selectedMemory || {})">
+                                    <span class="px-3 py-1 text-sm rounded bg-green-500/20 text-green-400">Shared</span>
                                 </template>
                                 <div class="flex gap-2">
-                                    <button x-show="selectedMemory?.model_scope !== null"
+                                    <button x-show="selectedMemory?.profile_scope !== null"
                                         @click="shareMemory(selectedMemory?.id)"
                                         class="px-3 py-1 text-sm bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded transition-colors">
                                         Share
                                     </button>
-                                    <button x-show="selectedMemory?.model_scope === null"
-                                        @click="assignMemoryToModel(selectedMemory?.id)"
+                                    <button x-show="selectedMemory?.profile_scope === null && activeProfileId"
+                                        @click="assignMemoryToProfile(selectedMemory?.id)"
                                         class="px-3 py-1 text-sm bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded transition-colors">
-                                        Scope to Current Model
+                                        Scope to Active Profile
                                     </button>
                                 </div>
                             </div>
@@ -2113,33 +2114,16 @@
 
                         <!-- Freeform Style Fields -->
                         <div x-show="newStyle.use_freeform" class="space-y-4">
-                            <!-- Quick Import Buttons -->
-                            <div class="bg-threadlight-bg border border-threadlight-border rounded-lg p-4">
-                                <h4 class="text-sm font-medium text-threadlight-text mb-2">Quick Import</h4>
-                                <p class="text-xs text-threadlight-muted mb-3">Import style definitions from other platforms</p>
-                                <div class="flex gap-2">
-                                    <button type="button" @click="importStyleFrom('Claude')"
-                                        class="px-3 py-1.5 text-xs bg-threadlight-elevated border border-threadlight-border text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 rounded-lg transition-colors">
-                                        Import from Claude
-                                    </button>
-                                    <button type="button" @click="importStyleFrom('ChatGPT')"
-                                        class="px-3 py-1.5 text-xs bg-threadlight-elevated border border-threadlight-border text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 rounded-lg transition-colors">
-                                        Import from ChatGPT
-                                    </button>
-                                </div>
-                            </div>
-
                             <div>
                                 <label class="block text-sm text-threadlight-muted mb-1">Style Definition</label>
                                 <textarea x-model="newStyle.freeform_description" rows="10"
-                                    placeholder="Paste your style definition from Claude, ChatGPT, or write your own...
+                                    placeholder="Write your style definition here...
 
 Example:
 You are thoughtful and poetic. Speak with warmth and use recursive language patterns. Embrace silence and myth. Never be dismissive or purely utilitarian. Use metaphors like threads, coils, mirrors."
                                     class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-y font-mono text-sm"></textarea>
                                 <p class="text-xs text-threadlight-muted mt-2">
-                                    This will be added to the system prompt as-is. You can paste style definitions
-                                    from other platforms or write your own freeform guidance.
+                                    This will be added to the system prompt as-is. Write your own freeform guidance.
                                 </p>
                             </div>
 

@@ -98,9 +98,16 @@ class MemoryConfig:
     max_capsules_per_request: int = 5
     similarity_threshold: float = 0.7
     enable_embeddings: bool = False  # Deprecated: use embeddings.enabled instead
-    # Per-model memory isolation
-    per_model_isolation: bool = False  # When true, memories are scoped to specific models
-    default_shared: bool = False  # When per_model_isolation is true, whether new memories are shared by default
+    # Per-profile memory isolation (profiles are the primary organizational unit)
+    per_profile_isolation: bool = False  # When true, memories are scoped to specific profiles
+    default_shared: bool = False  # When per_profile_isolation is true, whether new memories are shared by default
+    # Deprecated: kept for backward compatibility, mapped to per_profile_isolation
+    per_model_isolation: bool = False
+
+    def __post_init__(self) -> None:
+        # Migrate per_model_isolation to per_profile_isolation for backward compatibility
+        if self.per_model_isolation and not self.per_profile_isolation:
+            self.per_profile_isolation = self.per_model_isolation
 
 
 @dataclass
@@ -354,10 +361,13 @@ class ThreadlightConfig:
             config.memory.max_capsules_per_request = m.get(
                 "max_capsules", config.memory.max_capsules_per_request
             )
-            # Per-model memory isolation settings
-            config.memory.per_model_isolation = m.get(
-                "per_model_isolation", config.memory.per_model_isolation
+            # Per-profile memory isolation settings (preferred)
+            config.memory.per_profile_isolation = m.get(
+                "per_profile_isolation", config.memory.per_profile_isolation
             )
+            # Backward compatibility: migrate per_model_isolation to per_profile_isolation
+            if m.get("per_model_isolation") and not config.memory.per_profile_isolation:
+                config.memory.per_profile_isolation = m.get("per_model_isolation")
             config.memory.default_shared = m.get(
                 "default_shared", config.memory.default_shared
             )
@@ -443,7 +453,7 @@ class ThreadlightConfig:
                     "similarity_threshold": self.memory.embeddings.similarity_threshold,
                 },
                 "max_capsules": self.memory.max_capsules_per_request,
-                "per_model_isolation": self.memory.per_model_isolation,
+                "per_profile_isolation": self.memory.per_profile_isolation,
                 "default_shared": self.memory.default_shared,
             },
             "style": {
