@@ -1,0 +1,395 @@
+"""
+Base classes for storage backends.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Optional
+
+from threadlight.capsules.base import MemoryCapsule, CapsuleType, RetentionPolicy
+
+
+# ============================================================================
+# Conversation History Data Classes
+# ============================================================================
+
+
+@dataclass
+class Message:
+    """A single message in a conversation."""
+
+    id: str
+    conversation_id: str
+    role: str  # 'user', 'assistant', or 'system'
+    content: str
+    timestamp: datetime
+    source: str = ""  # 'claude', 'chatgpt', 'local', etc.
+    metadata: dict[str, Any] = field(default_factory=dict)
+    embedding: Optional[list[float]] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize message to dictionary."""
+        return {
+            "id": self.id,
+            "conversation_id": self.conversation_id,
+            "role": self.role,
+            "content": self.content,
+            "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
+            "source": self.source,
+            "metadata": self.metadata,
+            "embedding": self.embedding,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Message":
+        """Deserialize message from dictionary."""
+        timestamp = data.get("timestamp", "")
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+
+        return cls(
+            id=data["id"],
+            conversation_id=data["conversation_id"],
+            role=data["role"],
+            content=data["content"],
+            timestamp=timestamp,
+            source=data.get("source", ""),
+            metadata=data.get("metadata", {}),
+            embedding=data.get("embedding"),
+        )
+
+
+@dataclass
+class Conversation:
+    """A conversation containing multiple messages."""
+
+    id: str
+    name: str = ""
+    summary: str = ""
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    source: str = ""  # 'claude', 'chatgpt', 'local', etc.
+    message_count: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize conversation to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "summary": self.summary,
+            "created_at": self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
+            "updated_at": self.updated_at.isoformat() if isinstance(self.updated_at, datetime) else self.updated_at,
+            "source": self.source,
+            "message_count": self.message_count,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Conversation":
+        """Deserialize conversation from dictionary."""
+        created_at = data.get("created_at", "")
+        updated_at = data.get("updated_at", "")
+
+        if isinstance(created_at, str) and created_at:
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        else:
+            created_at = datetime.utcnow()
+
+        if isinstance(updated_at, str) and updated_at:
+            updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+        else:
+            updated_at = datetime.utcnow()
+
+        return cls(
+            id=data["id"],
+            name=data.get("name", ""),
+            summary=data.get("summary", ""),
+            created_at=created_at,
+            updated_at=updated_at,
+            source=data.get("source", ""),
+            message_count=data.get("message_count", 0),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass
+class MessageSearchResult:
+    """A message search result with context."""
+
+    message: Message
+    conversation_name: str
+    relevance_score: float = 0.0
+    context_before: list[Message] = field(default_factory=list)
+    context_after: list[Message] = field(default_factory=list)
+
+    def to_context_string(self) -> str:
+        """Format this result as a context string for prompts."""
+        date_str = self.message.timestamp.strftime("%B %d, %Y")
+        conv_name = self.conversation_name or "a previous conversation"
+        role = "you mentioned" if self.message.role == "assistant" else "the user said"
+
+        # Truncate content if too long
+        content = self.message.content
+        if len(content) > 300:
+            content = content[:300] + "..."
+
+        return f'(From "{conv_name}" on {date_str}: {role}: "{content}")'
+
+
+# ============================================================================
+# Filter Classes
+# ============================================================================
+
+
+@dataclass
+class CapsuleFilter:
+    """Filter criteria for capsule queries."""
+
+    type: Optional[CapsuleType] = None
+    types: Optional[list[CapsuleType]] = None
+    entity: Optional[str] = None
+    cue_phrase: Optional[str] = None
+    min_presence_score: Optional[float] = None
+    consent_confirmed: Optional[bool] = None
+    retention: Optional[RetentionPolicy] = None
+
+    # Time filters
+    created_after: Optional[datetime] = None
+    created_before: Optional[datetime] = None
+    accessed_after: Optional[datetime] = None
+    accessed_before: Optional[datetime] = None
+
+    # Pagination
+    limit: int = 100
+    offset: int = 0
+
+    # Sorting
+    order_by: str = "last_accessed"  # last_accessed, created_at, presence_score
+    order_desc: bool = True
+
+
+@dataclass
+class MemoryProposal:
+    """A proposed memory waiting for consent."""
+
+    id: str
+    capsule_type: CapsuleType
+    content: dict[str, Any]
+    proposed_at: datetime = field(default_factory=datetime.utcnow)
+    source_message: str = ""
+    status: str = "pending"  # pending, confirmed, rejected
+
+
+class StorageBackend(ABC):
+    """
+    Abstract base class for storage backends.
+
+    All storage implementations must provide these methods.
+    """
+
+    @abstractmethod
+    def initialize(self) -> None:
+        """Initialize storage (create tables, etc.)."""
+        pass
+
+    @abstractmethod
+    def close(self) -> None:
+        """Close storage connections."""
+        pass
+
+    # Capsule CRUD
+
+    @abstractmethod
+    def save_capsule(self, capsule: MemoryCapsule) -> str:
+        """
+        Save a capsule to storage.
+        Returns the capsule ID.
+        """
+        pass
+
+    @abstractmethod
+    def get_capsule(self, capsule_id: str) -> Optional[MemoryCapsule]:
+        """Get a capsule by ID."""
+        pass
+
+    @abstractmethod
+    def update_capsule(self, capsule: MemoryCapsule) -> bool:
+        """
+        Update an existing capsule.
+        Returns True if successful.
+        """
+        pass
+
+    @abstractmethod
+    def delete_capsule(self, capsule_id: str) -> bool:
+        """
+        Delete a capsule.
+        Returns True if successful.
+        """
+        pass
+
+    @abstractmethod
+    def list_capsules(self, filter: Optional[CapsuleFilter] = None) -> list[MemoryCapsule]:
+        """List capsules matching filter criteria."""
+        pass
+
+    @abstractmethod
+    def search_by_cue(self, cue: str, limit: int = 5) -> list[MemoryCapsule]:
+        """Search capsules by cue phrase match."""
+        pass
+
+    # Proposal management
+
+    @abstractmethod
+    def save_proposal(self, proposal: MemoryProposal) -> str:
+        """Save a memory proposal."""
+        pass
+
+    @abstractmethod
+    def get_proposal(self, proposal_id: str) -> Optional[MemoryProposal]:
+        """Get a proposal by ID."""
+        pass
+
+    @abstractmethod
+    def list_proposals(self, status: str = "pending") -> list[MemoryProposal]:
+        """List proposals by status."""
+        pass
+
+    @abstractmethod
+    def update_proposal_status(self, proposal_id: str, status: str) -> bool:
+        """Update proposal status."""
+        pass
+
+    # Batch operations
+
+    @abstractmethod
+    def update_presence_scores(self, updates: dict[str, float]) -> int:
+        """
+        Batch update presence scores.
+        Returns number of capsules updated.
+        """
+        pass
+
+    @abstractmethod
+    def get_capsules_for_decay(
+        self,
+        before: datetime,
+        exclude_retention: list[RetentionPolicy] | None = None
+    ) -> list[MemoryCapsule]:
+        """Get capsules eligible for decay processing."""
+        pass
+
+    # Utility
+
+    @abstractmethod
+    def count_capsules(self, filter: Optional[CapsuleFilter] = None) -> int:
+        """Count capsules matching filter."""
+        pass
+
+    @abstractmethod
+    def export_all(self) -> list[dict[str, Any]]:
+        """Export all capsules as dictionaries."""
+        pass
+
+    @abstractmethod
+    def import_capsules(self, capsules: list[dict[str, Any]]) -> int:
+        """
+        Import capsules from dictionaries.
+        Returns number imported.
+        """
+        pass
+
+    # ========================================================================
+    # Conversation History Operations
+    # ========================================================================
+
+    @abstractmethod
+    def save_conversation(self, conversation: Conversation) -> str:
+        """
+        Save a conversation to storage.
+        Returns the conversation ID.
+        """
+        pass
+
+    @abstractmethod
+    def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
+        """Get a conversation by ID."""
+        pass
+
+    @abstractmethod
+    def list_conversations(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        source: Optional[str] = None,
+    ) -> list[Conversation]:
+        """List conversations with optional filtering."""
+        pass
+
+    @abstractmethod
+    def update_conversation(self, conversation: Conversation) -> bool:
+        """Update an existing conversation."""
+        pass
+
+    @abstractmethod
+    def delete_conversation(self, conversation_id: str) -> bool:
+        """Delete a conversation and all its messages."""
+        pass
+
+    @abstractmethod
+    def save_message(self, message: Message) -> str:
+        """
+        Save a message to storage.
+        Returns the message ID.
+        """
+        pass
+
+    @abstractmethod
+    def save_messages_batch(self, messages: list[Message]) -> int:
+        """
+        Save multiple messages in a batch.
+        Returns number of messages saved.
+        """
+        pass
+
+    @abstractmethod
+    def get_message(self, message_id: str) -> Optional[Message]:
+        """Get a message by ID."""
+        pass
+
+    @abstractmethod
+    def get_messages(
+        self,
+        conversation_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Message]:
+        """Get messages for a conversation."""
+        pass
+
+    @abstractmethod
+    def search_messages(
+        self,
+        query: str,
+        limit: int = 20,
+        source: Optional[str] = None,
+    ) -> list[MessageSearchResult]:
+        """
+        Full-text search across all messages.
+        Returns messages with conversation context.
+        """
+        pass
+
+    @abstractmethod
+    def count_messages(self, conversation_id: Optional[str] = None) -> int:
+        """Count messages, optionally for a specific conversation."""
+        pass
+
+    @abstractmethod
+    def count_conversations(self) -> int:
+        """Count total conversations."""
+        pass

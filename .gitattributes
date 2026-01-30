@@ -1,0 +1,44 @@
+# Threadlight .gitattributes
+
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Python files
+*.py text diff=python
+
+# Documentation
+*.md text diff=markdown
+*.rst text
+*.txt text
+
+# Data files
+*.json text
+*.yaml text
+*.yml text
+*.toml text
+
+# Shell scripts
+*.sh text eol=lf
+
+# Windows scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary
+
+# Linguist overrides for GitHub language detection
+docs/* linguist-documentation
+examples/* linguist-documentation=false
+tests/* linguist-detectable=false
+*.md linguist-documentation

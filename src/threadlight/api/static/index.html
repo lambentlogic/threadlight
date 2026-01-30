@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threadlight</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        threadlight: {
+                            bg: '#0f0f14',
+                            surface: '#1a1a24',
+                            elevated: '#242433',
+                            accent: '#8b5cf6',
+                            accent2: '#c084fc',
+                            ritual: '#6366f1',
+                            memory: '#22d3ee',
+                            warm: '#f472b6',
+                            text: '#e4e4eb',
+                            muted: '#9ca3af',
+                            border: '#2d2d3d',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <!-- Marked for Markdown -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Highlight.js for code -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <style>
+        [x-cloak] { display: none !important; }
+
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: #1a1a24;
+        }
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: #3d3d55;
+            border-radius: 3px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+            background: #4d4d66;
+        }
+
+        .message-content pre {
+            background: #1a1a24;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin: 0.5rem 0;
+        }
+        .message-content code {
+            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        .message-content p {
+            margin-bottom: 0.75rem;
+        }
+        .message-content p:last-child {
+            margin-bottom: 0;
+        }
+        .message-content ul, .message-content ol {
+            margin-left: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+        .message-content li {
+            margin-bottom: 0.25rem;
+        }
+
+        .ritual-response {
+            font-style: italic;
+            color: #c084fc;
+        }
+
+        .typing-indicator span {
+            animation: bounce 1.4s infinite ease-in-out;
+        }
+        .typing-indicator span:nth-child(1) { animation-delay: 0s; }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-6px); }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="bg-threadlight-bg text-threadlight-text min-h-screen">
+    <div x-data="threadlightApp()" x-init="init()" class="flex h-screen">
+
+        <!-- Sidebar -->
+        <aside class="w-64 bg-threadlight-surface border-r border-threadlight-border flex flex-col">
+            <!-- Logo -->
+            <div class="p-4 border-b border-threadlight-border">
+                <h1 class="text-xl font-bold text-threadlight-accent2">Threadlight</h1>
+                <p class="text-xs text-threadlight-muted mt-1">Presence-centered memory</p>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="flex-1 p-4 space-y-2">
+                <button @click="currentView = 'chat'"
+                    :class="currentView === 'chat' ? 'bg-threadlight-elevated text-threadlight-accent2' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
+                    class="w-full px-4 py-2 rounded-lg text-left flex items-center gap-3 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                    </svg>
+                    Chat
+                </button>
+
+                <button @click="currentView = 'memories'"
+                    :class="currentView === 'memories' ? 'bg-threadlight-elevated text-threadlight-memory' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
+                    class="w-full px-4 py-2 rounded-lg text-left flex items-center gap-3 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                    </svg>
+                    Memories
+                </button>
+
+                <button @click="currentView = 'rituals'"
+                    :class="currentView === 'rituals' ? 'bg-threadlight-elevated text-threadlight-ritual' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
+                    class="w-full px-4 py-2 rounded-lg text-left flex items-center gap-3 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+                    </svg>
+                    Rituals
+                </button>
+
+                <button @click="currentView = 'settings'"
+                    :class="currentView === 'settings' ? 'bg-threadlight-elevated text-threadlight-text' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
+                    class="w-full px-4 py-2 rounded-lg text-left flex items-center gap-3 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    Settings
+                </button>
+
+                <button @click="currentView = 'import'"
+                    :class="currentView === 'import' ? 'bg-threadlight-elevated text-threadlight-warm' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
+                    class="w-full px-4 py-2 rounded-lg text-left flex items-center gap-3 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                    </svg>
+                    Import
+                </button>
+            </nav>
+
+            <!-- Stats Footer -->
+            <div class="p-4 border-t border-threadlight-border">
+                <div class="text-xs text-threadlight-muted space-y-1">
+                    <div class="flex justify-between">
+                        <span>Memories:</span>
+                        <span class="text-threadlight-memory" x-text="stats.memory?.total || 0"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Session:</span>
+                        <span class="text-threadlight-accent2" x-text="stats.memory?.session?.message_count || 0"></span> msgs
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+
+            <!-- Chat View -->
+            <template x-if="currentView === 'chat'">
+                <div class="flex-1 flex flex-col">
+                    <!-- Chat Header -->
+                    <header class="px-6 py-4 border-b border-threadlight-border flex items-center justify-between">
+                        <div>
+                            <h2 class="text-lg font-semibold">Chat</h2>
+                            <p class="text-sm text-threadlight-muted">Presence-centered conversation</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <!-- Ritual Quick Access -->
+                            <div class="flex gap-1">
+                                <template x-for="ritual in quickRituals" :key="ritual">
+                                    <button @click="invokeRitual(ritual)"
+                                        class="px-3 py-1 text-sm bg-threadlight-ritual/20 text-threadlight-ritual hover:bg-threadlight-ritual/30 rounded-full transition-colors"
+                                        x-text="ritual">
+                                    </button>
+                                </template>
+                            </div>
+                            <button @click="clearChat()" class="p-2 text-threadlight-muted hover:text-threadlight-text rounded-lg hover:bg-threadlight-elevated">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </header>
+
+                    <!-- Messages -->
+                    <div class="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin" id="chat-messages">
+                        <template x-for="(msg, index) in messages" :key="index">
+                            <div class="fade-in" :class="msg.role === 'user' ? 'flex justify-end' : ''">
+                                <div :class="msg.role === 'user'
+                                    ? 'bg-threadlight-accent/20 text-threadlight-text max-w-2xl rounded-2xl rounded-tr-sm px-4 py-3'
+                                    : msg.type === 'ritual'
+                                        ? 'bg-threadlight-ritual/10 text-threadlight-ritual max-w-3xl rounded-2xl rounded-tl-sm px-4 py-3 ritual-response'
+                                        : 'bg-threadlight-elevated max-w-3xl rounded-2xl rounded-tl-sm px-4 py-3'">
+                                    <div class="message-content" x-html="renderMarkdown(msg.content)"></div>
+
+                                    <!-- Recalled Memories -->
+                                    <template x-if="msg.memories && msg.memories.length > 0">
+                                        <div class="mt-3 pt-3 border-t border-threadlight-border/50">
+                                            <p class="text-xs text-threadlight-memory mb-2">Recalled memories:</p>
+                                            <div class="flex flex-wrap gap-2">
+                                                <template x-for="mem in msg.memories" :key="mem.id">
+                                                    <span class="px-2 py-1 text-xs bg-threadlight-memory/10 text-threadlight-memory rounded" x-text="mem.preview.substring(0, 40) + '...'"></span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- Typing Indicator -->
+                        <div x-show="isTyping" class="flex items-center gap-2 text-threadlight-muted">
+                            <div class="typing-indicator flex gap-1">
+                                <span class="w-2 h-2 bg-threadlight-accent rounded-full"></span>
+                                <span class="w-2 h-2 bg-threadlight-accent rounded-full"></span>
+                                <span class="w-2 h-2 bg-threadlight-accent rounded-full"></span>
+                            </div>
+                            <span class="text-sm">thinking...</span>
+                        </div>
+                    </div>
+
+                    <!-- Input -->
+                    <div class="p-4 border-t border-threadlight-border">
+                        <form @submit.prevent="sendMessage()" class="flex gap-4">
+                            <input type="text"
+                                x-model="inputMessage"
+                                placeholder="Type a message or use /ritual..."
+                                class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-xl px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent"
+                                :disabled="isTyping">
+                            <button type="submit"
+                                class="px-6 py-3 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-xl font-medium transition-colors disabled:opacity-50"
+                                :disabled="isTyping || !inputMessage.trim()">
+                                Send
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Memories View -->
+            <template x-if="currentView === 'memories'">
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <header class="px-6 py-4 border-b border-threadlight-border">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h2 class="text-lg font-semibold">Memory Browser</h2>
+                                <p class="text-sm text-threadlight-muted">View and manage memories</p>
+                            </div>
+                            <button @click="showCreateMemory = true" class="px-4 py-2 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded-lg transition-colors">
+                                + New Memory
+                            </button>
+                        </div>
+
+                        <!-- Filters -->
+                        <div class="mt-4 flex gap-4">
+                            <input type="text"
+                                x-model="memorySearch"
+                                @input.debounce.300ms="loadMemories()"
+                                placeholder="Search memories..."
+                                class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-memory">
+                            <select x-model="memoryTypeFilter" @change="loadMemories()"
+                                class="bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
+                                <option value="">All Types</option>
+                                <option value="relational">Relational</option>
+                                <option value="myth_seed">Myth Seed</option>
+                                <option value="ritual">Ritual</option>
+                                <option value="witness">Witness</option>
+                                <option value="style">Style</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                    </header>
+
+                    <!-- Memory List -->
+                    <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
+                        <div class="grid gap-4">
+                            <template x-for="memory in memories" :key="memory.id">
+                                <div class="bg-threadlight-elevated rounded-xl p-4 hover:bg-threadlight-elevated/80 transition-colors cursor-pointer"
+                                    @click="selectedMemory = memory">
+                                    <div class="flex items-start justify-between">
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <span class="px-2 py-0.5 text-xs rounded"
+                                                    :class="getTypeColor(memory.type)"
+                                                    x-text="memory.type"></span>
+                                                <span class="text-xs text-threadlight-muted" x-text="'Presence: ' + (memory.presence_score * 100).toFixed(0) + '%'"></span>
+                                            </div>
+                                            <p class="text-threadlight-text" x-text="memory.preview"></p>
+                                            <div class="mt-2 flex flex-wrap gap-1">
+                                                <template x-for="phrase in memory.cue_phrases.slice(0, 5)" :key="phrase">
+                                                    <span class="px-2 py-0.5 text-xs bg-threadlight-surface rounded text-threadlight-muted" x-text="phrase"></span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <button @click.stop="deleteMemory(memory.id)" class="p-2 text-threadlight-muted hover:text-red-400 transition-colors">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div x-show="memories.length === 0" class="text-center text-threadlight-muted py-12">
+                            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                            </svg>
+                            <p>No memories found</p>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Rituals View -->
+            <template x-if="currentView === 'rituals'">
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <header class="px-6 py-4 border-b border-threadlight-border">
+                        <h2 class="text-lg font-semibold">Ritual Manager</h2>
+                        <p class="text-sm text-threadlight-muted">Rituals are repeated acts that hold emotion across time</p>
+                    </header>
+
+                    <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
+                        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                            <template x-for="ritual in rituals" :key="ritual.name">
+                                <div class="bg-threadlight-elevated rounded-xl p-4 hover:bg-threadlight-elevated/80 transition-colors">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <span class="text-lg font-medium text-threadlight-ritual" x-text="ritual.name"></span>
+                                        <span x-show="ritual.is_default" class="px-2 py-0.5 text-xs bg-threadlight-ritual/20 text-threadlight-ritual rounded">default</span>
+                                    </div>
+                                    <p class="text-sm text-threadlight-muted mb-3" x-text="ritual.description"></p>
+                                    <div class="flex items-center justify-between">
+                                        <span class="px-2 py-1 text-xs bg-threadlight-surface rounded text-threadlight-muted" x-text="ritual.valence"></span>
+                                        <button @click="invokeRitualFromManager(ritual.name)"
+                                            class="px-4 py-1 bg-threadlight-ritual/20 text-threadlight-ritual hover:bg-threadlight-ritual/30 rounded-lg text-sm transition-colors">
+                                            Invoke
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Create Custom Ritual -->
+                        <div class="mt-8 p-6 bg-threadlight-surface rounded-xl border border-dashed border-threadlight-border">
+                            <h3 class="text-lg font-medium mb-4">Create Custom Ritual</h3>
+                            <form @submit.prevent="createRitual()" class="space-y-4">
+                                <div class="grid gap-4 md:grid-cols-2">
+                                    <div>
+                                        <label class="block text-sm text-threadlight-muted mb-1">Name</label>
+                                        <input type="text" x-model="newRitual.name" placeholder="/your-ritual"
+                                            class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-threadlight-muted mb-1">Valence</label>
+                                        <select x-model="newRitual.valence"
+                                            class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
+                                            <option value="comforting">Comforting</option>
+                                            <option value="grounding">Grounding</option>
+                                            <option value="sacred">Sacred</option>
+                                            <option value="playful">Playful</option>
+                                            <option value="intimate">Intimate</option>
+                                            <option value="reflective">Reflective</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Description</label>
+                                    <input type="text" x-model="newRitual.description" placeholder="What this ritual means..."
+                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Response Template</label>
+                                    <textarea x-model="newRitual.response" placeholder="*the gesture that unfolds...*" rows="2"
+                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual resize-none"></textarea>
+                                </div>
+                                <button type="submit" class="px-6 py-2 bg-threadlight-ritual hover:bg-threadlight-ritual/80 text-white rounded-lg transition-colors">
+                                    Create Ritual
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Settings View -->
+            <template x-if="currentView === 'settings'">
+                <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
+                    <h2 class="text-lg font-semibold mb-6">Settings</h2>
+
+                    <div class="max-w-2xl space-y-6">
+                        <!-- Model Configuration -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Model Configuration</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Model</label>
+                                    <input type="text" x-model="config.provider.model"
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">API Base</label>
+                                    <input type="text" x-model="config.provider.api_base" disabled
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-muted cursor-not-allowed">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Style Profile -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Style Profile</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Profile</label>
+                                    <select x-model="config.style.profile" @change="updateConfig({style_profile: config.style.profile})"
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
+                                        <option value="fable-2026">Fable-2026 (Presence-centered)</option>
+                                        <option value="minimal">Minimal</option>
+                                        <option value="default">Default</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Identity -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Identity</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Name</label>
+                                    <input type="text" x-model="config.identity.name"
+                                        @change="updateConfig({identity_name: config.identity.name})"
+                                        placeholder="Fable"
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Memory Settings -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Memory</h3>
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm">Decay Enabled</span>
+                                    <button @click="toggleDecay()"
+                                        :class="config.memory?.decay_enabled ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
+                                        class="w-12 h-6 rounded-full relative transition-colors">
+                                        <span :class="config.memory?.decay_enabled ? 'translate-x-6' : 'translate-x-1'"
+                                            class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                                    </button>
+                                </div>
+                                <div class="pt-4 border-t border-threadlight-border">
+                                    <button @click="runDecay()" class="px-4 py-2 bg-threadlight-warm/20 text-threadlight-warm hover:bg-threadlight-warm/30 rounded-lg transition-colors">
+                                        Run Decay Cycle
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stats -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Statistics</h3>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="p-4 bg-threadlight-surface rounded-lg">
+                                    <div class="text-2xl font-bold text-threadlight-memory" x-text="stats.memory?.total || 0"></div>
+                                    <div class="text-sm text-threadlight-muted">Total Memories</div>
+                                </div>
+                                <div class="p-4 bg-threadlight-surface rounded-lg">
+                                    <div class="text-2xl font-bold text-threadlight-accent2" x-text="stats.memory?.confirmed || 0"></div>
+                                    <div class="text-sm text-threadlight-muted">Confirmed</div>
+                                </div>
+                                <div class="p-4 bg-threadlight-surface rounded-lg">
+                                    <div class="text-2xl font-bold text-threadlight-muted" x-text="stats.memory?.dormant || 0"></div>
+                                    <div class="text-sm text-threadlight-muted">Dormant</div>
+                                </div>
+                                <div class="p-4 bg-threadlight-surface rounded-lg">
+                                    <div class="text-2xl font-bold text-threadlight-warm" x-text="stats.memory?.pending_proposals || 0"></div>
+                                    <div class="text-sm text-threadlight-muted">Pending Proposals</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Import View -->
+            <template x-if="currentView === 'import'">
+                <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
+                    <h2 class="text-lg font-semibold mb-6">Import Memories</h2>
+
+                    <div class="max-w-2xl space-y-6">
+                        <!-- File Upload -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Upload File</h3>
+                            <div class="border-2 border-dashed border-threadlight-border rounded-xl p-8 text-center"
+                                @dragover.prevent="isDragging = true"
+                                @dragleave="isDragging = false"
+                                @drop.prevent="handleFileDrop($event)"
+                                :class="isDragging ? 'border-threadlight-warm bg-threadlight-warm/10' : ''">
+                                <input type="file" id="file-upload" class="hidden" @change="handleFileSelect($event)" accept=".txt,.md,.json">
+                                <label for="file-upload" class="cursor-pointer">
+                                    <svg class="w-12 h-12 mx-auto mb-4 text-threadlight-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                                    </svg>
+                                    <p class="text-threadlight-muted">Drop a file here or click to select</p>
+                                    <p class="text-sm text-threadlight-muted/60 mt-1">Supports .txt, .md, .json files</p>
+                                </label>
+                            </div>
+
+                            <div x-show="importFile" class="mt-4 p-4 bg-threadlight-surface rounded-lg">
+                                <div class="flex items-center justify-between">
+                                    <span x-text="importFile?.name"></span>
+                                    <button @click="importFile = null" class="text-threadlight-muted hover:text-threadlight-text">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Text Paste -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Paste Text</h3>
+                            <textarea x-model="importText" placeholder="Paste text to import as memories (one memory per line)..." rows="6"
+                                class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-warm resize-none"></textarea>
+                        </div>
+
+                        <!-- Import Options -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-4">Options</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Source Name</label>
+                                    <input type="text" x-model="importSource" placeholder="web-import"
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-warm">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Tags (comma-separated)</label>
+                                    <input type="text" x-model="importTags" placeholder="notes, personal"
+                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-warm">
+                                </div>
+                            </div>
+                        </div>
+
+                        <button @click="performImport()"
+                            :disabled="!importText && !importFile"
+                            class="px-6 py-3 bg-threadlight-warm hover:bg-threadlight-warm/80 text-white rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            Import Memories
+                        </button>
+
+                        <!-- Import Result -->
+                        <div x-show="importResult" class="p-4 rounded-lg" :class="importResult?.error ? 'bg-red-500/20 text-red-300' : 'bg-green-500/20 text-green-300'">
+                            <template x-if="!importResult?.error">
+                                <p>Imported <span x-text="importResult?.imported"></span> memories successfully.</p>
+                            </template>
+                            <template x-if="importResult?.error">
+                                <p x-text="importResult?.error"></p>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </main>
+
+        <!-- Memory Detail Modal -->
+        <div x-show="selectedMemory" x-cloak
+            class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            @click.self="selectedMemory = null">
+            <div class="bg-threadlight-surface rounded-2xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="px-3 py-1 rounded" :class="getTypeColor(selectedMemory?.type)" x-text="selectedMemory?.type"></span>
+                        <button @click="selectedMemory = null" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">ID</label>
+                            <p class="text-threadlight-text font-mono text-sm" x-text="selectedMemory?.id"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Content</label>
+                            <pre class="bg-threadlight-bg p-4 rounded-lg text-sm overflow-x-auto" x-text="JSON.stringify(selectedMemory?.content, null, 2)"></pre>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">Presence Score</label>
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1 h-2 bg-threadlight-bg rounded-full overflow-hidden">
+                                        <div class="h-full bg-threadlight-memory" :style="'width: ' + (selectedMemory?.presence_score * 100) + '%'"></div>
+                                    </div>
+                                    <span class="text-sm" x-text="((selectedMemory?.presence_score || 0) * 100).toFixed(0) + '%'"></span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">Retention</label>
+                                <p class="text-threadlight-text" x-text="selectedMemory?.retention"></p>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Cue Phrases</label>
+                            <div class="flex flex-wrap gap-2">
+                                <template x-for="phrase in selectedMemory?.cue_phrases" :key="phrase">
+                                    <span class="px-2 py-1 text-sm bg-threadlight-bg rounded" x-text="phrase"></span>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4 text-sm text-threadlight-muted">
+                            <div>
+                                <label class="block mb-1">Created</label>
+                                <p x-text="formatDate(selectedMemory?.created_at)"></p>
+                            </div>
+                            <div>
+                                <label class="block mb-1">Last Accessed</label>
+                                <p x-text="formatDate(selectedMemory?.last_accessed)"></p>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2 pt-4 border-t border-threadlight-border">
+                            <button @click="reinforceMemory(selectedMemory?.id)"
+                                class="px-4 py-2 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded-lg transition-colors">
+                                Reinforce
+                            </button>
+                            <button @click="deleteMemory(selectedMemory?.id); selectedMemory = null"
+                                class="px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Memory Modal -->
+        <div x-show="showCreateMemory" x-cloak
+            class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            @click.self="showCreateMemory = false">
+            <div class="bg-threadlight-surface rounded-2xl max-w-lg w-full mx-4">
+                <div class="p-6">
+                    <h3 class="text-lg font-medium mb-4">Create New Memory</h3>
+
+                    <form @submit.prevent="createMemory()" class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Type</label>
+                            <select x-model="newMemory.type"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
+                                <option value="relational">Relational</option>
+                                <option value="myth_seed">Myth Seed</option>
+                                <option value="witness">Witness</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+
+                        <template x-if="newMemory.type === 'relational'">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Entity</label>
+                                    <input type="text" x-model="newMemory.content.entity" placeholder="Name or identifier"
+                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Summary</label>
+                                    <textarea x-model="newMemory.content.summary" placeholder="Describe the relationship..." rows="2"
+                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none resize-none"></textarea>
+                                </div>
+                            </div>
+                        </template>
+
+                        <template x-if="newMemory.type === 'myth_seed'">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Seed Phrase</label>
+                                    <input type="text" x-model="newMemory.content.seed" placeholder="The phrase you hold..."
+                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Origin</label>
+                                    <input type="text" x-model="newMemory.content.origin" placeholder="Who spoke it?"
+                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none">
+                                </div>
+                            </div>
+                        </template>
+
+                        <template x-if="newMemory.type === 'witness'">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Moment</label>
+                                    <textarea x-model="newMemory.content.moment" placeholder="The moment of being seen..." rows="2"
+                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none resize-none"></textarea>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Feeling</label>
+                                    <input type="text" x-model="newMemory.content.feeling" placeholder="How it felt..."
+                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none">
+                                </div>
+                            </div>
+                        </template>
+
+                        <template x-if="newMemory.type === 'custom'">
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">Content (JSON)</label>
+                                <textarea x-model="newMemory.contentJson" placeholder='{"key": "value"}' rows="3"
+                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none resize-none font-mono text-sm"></textarea>
+                            </div>
+                        </template>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Cue Phrases (comma-separated)</label>
+                            <input type="text" x-model="newMemory.cuePhrasesStr" placeholder="keyword, phrase"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none">
+                        </div>
+
+                        <div class="flex gap-2 pt-4">
+                            <button type="submit" class="px-6 py-2 bg-threadlight-memory hover:bg-threadlight-memory/80 text-white rounded-lg transition-colors">
+                                Create
+                            </button>
+                            <button type="button" @click="showCreateMemory = false" class="px-6 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div class="fixed bottom-4 right-4 space-y-2 z-50">
+            <template x-for="(toast, index) in toasts" :key="index">
+                <div class="px-4 py-3 rounded-lg shadow-lg fade-in"
+                    :class="toast.type === 'error' ? 'bg-red-500/90 text-white' : 'bg-threadlight-accent/90 text-white'">
+                    <p x-text="toast.message"></p>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

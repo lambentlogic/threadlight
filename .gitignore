@@ -1,0 +1,133 @@
+# Threadlight .gitignore
+
+# === Environment and secrets ===
+.env
+.env.*
+*.env
+secrets/
+.secrets/
+credentials*.json
+*.pem
+*.key
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === Virtual environments ===
+.venv/
+venv/
+ENV/
+env/
+.env/
+.virtualenv/
+virtualenv/
+pip-wheel-metadata/
+
+# === Testing ===
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.ruff_cache/
+
+# === IDEs and editors ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# === OS files ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# === Logs ===
+*.log
+logs/
+log/
+
+# === Database files ===
+*.db
+*.sqlite
+*.sqlite3
+threadlight.db
+memories/
+
+# === Build artifacts ===
+*.manifest
+*.spec
+
+# === Jupyter ===
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# === mypy ===
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# === Local development files ===
+local/
+scratch/
+tmp/
+temp/
+*.tmp
+
+# === User data exports (should not be committed) ===
+*.zip
+conversations.json
+projects.json
+users.json
+chatgpt-conversations.zip
+claude-conversations.zip
+
+# === Dream/working files (personal, not for release) ===
+fable-memory.txt
+*_memory_scaffold.txt
+*_soft_memory_preferences.txt
+*_technical_scaffolds.txt
+*_training_loop_concept.txt
+*_seed_dream_structure.txt
+*_v0_1_primer.txt
+dreams-continued/
+
+# === Development scripts ===
+check_*.py
+.claude/
