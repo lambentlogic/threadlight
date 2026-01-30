@@ -227,6 +227,12 @@ class MemoryScopeUpdateRequest(BaseModel):
     model_id: Optional[str] = None  # Deprecated: use profile_id instead
 
 
+class EmbeddingsConfigRequest(BaseModel):
+    enabled: bool = True
+    provider: str = "local"
+    model: str = "all-MiniLM-L6-v2"
+
+
 # ============================================================================
 # Global State
 # ============================================================================
@@ -1798,11 +1804,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         except Exception as e:
             logger.error(f"Failed to get embedding stats: {e}")
             raise HTTPException(status_code=500, detail=str(e))
-
-    class EmbeddingsConfigRequest(BaseModel):
-        enabled: bool = True
-        provider: str = "local"
-        model: str = "all-MiniLM-L6-v2"
 
     @app.post("/api/embeddings/enable")
     async def enable_embeddings(request: EmbeddingsConfigRequest):
