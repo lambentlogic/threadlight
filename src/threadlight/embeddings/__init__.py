@@ -26,6 +26,68 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Recommended embedding models (2025-2026)
+RECOMMENDED_MODELS = {
+    "embedding-gemma-300m": {
+        "id": "google/embedding-gemma-300m",
+        "dimensions": 768,
+        "parameters": "308M",
+        "size_mb": 250,
+        "description": "Best-in-class <500M params, excellent for classification and clustering",
+        "year": 2025,
+    },
+    "e5-small-v2": {
+        "id": "intfloat/e5-small-v2",
+        "dimensions": 384,
+        "parameters": "33M",
+        "size_mb": 100,
+        "description": "Fast and efficient, modern replacement for MiniLM",
+        "year": 2024,
+    },
+    "nomic-embed-v1.5": {
+        "id": "nomic-ai/nomic-embed-text-v1.5",
+        "dimensions": 768,
+        "parameters": "137M",
+        "size_mb": 400,
+        "description": "Top long-context performance, fully open source",
+        "year": 2025,
+    },
+    "bge-small-en-v1.5": {
+        "id": "BAAI/bge-small-en-v1.5",
+        "dimensions": 384,
+        "parameters": "33M",
+        "size_mb": 130,
+        "description": "BAAI quality in small package",
+        "year": 2024,
+    },
+    "e5-base-v2": {
+        "id": "intfloat/e5-base-v2",
+        "dimensions": 768,
+        "parameters": "110M",
+        "size_mb": 300,
+        "description": "Balanced quality and speed",
+        "year": 2024,
+    },
+    "all-MiniLM-L6-v2": {
+        "id": "all-MiniLM-L6-v2",
+        "dimensions": 384,
+        "parameters": "22M",
+        "size_mb": 43,
+        "description": "Legacy default (2020) - consider upgrading to a modern model",
+        "year": 2020,
+    },
+}
+
+
+def get_recommended_model(model_id: str) -> dict | None:
+    """Get info about a recommended model."""
+    return RECOMMENDED_MODELS.get(model_id)
+
+
+def list_recommended_models() -> list[dict]:
+    """List all recommended models sorted by quality."""
+    return list(RECOMMENDED_MODELS.values())
+
 
 class EmbeddingProvider(ABC):
     """
@@ -86,14 +148,14 @@ class LocalEmbeddings(EmbeddingProvider):
     """
     Local embedding provider using sentence-transformers.
 
-    Default model: all-MiniLM-L6-v2 (small, fast, 384 dimensions)
+    Default model: intfloat/e5-small-v2 (fast, modern, 384 dimensions)
 
     Requires: pip install sentence-transformers
     """
 
     def __init__(
         self,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str = "intfloat/e5-small-v2",
         device: Optional[str] = None,
         **kwargs: Any
     ):
@@ -228,7 +290,7 @@ class NousEmbeddings(EmbeddingProvider):
 
     def __init__(
         self,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str = "intfloat/e5-small-v2",
         api_key: Optional[str] = None,
         api_base: str = "https://inference-api.nousresearch.com/v1",
         **kwargs: Any
@@ -330,4 +392,7 @@ __all__ = [
     "create_embedding_provider",
     "register_embedding_provider",
     "cosine_similarity",
+    "RECOMMENDED_MODELS",
+    "get_recommended_model",
+    "list_recommended_models",
 ]

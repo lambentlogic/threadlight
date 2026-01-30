@@ -48,7 +48,7 @@ function threadlightApp() {
         // Embeddings state
         embeddingsEnabled: false,
         embeddingsProvider: 'local',
-        embeddingsModel: 'all-MiniLM-L6-v2',
+        embeddingsModel: 'intfloat/e5-small-v2',
         embeddingStats: {},
         semanticSearch: false,
         generatingEmbeddings: false,
@@ -988,7 +988,7 @@ function threadlightApp() {
                 if (data.enabled) {
                     this.embeddingStats = data;
                     this.embeddingsProvider = data.provider || 'local';
-                    this.embeddingsModel = data.model || 'all-MiniLM-L6-v2';
+                    this.embeddingsModel = data.model || 'intfloat/e5-small-v2';
                 }
             } catch (error) {
                 console.error('Failed to load embedding stats:', error);
@@ -1007,7 +1007,7 @@ function threadlightApp() {
                 const payload = {
                     enabled: newState,
                     provider: this.embeddingsProvider || 'local',
-                    model: this.embeddingsModel || 'all-MiniLM-L6-v2',
+                    model: this.embeddingsModel || 'intfloat/e5-small-v2',
                 };
                 console.log('Embeddings toggle payload:', payload);
 
@@ -1071,7 +1071,7 @@ function threadlightApp() {
                 const payload = {
                     enabled: true,
                     provider: this.embeddingsProvider || 'local',
-                    model: this.embeddingsModel || 'all-MiniLM-L6-v2',
+                    model: this.embeddingsModel || 'intfloat/e5-small-v2',
                 };
                 console.log('Update embeddings config payload:', payload);
 
@@ -1409,7 +1409,7 @@ function threadlightApp() {
                 if (this.config.memory?.embeddings) {
                     this.embeddingsEnabled = this.config.memory.embeddings.enabled || false;
                     this.embeddingsProvider = this.config.memory.embeddings.provider || 'local';
-                    this.embeddingsModel = this.config.memory.embeddings.model || 'all-MiniLM-L6-v2';
+                    this.embeddingsModel = this.config.memory.embeddings.model || 'intfloat/e5-small-v2';
                 }
 
                 // Update per-profile isolation state from config

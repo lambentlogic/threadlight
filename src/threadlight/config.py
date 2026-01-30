@@ -77,11 +77,18 @@ class ConversationConfig:
 
 @dataclass
 class EmbeddingsConfig:
-    """Configuration for semantic search embeddings."""
+    """Configuration for semantic search embeddings.
+
+    Recommended embedding models (2024-2025):
+    - intfloat/e5-small-v2 (default): Fast, modern, 100MB
+    - google/embedding-gemma-300m: Best quality <500M, 250MB
+    - nomic-ai/nomic-embed-text-v1.5: Best long-context, 400MB
+    - all-MiniLM-L6-v2: Legacy (2020), consider upgrading
+    """
 
     enabled: bool = False  # Whether embeddings are enabled
     provider: str = "local"  # "local", "openai", or "nous"
-    model: str = "all-MiniLM-L6-v2"  # Model name for the provider
+    model: str = "intfloat/e5-small-v2"  # Modern default (2024), upgrade from all-MiniLM-L6-v2
     auto_generate: bool = True  # Generate embeddings automatically on save
     batch_size: int = 100  # Batch size for bulk operations
     similarity_threshold: float = 0.5  # Minimum similarity for search results

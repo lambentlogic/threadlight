@@ -1100,8 +1100,8 @@ def main() -> int:
     )
     embeddings_enable_parser.add_argument(
         "--model",
-        default="all-MiniLM-L6-v2",
-        help="Model name (default: all-MiniLM-L6-v2)"
+        default="intfloat/e5-small-v2",
+        help="Model name (default: intfloat/e5-small-v2)"
     )
 
     embeddings_sub.add_parser("disable", help="Disable embeddings")
@@ -1713,7 +1713,7 @@ def cmd_embeddings(args: argparse.Namespace) -> int:
 
     elif args.embeddings_command == "enable":
         provider = getattr(args, 'provider', 'local')
-        model = getattr(args, 'model', 'all-MiniLM-L6-v2')
+        model = getattr(args, 'model', 'intfloat/e5-small-v2')
 
         tl.config.memory.embeddings.enabled = True
         tl.config.memory.embeddings.provider = provider

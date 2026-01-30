@@ -230,7 +230,7 @@ class MemoryScopeUpdateRequest(BaseModel):
 class EmbeddingsConfigRequest(BaseModel):
     enabled: bool = True
     provider: str = "local"
-    model: str = "all-MiniLM-L6-v2"
+    model: str = "intfloat/e5-small-v2"
 
 
 class GenerateEmbeddingsRequest(BaseModel):
