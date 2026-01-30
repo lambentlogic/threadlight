@@ -217,6 +217,16 @@ class ProfileImportRequest(BaseModel):
     data: dict[str, Any]
 
 
+class MemoryIsolationConfigRequest(BaseModel):
+    enabled: bool = False
+    default_shared: Optional[bool] = None
+
+
+class MemoryScopeUpdateRequest(BaseModel):
+    profile_id: Optional[str] = None  # None means share (remove scope)
+    model_id: Optional[str] = None  # Deprecated: use profile_id instead
+
+
 # ============================================================================
 # Global State
 # ============================================================================
@@ -2290,14 +2300,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     # ========================================================================
     # Per-Profile Memory Isolation Endpoints
     # ========================================================================
-
-    class MemoryIsolationConfigRequest(BaseModel):
-        enabled: bool = False
-        default_shared: Optional[bool] = None
-
-    class MemoryScopeUpdateRequest(BaseModel):
-        profile_id: Optional[str] = None  # None means share (remove scope)
-        model_id: Optional[str] = None  # Deprecated: use profile_id instead
 
     @app.get("/api/memory/isolation")
     async def get_memory_isolation_config():
