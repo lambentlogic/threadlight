@@ -52,6 +52,14 @@ function threadlightApp() {
         embeddingStats: {},
         semanticSearch: false,
         generatingEmbeddings: false,
+        embeddingProgress: {
+            totalItems: 0,
+            processed: 0,
+            percentComplete: 0,
+            capsulesUpdated: 0,
+            messagesUpdated: 0,
+            statusText: '',
+        },
 
         // Ritual state
         rituals: [],
@@ -1081,9 +1089,18 @@ function threadlightApp() {
 
         async generateEmbeddings() {
             this.generatingEmbeddings = true;
+            this.embeddingProgress = {
+                totalItems: 0,
+                processed: 0,
+                percentComplete: 0,
+                capsulesUpdated: 0,
+                messagesUpdated: 0,
+                statusText: 'Starting...',
+            };
 
             try {
-                const response = await fetch('/api/embeddings/generate', {
+                // Use SSE for real-time progress updates
+                const response = await fetch('/api/embeddings/generate/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1092,18 +1109,81 @@ function threadlightApp() {
                     }),
                 });
 
-                if (!response.ok) throw new Error('Embedding generation failed');
+                if (!response.ok) {
+                    throw new Error('Embedding generation failed');
+                }
 
-                const data = await response.json();
-                this.showToast(
-                    `Generated embeddings: ${data.capsules_updated} memories, ${data.messages_updated} messages`
-                );
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Process complete SSE events
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                this.handleEmbeddingProgress(data);
+                            } catch (e) {
+                                console.warn('Failed to parse SSE data:', line);
+                            }
+                        }
+                    }
+                }
+
+                // Process any remaining data in buffer
+                if (buffer.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(buffer.slice(6));
+                        this.handleEmbeddingProgress(data);
+                    } catch (e) {
+                        // Ignore incomplete data
+                    }
+                }
 
                 await this.loadEmbeddingStats();
             } catch (error) {
                 this.showToast('Failed to generate embeddings: ' + error.message, 'error');
+                this.embeddingProgress.statusText = 'Error: ' + error.message;
             } finally {
                 this.generatingEmbeddings = false;
+            }
+        },
+
+        handleEmbeddingProgress(data) {
+            if (data.type === 'progress') {
+                const processed = data.capsules_updated + data.messages_updated;
+                this.embeddingProgress = {
+                    totalItems: data.total_items,
+                    processed: processed,
+                    percentComplete: data.percent_complete,
+                    capsulesUpdated: data.capsules_updated,
+                    messagesUpdated: data.messages_updated,
+                    statusText: `Processing: ${processed}/${data.total_items} items (${data.percent_complete}%)`,
+                };
+            } else if (data.type === 'complete') {
+                this.embeddingProgress = {
+                    totalItems: data.total_items,
+                    processed: data.capsules_updated + data.messages_updated,
+                    percentComplete: 100,
+                    capsulesUpdated: data.capsules_updated,
+                    messagesUpdated: data.messages_updated,
+                    statusText: 'Complete!',
+                };
+                this.showToast(
+                    `Generated embeddings: ${data.capsules_updated} memories, ${data.messages_updated} messages in ${data.duration_seconds.toFixed(1)}s`
+                );
+            } else if (data.type === 'error') {
+                this.embeddingProgress.statusText = 'Error: ' + data.error;
+                this.showToast('Embedding generation error: ' + data.error, 'error');
             }
         },
 

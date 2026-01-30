@@ -1812,6 +1812,157 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             logger.error(f"Embedding generation failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.post("/api/embeddings/generate/stream")
+    async def generate_embeddings_stream(request: GenerateEmbeddingsRequest):
+        """
+        Generate embeddings with real-time progress updates via Server-Sent Events.
+
+        Streams progress updates as JSON events:
+        - type: "progress" - Periodic progress update with current stats
+        - type: "complete" - Final stats when generation is complete
+        - type: "error" - Error information if generation fails
+        """
+        tl = get_threadlight()
+
+        if not tl.config.memory.embeddings.enabled:
+            raise HTTPException(
+                status_code=400,
+                detail="Embeddings not enabled. Enable embeddings in config first."
+            )
+
+        # Get total counts for progress calculation
+        manager = tl._get_embedding_manager()
+        if manager is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Embedding manager not initialized."
+            )
+
+        # Count items to process
+        total_capsules = len(manager.get_capsules_needing_embeddings()) if request.include_memories else 0
+        total_messages = len(manager.get_messages_needing_embeddings()) if request.include_conversations else 0
+        total_items = total_capsules + total_messages
+
+        # Shared state for progress tracking
+        progress_state = {
+            "last_stats": None,
+            "total_capsules": total_capsules,
+            "total_messages": total_messages,
+            "total_items": total_items,
+        }
+
+        async def event_generator():
+            import queue
+            import threading
+
+            progress_queue: queue.Queue = queue.Queue()
+            generation_complete = threading.Event()
+            generation_error: list = []
+
+            def progress_callback(stats):
+                """Called by the embedding manager with progress updates."""
+                progress_queue.put(stats)
+
+            def run_generation():
+                """Run the embedding generation in a background thread."""
+                try:
+                    final_stats = tl.generate_embeddings(
+                        include_memories=request.include_memories,
+                        include_messages=request.include_conversations,
+                        progress_callback=progress_callback,
+                    )
+                    progress_queue.put(("complete", final_stats))
+                except Exception as e:
+                    generation_error.append(str(e))
+                    progress_queue.put(("error", str(e)))
+                finally:
+                    generation_complete.set()
+
+            # Start generation in background thread
+            thread = threading.Thread(target=run_generation)
+            thread.start()
+
+            # Send initial progress event
+            initial_data = {
+                "type": "progress",
+                "total_capsules": total_capsules,
+                "total_messages": total_messages,
+                "total_items": total_items,
+                "capsules_processed": 0,
+                "capsules_updated": 0,
+                "messages_processed": 0,
+                "messages_updated": 0,
+                "percent_complete": 0,
+            }
+            yield f"data: {json.dumps(initial_data)}\n\n"
+
+            # Stream progress updates
+            while not generation_complete.is_set() or not progress_queue.empty():
+                try:
+                    item = progress_queue.get(timeout=0.1)
+
+                    if isinstance(item, tuple):
+                        event_type, data = item
+                        if event_type == "complete":
+                            # Final completion event
+                            stats = data
+                            completion_data = {
+                                "type": "complete",
+                                "total_capsules": total_capsules,
+                                "total_messages": total_messages,
+                                "total_items": total_items,
+                                "capsules_processed": stats.capsules_processed,
+                                "capsules_updated": stats.capsules_updated,
+                                "messages_processed": stats.messages_processed,
+                                "messages_updated": stats.messages_updated,
+                                "errors": stats.errors,
+                                "duration_seconds": stats.duration_seconds,
+                                "percent_complete": 100,
+                            }
+                            yield f"data: {json.dumps(completion_data)}\n\n"
+                        elif event_type == "error":
+                            error_data = {
+                                "type": "error",
+                                "error": data,
+                            }
+                            yield f"data: {json.dumps(error_data)}\n\n"
+                    else:
+                        # Progress update (EmbeddingStats object)
+                        stats = item
+                        processed = stats.capsules_updated + stats.messages_updated
+                        percent = (processed / total_items * 100) if total_items > 0 else 0
+
+                        progress_data = {
+                            "type": "progress",
+                            "total_capsules": total_capsules,
+                            "total_messages": total_messages,
+                            "total_items": total_items,
+                            "capsules_processed": stats.capsules_processed,
+                            "capsules_updated": stats.capsules_updated,
+                            "messages_processed": stats.messages_processed,
+                            "messages_updated": stats.messages_updated,
+                            "errors": stats.errors,
+                            "duration_seconds": stats.duration_seconds,
+                            "percent_complete": round(percent, 1),
+                        }
+                        yield f"data: {json.dumps(progress_data)}\n\n"
+
+                except queue.Empty:
+                    # No updates available, continue waiting
+                    await asyncio.sleep(0.1)
+
+            thread.join()
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable buffering in nginx
+            }
+        )
+
     @app.get("/api/embeddings/stats")
     async def get_embedding_stats():
         """Get statistics about embedding coverage."""

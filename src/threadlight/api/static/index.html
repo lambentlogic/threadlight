@@ -1125,7 +1125,7 @@
                                     </div>
                                 </div>
 
-                                <!-- Generate Embeddings Button -->
+                                <!-- Generate Embeddings Button and Progress -->
                                 <div x-show="embeddingsEnabled" class="pt-3 border-t border-threadlight-border/50">
                                     <button @click="generateEmbeddings()"
                                         :disabled="generatingEmbeddings"
@@ -1133,7 +1133,42 @@
                                         <span x-show="!generatingEmbeddings">Generate Missing Embeddings</span>
                                         <span x-show="generatingEmbeddings">Generating...</span>
                                     </button>
-                                    <p class="text-xs text-threadlight-muted mt-2">Generate embeddings for memories and messages that don't have them yet.</p>
+
+                                    <!-- Progress Bar (shown during generation) -->
+                                    <div x-show="generatingEmbeddings" x-transition class="mt-4 space-y-2">
+                                        <!-- Progress Bar -->
+                                        <div class="relative">
+                                            <div class="h-3 bg-threadlight-surface rounded-full overflow-hidden">
+                                                <div class="h-full bg-gradient-to-r from-threadlight-memory to-threadlight-accent2 transition-all duration-300 ease-out"
+                                                    :style="'width: ' + embeddingProgress.percentComplete + '%'"></div>
+                                            </div>
+                                            <!-- Percentage overlay -->
+                                            <div class="absolute inset-0 flex items-center justify-center">
+                                                <span class="text-xs font-medium text-white drop-shadow-sm"
+                                                    x-text="embeddingProgress.percentComplete + '%'"></span>
+                                            </div>
+                                        </div>
+
+                                        <!-- Status Text -->
+                                        <div class="flex justify-between text-xs">
+                                            <span class="text-threadlight-muted" x-text="embeddingProgress.statusText"></span>
+                                            <span class="text-threadlight-memory" x-text="embeddingProgress.processed + '/' + embeddingProgress.totalItems + ' items'"></span>
+                                        </div>
+
+                                        <!-- Detailed Progress -->
+                                        <div class="grid grid-cols-2 gap-2 text-xs text-threadlight-muted">
+                                            <div class="flex items-center gap-2">
+                                                <span class="w-2 h-2 rounded-full bg-threadlight-memory"></span>
+                                                <span>Memories: <span class="text-threadlight-text" x-text="embeddingProgress.capsulesUpdated"></span></span>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="w-2 h-2 rounded-full bg-threadlight-accent2"></span>
+                                                <span>Messages: <span class="text-threadlight-text" x-text="embeddingProgress.messagesUpdated"></span></span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <p x-show="!generatingEmbeddings" class="text-xs text-threadlight-muted mt-2">Generate embeddings for memories and messages that don't have them yet.</p>
                                 </div>
                             </div>
                         </div>

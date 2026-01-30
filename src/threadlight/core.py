@@ -18,7 +18,10 @@ Example:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from threadlight.embeddings.manager import EmbeddingStats
 import logging
 
 from threadlight.config import ThreadlightConfig, ModelConfig
@@ -1564,6 +1567,7 @@ class Threadlight:
         self,
         include_memories: bool = True,
         include_messages: bool = True,
+        progress_callback: Optional[Callable[['EmbeddingStats'], None]] = None,
     ) -> Any:
         """
         Generate embeddings for all content that doesn't have them yet.
@@ -1573,6 +1577,8 @@ class Threadlight:
         Args:
             include_memories: Process memory capsules
             include_messages: Process conversation messages
+            progress_callback: Optional callback function called with EmbeddingStats
+                              after each batch is processed. Useful for progress tracking.
 
         Returns:
             EmbeddingStats object with statistics about the operation
@@ -1587,6 +1593,7 @@ class Threadlight:
             stats = manager.batch_generate_embeddings(
                 include_capsules=include_memories,
                 include_messages=include_messages,
+                progress_callback=progress_callback,
             )
             return stats
         except Exception as e:
