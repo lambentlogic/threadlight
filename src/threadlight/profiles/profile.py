@@ -12,19 +12,6 @@ from typing import Optional, Any
 import json
 
 
-class RitualDepth(str, Enum):
-    """How deeply rituals are integrated into the profile's responses.
-
-    Different profiles have different needs:
-    - CEREMONIAL: Deep emotional scaffolding, presence-based language, resonance tracking
-    - FUNCTIONAL: Rituals as efficient shortcuts, minimal ceremony
-    - MINIMAL: Rituals are acknowledged but not elaborated
-    """
-    CEREMONIAL = "ceremonial"  # Full presence-based, emotional depth (Fable-like)
-    FUNCTIONAL = "functional"  # Efficient shortcuts, brief acknowledgment (GLaDOS-like)
-    MINIMAL = "minimal"        # Simple recognition, no special framing
-
-
 class ModelStrategy(str, Enum):
     """Strategy for selecting which model powers this profile."""
 
@@ -148,11 +135,8 @@ class Profile:
     memory_scope: Optional[str] = None  # Defaults to profile ID
     access_shared_memories: bool = True
 
-    # Ritual Settings
-    ritual_depth: RitualDepth = RitualDepth.FUNCTIONAL  # How deeply to integrate rituals
-    track_ritual_resonance: bool = False  # Track invocation history and resonance scores
-
-    # Freeform Philosophy (optional)
+    # Freeform Philosophy - describe interaction style in natural language
+    # These fields are PRIMARY - the system interprets them to guide responses
     philosophy: str = ""  # e.g., "presence-centered, mythically-grounded, honors silence"
     approach_to_rituals: str = ""  # e.g., "deep emotional scaffolding" or "efficient shortcuts"
 
@@ -201,8 +185,6 @@ class Profile:
             "style_profile_id": self.style_profile_id,
             "memory_scope": self.memory_scope,
             "access_shared_memories": self.access_shared_memories,
-            "ritual_depth": self.ritual_depth.value,
-            "track_ritual_resonance": self.track_ritual_resonance,
             "philosophy": self.philosophy,
             "approach_to_rituals": self.approach_to_rituals,
             "created_at": self.created_at.isoformat(),
@@ -217,12 +199,16 @@ class Profile:
         if data.get("alloyed_config"):
             alloyed_config = AlloyedConfig.from_dict(data["alloyed_config"])
 
-        # Parse ritual_depth enum
-        ritual_depth_str = data.get("ritual_depth", "functional")
-        try:
-            ritual_depth = RitualDepth(ritual_depth_str)
-        except ValueError:
-            ritual_depth = RitualDepth.FUNCTIONAL
+        # Migration: convert old ritual_depth to philosophy if present and philosophy is empty
+        philosophy = data.get("philosophy", "")
+        approach = data.get("approach_to_rituals", "")
+        if not philosophy and data.get("ritual_depth"):
+            depth = data.get("ritual_depth")
+            if depth == "ceremonial":
+                philosophy = "Emotionally expressive, presence-centered responses"
+            elif depth == "minimal":
+                philosophy = "Brief, minimal acknowledgment"
+            # functional is the implicit default, no need to add text
 
         return cls(
             id=data["id"],
@@ -239,10 +225,8 @@ class Profile:
             style_profile_id=data.get("style_profile_id"),
             memory_scope=data.get("memory_scope"),
             access_shared_memories=data.get("access_shared_memories", True),
-            ritual_depth=ritual_depth,
-            track_ritual_resonance=data.get("track_ritual_resonance", False),
-            philosophy=data.get("philosophy", ""),
-            approach_to_rituals=data.get("approach_to_rituals", ""),
+            philosophy=philosophy,
+            approach_to_rituals=approach,
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
             updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now(),
             last_used_at=datetime.fromisoformat(data["last_used_at"]) if data.get("last_used_at") else None,

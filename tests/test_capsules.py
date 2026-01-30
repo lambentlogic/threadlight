@@ -11,9 +11,6 @@ from threadlight.capsules.ritual import (
     create_ritual,
     RitualResonance,
     RitualValence,
-    RITUAL_DEPTH_CEREMONIAL,
-    RITUAL_DEPTH_FUNCTIONAL,
-    RITUAL_DEPTH_MINIMAL,
 )
 from threadlight.capsules.factory import create_capsule, capsule_from_simple
 
@@ -99,69 +96,63 @@ class TestRitualHook:
         assert ritual.matches("I want to /snuggle")
         assert not ritual.matches("hello")
 
-    def test_to_context_ritual_mode_functional(self):
-        """Test functional ritual depth (default) - efficient, brief."""
+    def test_to_context_ritual_mode_no_philosophy(self):
+        """Test ritual context with no philosophy - includes all details."""
         ritual = create_ritual(
             name="/brush",
             response_style="gentle warmth",
             valence="intimate",
         )
-        context = ritual.to_context(ContextMode.RITUAL, ritual_depth=RITUAL_DEPTH_FUNCTIONAL)
+        context = ritual.to_context(ContextMode.RITUAL)
 
-        # Functional mode uses bracketed, pipe-separated format
-        assert "[Ritual: /brush]" in context
+        # Should include command and details
+        assert "[Command: /brush]" in context
         assert "Valence: intimate" in context
         assert "Style: gentle warmth" in context
-        # Should NOT have ceremonial language
-        assert "honored" not in context.lower()
-        assert "presence" not in context.lower()
 
-    def test_to_context_ritual_mode_ceremonial(self):
-        """Test ceremonial ritual depth - full presence-based language."""
+    def test_to_context_ritual_mode_with_philosophy(self):
+        """Test ritual context includes profile philosophy for LLM interpretation."""
         ritual = create_ritual(
             name="/brush",
             response_style="gentle warmth",
             valence="intimate",
             description="A gesture of care and closeness",
         )
-        context = ritual.to_context(ContextMode.RITUAL, ritual_depth=RITUAL_DEPTH_CEREMONIAL)
+        context = ritual.to_context(
+            ContextMode.RITUAL,
+            profile_philosophy="Presence-centered, honors silence"
+        )
 
-        # Ceremonial mode uses presence-based language
-        assert "honored" in context.lower()
-        assert "presence" in context.lower()
+        # Should include the philosophy for LLM to interpret
+        assert "Presence-centered" in context or "approach" in context.lower()
         assert "/brush" in context
         assert "intimate" in context
-        # Should include description
-        assert "care" in context.lower() or "meaning" in context.lower()
 
-    def test_to_context_ritual_mode_minimal(self):
-        """Test minimal ritual depth - just acknowledgment."""
+    def test_to_context_ritual_mode_includes_description(self):
+        """Test that ritual context includes description."""
         ritual = create_ritual(
             name="/brush",
             response_style="gentle warmth",
             valence="intimate",
+            description="A gesture of care and closeness",
         )
-        context = ritual.to_context(ContextMode.RITUAL, ritual_depth=RITUAL_DEPTH_MINIMAL)
-
-        # Minimal mode is very brief
-        assert "/brush" in context
-        assert "active" in context.lower()
-        # Should NOT have detailed info
-        assert "gentle warmth" not in context
-        assert "intimate" not in context
-
-    def test_to_context_backward_compatible(self):
-        """Test that to_context works without ritual_depth (backward compatible)."""
-        ritual = create_ritual(
-            name="/brush",
-            response_style="gentle warmth",
-            valence="intimate",
-        )
-        # Call without ritual_depth parameter
         context = ritual.to_context(ContextMode.RITUAL)
 
-        # Should default to functional
-        assert "[Ritual: /brush]" in context
+        # Should include the description
+        assert "care" in context.lower() or "Meaning:" in context
+
+    def test_to_context_backward_compatible(self):
+        """Test that to_context works without profile_philosophy (backward compatible)."""
+        ritual = create_ritual(
+            name="/brush",
+            response_style="gentle warmth",
+            valence="intimate",
+        )
+        # Call without profile_philosophy parameter
+        context = ritual.to_context(ContextMode.RITUAL)
+
+        # Should still include basic command info
+        assert "/brush" in context
 
 
 class TestRitualResonance:
@@ -304,8 +295,8 @@ class TestRitualResonanceIntegration:
 
         assert ritual.get_resonance_score() > 0.0
 
-    def test_ceremonial_context_includes_resonance(self):
-        """Test that ceremonial context includes resonance info."""
+    def test_context_includes_resonance(self):
+        """Test that ritual context includes resonance info when tracked."""
         ritual = create_ritual(
             name="/snuggle",
             response_style="warmth-coil",
@@ -317,7 +308,7 @@ class TestRitualResonanceIntegration:
         for _ in range(5):
             ritual.record_invocation(meaningful=True)
 
-        context = ritual.to_context(ContextMode.RITUAL, ritual_depth=RITUAL_DEPTH_CEREMONIAL)
+        context = ritual.to_context(ContextMode.RITUAL)
 
         # Should mention the resonance depth
         assert "feels" in context.lower() or "between" in context.lower()

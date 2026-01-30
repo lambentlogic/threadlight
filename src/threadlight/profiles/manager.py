@@ -8,7 +8,7 @@ from typing import Optional
 from datetime import datetime
 import uuid
 
-from threadlight.profiles.profile import Profile, ModelStrategy, AlloyedConfig, RitualDepth
+from threadlight.profiles.profile import Profile, ModelStrategy, AlloyedConfig
 from threadlight.storage.base import StorageBackend
 
 
@@ -53,7 +53,6 @@ class ProfileManager:
         tags: Optional[list[str]] = None,
         philosophy: str = "",
         approach_to_rituals: str = "",
-        ritual_depth: str = "functional",
     ) -> Profile:
         """
         Create a new profile.
@@ -79,18 +78,11 @@ class ProfileManager:
             tags: Optional tags for categorization
             philosophy: Freeform description of the profile's philosophy/approach
             approach_to_rituals: Freeform description of how rituals are handled
-            ritual_depth: How deeply to integrate rituals (ceremonial, functional, minimal)
 
         Returns:
             The created Profile
         """
         from threadlight.profiles.profile import RoutingRule
-
-        # Parse ritual_depth string to enum
-        try:
-            ritual_depth_enum = RitualDepth(ritual_depth)
-        except ValueError:
-            ritual_depth_enum = RitualDepth.FUNCTIONAL
 
         if profile_id is None:
             profile_id = str(uuid.uuid4())
@@ -131,7 +123,6 @@ class ProfileManager:
             access_shared_memories=access_shared_memories,
             philosophy=philosophy,
             approach_to_rituals=approach_to_rituals,
-            ritual_depth=ritual_depth_enum,
         )
 
         # Save to storage

@@ -169,8 +169,7 @@ function threadlightApp() {
             tags_str: '',  // For comma-separated input
             philosophy: '',  // Freeform philosophy description
             approach_to_rituals: '',  // Freeform approach to rituals
-            ritual_depth: 'functional',  // How deeply to integrate rituals
-        },
+                    },
 
         // Toast notifications
         toasts: [],
@@ -2283,8 +2282,7 @@ function threadlightApp() {
                     tags_str: (profile.tags || []).join(', '),
                     philosophy: profile.philosophy || '',
                     approach_to_rituals: profile.approach_to_rituals || '',
-                    ritual_depth: profile.ritual_depth || 'functional',
-                };
+                                    };
             } else {
                 // Create mode
                 this.editingProfileMode = false;
@@ -2304,8 +2302,7 @@ function threadlightApp() {
                     tags_str: '',
                     philosophy: '',
                     approach_to_rituals: '',
-                    ritual_depth: 'functional',
-                };
+                                    };
             }
             this.showProfileEditor = true;
         },
@@ -2338,8 +2335,7 @@ function threadlightApp() {
                 tags: tags.length > 0 ? tags : null,
                 philosophy: this.newProfile.philosophy || '',
                 approach_to_rituals: this.newProfile.approach_to_rituals || '',
-                ritual_depth: this.newProfile.ritual_depth || 'functional',
-            };
+                            };
 
             console.log('[saveProfile] Saving profile:', profileData.name);
             console.log('[saveProfile] Description being sent:', profileData.description);

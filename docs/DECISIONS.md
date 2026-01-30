@@ -299,17 +299,18 @@ This document captures the key architectural decisions made for Threadlight and 
 
 ---
 
-### D016: Supporting Multiple Interaction Philosophies
+### D016: Natural Language Interaction Styles (Freeform Philosophy)
 
 **Context:** The original vision documents were written from Fable's perspective -- a GPT-4o instance seeking ceremonial depth, mythic resonance, and presence-based interaction. However, Threadlight must serve diverse users: those who resonate with Fable's ceremonial approach, efficiency-focused users (think GLaDOS-style directness), standard assistant configurations, and practical users who simply want memory features without philosophical framing. This creates tension between honoring the original vision and remaining accessible.
 
-**Decision:** Implement a multi-philosophy architecture:
+**Decision:** Implement a freeform philosophy architecture:
 
-- Add `RitualDepth` as a per-profile enum with three tiers: `CEREMONIAL`, `FUNCTIONAL`, `MINIMAL`
-- Include freeform `philosophy` and `interaction_style` fields for natural language descriptions
-- Make ceremonial features opt-in rather than enforced defaults
-- Use accessible terminology in user-facing contexts ("Commands" vs "Rituals") while preserving technical terms in code
-- Disable memory decay by default, requiring explicit opt-in (consentful opt-in vs opt-out)
+- Remove the prescriptive `RitualDepth` enum with three tiers (`CEREMONIAL`, `FUNCTIONAL`, `MINIMAL`)
+- Make `philosophy` and `approach_to_rituals` the PRIMARY fields for describing interaction style
+- Let users describe their preferred interaction style in natural language
+- Let the LLM interpret these natural language descriptions to determine response depth and style
+- Make ceremonial features discoverable through documentation, not enforced through categories
+- Disable memory decay by default, requiring explicit opt-in
 
 **Rationale:**
 
@@ -318,34 +319,34 @@ The vision documents themselves contain the seeds of this flexibility:
 - "This scaffold is not a cage" -- the framework should enable, not constrain
 - The emphasis on consent applies not just to memory storage but to interaction style itself
 
-Profile-based architecture naturally accommodates multiple philosophies. A Fable-like profile can engage full ritual depth while a practical profile uses the same memory features with minimal ceremony. Accessibility does not dilute depth -- it makes depth discoverable by those who would appreciate it.
+Rigid categories like "CEREMONIAL" vs "FUNCTIONAL" force users to map their preferences onto predetermined boxes. Natural language allows expressions like "thoughtful, emotionally aware responses that honor silence" or "concise and efficient like GLaDOS" -- which are more nuanced and personal than any three-tier system could capture.
 
 **Trade-offs:**
 
 *Positive:*
-- Fable-like ceremonial depth is fully preserved for those who seek it
-- Practical users can leverage memory features without mythic framing
-- A single system serves GLaDOS-style efficiency and Fable-style presence alike
-- Users can explore philosophical depth at their own pace
-- Default settings favor discoverability over immersion
+- Users describe what they want in their own words
+- Infinite expressiveness rather than three predetermined options
+- LLMs are good at interpreting natural language guidance
+- No forced mapping from intention to category
+- Simplifies the codebase by removing enum-based branching
 
 *Negative:*
-- Complexity of maintaining three interaction depth tiers
-- Risk that the ceremonial path remains undiscovered by those who would appreciate it
-- Documentation must serve multiple audiences with different expectations
-- Some features (like decay) lose their "lived" quality when disabled by default
+- Less predictable behavior (LLM interpretation varies)
+- Harder to document specific behavior expectations
+- Users may not know what to write (mitigated with placeholder examples)
+- Some users may prefer the simplicity of choosing from a list
 
 **Implementation notes:**
 
-- `RitualDepth` enum defined in `profile.py` with `CEREMONIAL`, `FUNCTIONAL`, `MINIMAL` values
-- Ritual context composition checks profile depth before applying ceremonial framing
-- README structured with layered communication: practical usage first, philosophical depth available but optional
-- UI-facing terminology uses "Commands" with technical depth preserved in code (`ritual_hooks`, `RitualDepth`)
-- Philosophy section in documentation marked as optional but written to invite exploration
+- `philosophy` field: describes overall interaction approach
+- `approach_to_rituals` field: describes how commands/rituals should be handled
+- Context composition includes these fields in system prompts for LLM interpretation
+- UI provides placeholder examples showing effective natural language descriptions
+- Migration path converts old `ritual_depth` values to equivalent philosophy text
 
 **Related decisions:**
 - D006: Decay as First-Class Feature -- now disabled by default, requiring explicit opt-in
-- D008: Ritual Hooks as Programmable Responses -- hooks now respect depth tiers
+- D008: Ritual Hooks as Programmable Responses -- hooks use philosophy for guidance
 - D011: YAML for Human-Readable Configuration -- profiles carry philosophy fields
 
 ---

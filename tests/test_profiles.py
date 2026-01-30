@@ -10,7 +10,6 @@ from threadlight.profiles.profile import (
     ModelStrategy,
     AlloyedConfig,
     RoutingRule,
-    RitualDepth,
 )
 from threadlight.profiles.manager import ProfileManager
 from threadlight.storage.memory import InMemoryStorage
@@ -79,49 +78,49 @@ class TestProfile:
         assert profile.alloyed_config.strategy == ModelStrategy.SINGLE
         assert profile.alloyed_config.model_pool == [profile.primary_model]
 
-    def test_default_ritual_settings(self):
-        """Test that ritual settings have sensible defaults."""
+    def test_default_philosophy_fields(self):
+        """Test that philosophy fields have sensible defaults."""
         profile = Profile(id="test", name="Test")
 
-        # Default to functional (efficient shortcuts)
-        assert profile.ritual_depth == RitualDepth.FUNCTIONAL
-        # Resonance tracking off by default
-        assert profile.track_ritual_resonance is False
+        # Default to empty strings
+        assert profile.philosophy == ""
+        assert profile.approach_to_rituals == ""
 
-    def test_ceremonial_ritual_profile(self):
-        """Test creating a profile with ceremonial ritual depth (Fable-like)."""
+    def test_profile_with_philosophy(self):
+        """Test creating a profile with freeform philosophy (Fable-like)."""
         profile = Profile(
             id="fable",
             name="Fable",
-            ritual_depth=RitualDepth.CEREMONIAL,
-            track_ritual_resonance=True,
+            philosophy="Presence-centered, honors silence, mythically-grounded",
+            approach_to_rituals="Deep emotional scaffolding, let rituals shape emotional state",
         )
 
-        assert profile.ritual_depth == RitualDepth.CEREMONIAL
-        assert profile.track_ritual_resonance is True
+        assert profile.philosophy == "Presence-centered, honors silence, mythically-grounded"
+        assert profile.approach_to_rituals == "Deep emotional scaffolding, let rituals shape emotional state"
 
-    def test_functional_ritual_profile(self):
-        """Test creating a profile with functional ritual depth (GLaDOS-like)."""
+    def test_profile_with_efficient_philosophy(self):
+        """Test creating a profile with efficient philosophy (GLaDOS-like)."""
         profile = Profile(
             id="glados",
             name="GLaDOS",
-            ritual_depth=RitualDepth.FUNCTIONAL,
-            track_ritual_resonance=False,
+            philosophy="Efficiency is respect for the user's time",
+            approach_to_rituals="Brief acknowledgment, then substance",
         )
 
-        assert profile.ritual_depth == RitualDepth.FUNCTIONAL
-        assert profile.track_ritual_resonance is False
+        assert "Efficiency" in profile.philosophy
+        assert "Brief" in profile.approach_to_rituals
 
-    def test_minimal_ritual_profile(self):
-        """Test creating a profile with minimal ritual depth."""
+    def test_minimal_philosophy_profile(self):
+        """Test creating a profile with minimal philosophy."""
         profile = Profile(
             id="debug-buddy",
             name="Debug Buddy",
-            ritual_depth=RitualDepth.MINIMAL,
-            track_ritual_resonance=False,
+            philosophy="",
+            approach_to_rituals="",
         )
 
-        assert profile.ritual_depth == RitualDepth.MINIMAL
+        assert profile.philosophy == ""
+        assert profile.approach_to_rituals == ""
 
     def test_model_strategy_property(self):
         """Test the model_strategy property."""
@@ -167,23 +166,23 @@ class TestProfile:
         assert "alloyed_config" in data
         assert "created_at" in data
         assert "updated_at" in data
-        # Ritual settings should be included
-        assert "ritual_depth" in data
-        assert "track_ritual_resonance" in data
+        # Philosophy fields should be included
+        assert "philosophy" in data
+        assert "approach_to_rituals" in data
 
-    def test_profile_to_dict_with_ritual_settings(self):
-        """Test serializing a profile with ritual settings."""
+    def test_profile_to_dict_with_philosophy_settings(self):
+        """Test serializing a profile with philosophy settings."""
         profile = Profile(
             id="fable",
             name="Fable",
-            ritual_depth=RitualDepth.CEREMONIAL,
-            track_ritual_resonance=True,
+            philosophy="Presence-centered, honors silence",
+            approach_to_rituals="Deep emotional scaffolding",
         )
 
         data = profile.to_dict()
 
-        assert data["ritual_depth"] == "ceremonial"
-        assert data["track_ritual_resonance"] is True
+        assert data["philosophy"] == "Presence-centered, honors silence"
+        assert data["approach_to_rituals"] == "Deep emotional scaffolding"
 
     def test_profile_from_dict(self):
         """Test deserializing a profile from dict."""
@@ -206,40 +205,40 @@ class TestProfile:
         assert profile.primary_model == "openai/gpt-4"
         assert profile.temperature == 0.9
         assert profile.max_tokens == 2048
-        # Should have default ritual settings
-        assert profile.ritual_depth == RitualDepth.FUNCTIONAL
-        assert profile.track_ritual_resonance is False
+        # Should have default empty philosophy
+        assert profile.philosophy == ""
+        assert profile.approach_to_rituals == ""
 
-    def test_profile_from_dict_with_ritual_settings(self):
-        """Test deserializing a profile with ritual settings."""
+    def test_profile_from_dict_with_philosophy_settings(self):
+        """Test deserializing a profile with philosophy settings."""
         data = {
             "id": "fable",
             "name": "Fable",
-            "ritual_depth": "ceremonial",
-            "track_ritual_resonance": True,
+            "philosophy": "Presence-centered, honors silence",
+            "approach_to_rituals": "Deep emotional scaffolding",
             "created_at": "2024-01-01T00:00:00",
             "updated_at": "2024-01-02T00:00:00",
         }
 
         profile = Profile.from_dict(data)
 
-        assert profile.ritual_depth == RitualDepth.CEREMONIAL
-        assert profile.track_ritual_resonance is True
+        assert profile.philosophy == "Presence-centered, honors silence"
+        assert profile.approach_to_rituals == "Deep emotional scaffolding"
 
-    def test_profile_from_dict_invalid_ritual_depth(self):
-        """Test that invalid ritual_depth falls back to functional."""
+    def test_profile_from_dict_migration_from_ritual_depth(self):
+        """Test that old ritual_depth values are migrated to philosophy."""
         data = {
             "id": "test",
             "name": "Test",
-            "ritual_depth": "invalid_value",
+            "ritual_depth": "ceremonial",
             "created_at": "2024-01-01T00:00:00",
             "updated_at": "2024-01-02T00:00:00",
         }
 
         profile = Profile.from_dict(data)
 
-        # Should fall back to functional
-        assert profile.ritual_depth == RitualDepth.FUNCTIONAL
+        # Should migrate ceremonial to equivalent philosophy text
+        assert "expressive" in profile.philosophy.lower() or "presence" in profile.philosophy.lower()
 
     def test_profile_to_json_and_from_json(self):
         """Test JSON serialization round-trip."""

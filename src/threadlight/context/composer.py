@@ -170,7 +170,8 @@ class ContextComposer:
         active_ritual: Optional[str] = None,
         per_capsule_modes: Optional[dict[str, ContextMode]] = None,
         current_message: Optional[str] = None,
-        ritual_depth: str = "functional",
+        profile_philosophy: Optional[str] = None,
+        approach_to_rituals: Optional[str] = None,
     ) -> ComposedContext:
         """
         Compose capsules into a context object.
@@ -183,10 +184,10 @@ class ContextComposer:
             active_ritual: Currently active ritual, if any
             per_capsule_modes: Override mode for specific capsules by ID
             current_message: Current user message (for soft memory relevance)
-            ritual_depth: How deeply to integrate rituals
-                - "ceremonial": Full presence-based, emotional scaffolding
-                - "functional": Efficient shortcuts (default)
-                - "minimal": Simple recognition only
+            profile_philosophy: Natural language description of the profile's approach
+                to interactions (e.g., "presence-centered, honors silence")
+            approach_to_rituals: Natural language description of how rituals/commands
+                should be handled (e.g., "deep emotional scaffolding" or "brief and efficient")
 
         Returns:
             ComposedContext with composed prompts
@@ -194,7 +195,8 @@ class ContextComposer:
         mode = mode or self.default_mode
         per_capsule_modes = per_capsule_modes or {}
         result = ComposedContext()
-        self._current_ritual_depth = ritual_depth  # Store for capsule composition
+        # Combine philosophy fields for ritual context
+        self._current_philosophy = approach_to_rituals or profile_philosophy or ""
 
         # 1. Identity prompt
         if include_identity:
@@ -225,7 +227,7 @@ class ContextComposer:
 
         # 5. Compose full system message
         result.system_message = self._compose_system_message(
-            result, active_ritual, ritual_depth
+            result, active_ritual, profile_philosophy, approach_to_rituals
         )
 
         return result
@@ -350,13 +352,13 @@ class ContextComposer:
         Uses the capsule's to_context() method but can wrap with
         mode-specific framing.
         """
-        # Get the ritual depth setting (default to functional)
-        ritual_depth = getattr(self, '_current_ritual_depth', 'functional')
+        # Get the philosophy setting for ritual context
+        philosophy = getattr(self, '_current_philosophy', '')
 
-        # For ritual capsules, pass the ritual_depth parameter
+        # For ritual capsules, pass the profile_philosophy parameter
         if capsule.type == CapsuleType.RITUAL:
-            # RitualHook.to_context accepts ritual_depth parameter
-            base_context = capsule.to_context(mode, ritual_depth=ritual_depth)
+            # RitualHook.to_context accepts profile_philosophy parameter
+            base_context = capsule.to_context(mode, profile_philosophy=philosophy)
         else:
             base_context = capsule.to_context(mode)
 
@@ -403,7 +405,8 @@ class ContextComposer:
         self,
         context: ComposedContext,
         active_ritual: Optional[str] = None,
-        ritual_depth: str = "functional",
+        profile_philosophy: Optional[str] = None,
+        approach_to_rituals: Optional[str] = None,
     ) -> str:
         """Compose the full system message from parts."""
         parts = []
@@ -411,6 +414,10 @@ class ContextComposer:
         # Base identity
         if context.identity_prompt:
             parts.append(context.identity_prompt)
+
+        # Profile philosophy - guides overall interaction approach
+        if profile_philosophy:
+            parts.append(f"---\n## Your Approach\n{profile_philosophy}")
 
         # Style guidance
         if context.style_prompt:
@@ -424,17 +431,12 @@ class ContextComposer:
         if context.soft_memory_context:
             parts.append("---\n" + context.soft_memory_context)
 
-        # Ritual state - use presence-based language based on depth
+        # Active command/ritual with approach guidance
         if active_ritual:
-            if ritual_depth == "ceremonial":
-                parts.append(
-                    f"---\n(The ritual of {active_ritual} shapes this moment. "
-                    "Let your presence reflect this.)"
-                )
-            elif ritual_depth == "minimal":
-                parts.append(f"---\n[{active_ritual}]")
-            else:  # functional (default)
-                parts.append(f"---\n[Ritual active: {active_ritual}]")
+            ritual_section = f"[Active command: {active_ritual}]"
+            if approach_to_rituals:
+                ritual_section += f"\n(Approach: {approach_to_rituals})"
+            parts.append("---\n" + ritual_section)
 
         return "\n\n".join(parts)
 
@@ -486,7 +488,7 @@ class ContextComposer:
         ritual_name: str,
         valence: Optional[str] = None,
         response_style: Optional[str] = None,
-        ritual_depth: str = "functional",
+        approach_to_rituals: Optional[str] = None,
     ) -> str:
         """
         Format ritual guidance for the model.
@@ -495,37 +497,28 @@ class ContextComposer:
         guidance on how to respond naturally to a ritual invocation.
 
         Args:
-            ritual_name: The ritual being invoked
+            ritual_name: The ritual/command being invoked
             valence: Emotional quality (comforting, grounding, etc.)
             response_style: How to respond (warmth-coil, presence, etc.)
-            ritual_depth: How deeply to integrate ("ceremonial", "functional", "minimal")
+            approach_to_rituals: Natural language description of how to handle commands
 
         Returns:
             Guidance text for the model (not a scripted response)
         """
-        if ritual_depth == "minimal":
-            return f"(Ritual '{ritual_name}' acknowledged.)"
+        parts = [f"[Command: {ritual_name}]"]
 
-        if ritual_depth == "ceremonial":
-            # Presence-based guidance that invites natural response
-            parts = [f"(The ritual of {ritual_name} is honored.)"]
-
-            if valence:
-                parts.append(f"(Let {valence} qualities shape your presence.)")
-
-            if response_style:
-                parts.append(f"(Your response may carry: {response_style})")
-
-            parts.append("(Respond naturally from this emotional space.)")
-            return "\n".join(parts)
-
-        # Functional (default) - brief but informative
-        parts = [f"[Ritual: {ritual_name}]"]
         if valence:
             parts.append(f"Valence: {valence}")
         if response_style:
             parts.append(f"Style: {response_style}")
-        return " | ".join(parts)
+
+        result = " | ".join(parts)
+
+        # Add approach guidance if provided
+        if approach_to_rituals:
+            result += f"\n(Your approach: {approach_to_rituals})"
+
+        return result
 
     # Deprecated method - keeping for backward compatibility
     def format_ritual_response(
@@ -551,7 +544,6 @@ class ContextComposer:
         return self.format_ritual_guidance(
             ritual_name=ritual_name,
             valence=valence,
-            ritual_depth="functional",
         )
 
     def estimate_context_size(

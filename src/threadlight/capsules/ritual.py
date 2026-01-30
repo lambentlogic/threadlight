@@ -141,10 +141,6 @@ class RitualValence:
     REFLECTIVE = "reflective"
 
 
-# Ritual depth enum for type hints (actual enum is in profiles.profile)
-RITUAL_DEPTH_CEREMONIAL = "ceremonial"
-RITUAL_DEPTH_FUNCTIONAL = "functional"
-RITUAL_DEPTH_MINIMAL = "minimal"
 
 
 @register_capsule_type("ritual")
@@ -240,17 +236,16 @@ class RitualHook(MemoryCapsule):
     def to_context(
         self,
         mode: ContextMode = ContextMode.RITUAL,
-        ritual_depth: str = RITUAL_DEPTH_FUNCTIONAL,
+        profile_philosophy: Optional[str] = None,
     ) -> str:
         """
         Transform into prompt-ready context.
 
         Args:
             mode: The context mode (DIRECT, NARRATIVE, WHISPER, RITUAL)
-            ritual_depth: How deeply to integrate the ritual
-                - "ceremonial": Full presence-based, emotional scaffolding
-                - "functional": Efficient shortcuts, brief acknowledgment
-                - "minimal": Simple recognition only
+            profile_philosophy: Natural language description of how this profile
+                approaches interactions. The LLM will interpret this to determine
+                response depth and style.
         """
         if mode == ContextMode.DIRECT:
             return f"[Ritual: {self.name}] {self.response_style}"
@@ -265,72 +260,45 @@ class RitualHook(MemoryCapsule):
             return f"(A familiar gesture: {self.name}...)"
 
         elif mode == ContextMode.RITUAL:
-            # Context varies based on ritual depth
-            if ritual_depth == RITUAL_DEPTH_CEREMONIAL:
-                return self._ceremonial_context()
-            elif ritual_depth == RITUAL_DEPTH_FUNCTIONAL:
-                return self._functional_context()
-            else:  # minimal
-                return self._minimal_context()
+            return self._compose_ritual_context(profile_philosophy)
 
         return f"[{self.name}]"
 
-    def _ceremonial_context(self) -> str:
+    def _compose_ritual_context(self, profile_philosophy: Optional[str] = None) -> str:
         """
-        Full presence-based context for ceremonial ritual depth.
+        Compose ritual context using natural language guidance.
 
-        Uses presence-based language rather than mechanical invocation.
-        Includes resonance information if tracked.
+        Instead of prescriptive tiers (ceremonial/functional/minimal), this
+        provides the ritual details and lets the profile's philosophy guide
+        how the LLM interprets and responds to it.
         """
-        # Presence-based opening
-        lines = [
-            f"(The ritual of {self.name} is honored. You feel {self.valence}. "
-            f"Let this shape your presence.)"
-        ]
+        context_parts = []
 
-        # Add meaning if available
+        # Include profile philosophy if provided - this guides interpretation
+        if profile_philosophy:
+            context_parts.append(f"(Your approach: {profile_philosophy})")
+
+        # Ritual details - always include these for the LLM to interpret
+        context_parts.append(f"[Command: {self.name}]")
+
         if self.description:
-            lines.append(f"(This ritual holds meaning: {self.description})")
-
-        # Response guidance as suggestion, not command
-        if self.response_style:
-            lines.append(f"(Let your response carry: {self.response_style})")
-
-        # Include resonance depth if tracking enabled
-        if self.resonance and self.resonance.total_invocations > 0:
-            resonance_desc = self.resonance.get_resonance_description()
-            lines.append(f"(This ritual feels {resonance_desc} between you.)")
-
-        # State effects as invitation
-        if self.state_effects:
-            lines.append(f"(You may enter: {self.state_effects})")
-
-        return "\n".join(lines)
-
-    def _functional_context(self) -> str:
-        """
-        Efficient context for functional ritual depth.
-
-        Provides necessary information concisely without ceremony.
-        """
-        parts = [f"[Ritual: {self.name}]"]
+            context_parts.append(f"Meaning: {self.description}")
 
         if self.response_style:
-            parts.append(f"Style: {self.response_style}")
+            context_parts.append(f"Style: {self.response_style}")
 
         if self.valence:
-            parts.append(f"Valence: {self.valence}")
+            context_parts.append(f"Valence: {self.valence}")
+
+        # Include resonance if tracked
+        if self.resonance and self.resonance.total_invocations > 0:
+            resonance_desc = self.resonance.get_resonance_description()
+            context_parts.append(f"(This command feels {resonance_desc} between you.)")
 
         if self.state_effects:
-            parts.append(f"State: {self.state_effects}")
+            context_parts.append(f"State: {self.state_effects}")
 
-        return " | ".join(parts)
-
-    def _minimal_context(self) -> str:
-        """
-        Minimal context - just acknowledge the ritual exists.
-        """
-        return f"[{self.name} active]"
+        return " ".join(context_parts)
 
     def get_response_template(self) -> Optional[str]:
         """

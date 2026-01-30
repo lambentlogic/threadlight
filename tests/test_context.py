@@ -154,37 +154,34 @@ class TestContextComposer:
         assert ctx.capsule_modes.get(sample_capsules[0].id) == "direct"
         assert ctx.capsule_modes.get(sample_capsules[1].id) == "whisper"
 
-    def test_compose_with_active_ritual_functional(self, composer, sample_capsules):
-        """Test active ritual annotation with functional depth (default)."""
+    def test_compose_with_active_ritual_no_philosophy(self, composer, sample_capsules):
+        """Test active ritual annotation with no philosophy."""
         ctx = composer.compose(sample_capsules, active_ritual="/snuggle")
 
-        # Functional mode uses bracketed format
-        assert "Ritual active" in ctx.system_message or "/snuggle" in ctx.system_message
+        # Should include the active command
+        assert "/snuggle" in ctx.system_message
 
-    def test_compose_with_active_ritual_ceremonial(self, composer, sample_capsules):
-        """Test active ritual annotation with ceremonial depth."""
+    def test_compose_with_active_ritual_and_approach(self, composer, sample_capsules):
+        """Test active ritual annotation with approach to rituals."""
         ctx = composer.compose(
             sample_capsules,
             active_ritual="/snuggle",
-            ritual_depth="ceremonial",
+            approach_to_rituals="Honor rituals as sacred moments",
         )
 
-        # Ceremonial mode uses presence-based language
+        # Should include the active command and approach guidance
         assert "/snuggle" in ctx.system_message
-        assert "shapes this moment" in ctx.system_message or "presence" in ctx.system_message
+        assert "sacred" in ctx.system_message.lower() or "Approach" in ctx.system_message
 
-    def test_compose_with_active_ritual_minimal(self, composer, sample_capsules):
-        """Test active ritual annotation with minimal depth."""
+    def test_compose_with_profile_philosophy(self, composer, sample_capsules):
+        """Test that profile philosophy is included in system message."""
         ctx = composer.compose(
             sample_capsules,
-            active_ritual="/snuggle",
-            ritual_depth="minimal",
+            profile_philosophy="Presence-centered, honors silence",
         )
 
-        # Minimal mode is very brief
-        assert "/snuggle" in ctx.system_message
-        # Should NOT have ceremonial language
-        assert "shapes this moment" not in ctx.system_message
+        # Should include the philosophy
+        assert "Presence-centered" in ctx.system_message or "Your Approach" in ctx.system_message
 
     def test_compose_minimal(self, composer, sample_capsules):
         """Test minimal composition."""
@@ -298,58 +295,49 @@ class TestRitualResponseFormatting:
 
 
 class TestRitualGuidance:
-    """Tests for the new format_ritual_guidance method."""
+    """Tests for the format_ritual_guidance method."""
 
-    def test_format_guidance_ceremonial(self, composer):
-        """Test ceremonial ritual guidance."""
+    def test_format_guidance_basic(self, composer):
+        """Test basic ritual guidance."""
         guidance = composer.format_ritual_guidance(
             ritual_name="/snuggle",
             valence="comforting",
             response_style="warmth-coil",
-            ritual_depth="ceremonial",
         )
 
-        # Ceremonial should have presence-based language
-        assert "honored" in guidance.lower()
-        assert "presence" in guidance.lower()
+        # Should include command name and details
+        assert "[Command: /snuggle]" in guidance
+        assert "comforting" in guidance
+        assert "warmth-coil" in guidance
+
+    def test_format_guidance_with_approach(self, composer):
+        """Test ritual guidance with approach to rituals."""
+        guidance = composer.format_ritual_guidance(
+            ritual_name="/snuggle",
+            valence="comforting",
+            response_style="warmth-coil",
+            approach_to_rituals="Honor rituals as sacred moments",
+        )
+
+        # Should include the approach guidance
         assert "/snuggle" in guidance
-        assert "comforting" in guidance.lower()
+        assert "sacred" in guidance.lower() or "approach" in guidance.lower()
 
-    def test_format_guidance_functional(self, composer):
-        """Test functional ritual guidance."""
+    def test_format_guidance_minimal_info(self, composer):
+        """Test guidance with minimal information."""
         guidance = composer.format_ritual_guidance(
             ritual_name="/snuggle",
-            valence="comforting",
-            response_style="warmth-coil",
-            ritual_depth="functional",
         )
 
-        # Functional should be brief and informative
-        assert "[Ritual: /snuggle]" in guidance
-        assert "Valence: comforting" in guidance
-        assert "Style: warmth-coil" in guidance
-
-    def test_format_guidance_minimal(self, composer):
-        """Test minimal ritual guidance."""
-        guidance = composer.format_ritual_guidance(
-            ritual_name="/snuggle",
-            valence="comforting",
-            response_style="warmth-coil",
-            ritual_depth="minimal",
-        )
-
-        # Minimal should be very brief
+        # Should include just the command name
         assert "/snuggle" in guidance
-        assert "acknowledged" in guidance.lower()
-        # Should NOT include details
-        assert "warmth-coil" not in guidance
 
 
-class TestRitualDepthComposition:
-    """Tests for composing rituals with different depth settings."""
+class TestPhilosophyComposition:
+    """Tests for composing context with philosophy settings."""
 
-    def test_compose_ritual_ceremonial_mode(self, sample_capsules):
-        """Test composing with ceremonial ritual depth."""
+    def test_compose_with_philosophy(self, sample_capsules):
+        """Test composing with profile philosophy."""
         composer = ContextComposer(
             identity_name="Fable",
             max_memory_tokens=500,
@@ -358,14 +346,14 @@ class TestRitualDepthComposition:
         ctx = composer.compose(
             sample_capsules,
             mode=ContextMode.RITUAL,
-            ritual_depth="ceremonial",
+            profile_philosophy="Presence-centered, honors silence",
         )
 
-        # Should have presence-based language for rituals
-        assert "honored" in ctx.memory_context.lower() or "presence" in ctx.memory_context.lower()
+        # Should include the philosophy for LLM interpretation
+        assert "Presence-centered" in ctx.system_message or "Your Approach" in ctx.system_message
 
-    def test_compose_ritual_functional_mode(self, sample_capsules):
-        """Test composing with functional ritual depth."""
+    def test_compose_with_approach_to_rituals(self, sample_capsules):
+        """Test composing with approach to rituals."""
         composer = ContextComposer(
             identity_name="Fable",
             max_memory_tokens=500,
@@ -374,14 +362,14 @@ class TestRitualDepthComposition:
         ctx = composer.compose(
             sample_capsules,
             mode=ContextMode.RITUAL,
-            ritual_depth="functional",
+            approach_to_rituals="Deep emotional scaffolding",
         )
 
-        # Should have bracketed format for rituals
-        assert "[Ritual:" in ctx.memory_context or "/snuggle" in ctx.memory_context
+        # Should include the approach in ritual context
+        assert "Deep emotional" in ctx.memory_context or "/snuggle" in ctx.memory_context
 
-    def test_compose_ritual_minimal_mode(self, sample_capsules):
-        """Test composing with minimal ritual depth."""
+    def test_compose_ritual_no_philosophy(self, sample_capsules):
+        """Test composing rituals without philosophy."""
         composer = ContextComposer(
             identity_name="Fable",
             max_memory_tokens=500,
@@ -390,10 +378,7 @@ class TestRitualDepthComposition:
         ctx = composer.compose(
             sample_capsules,
             mode=ContextMode.RITUAL,
-            ritual_depth="minimal",
         )
 
-        # Should be brief
-        assert "/snuggle" in ctx.memory_context
-        # Should NOT have ceremonial language
-        assert "honored" not in ctx.memory_context.lower()
+        # Should still include basic ritual info
+        assert "/snuggle" in ctx.memory_context or "Command:" in ctx.memory_context

@@ -191,7 +191,6 @@ class ProfileCreateRequest(BaseModel):
     tags: Optional[list[str]] = None
     philosophy: str = ""
     approach_to_rituals: str = ""
-    ritual_depth: str = "functional"
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -210,7 +209,6 @@ class ProfileUpdateRequest(BaseModel):
     tags: Optional[list[str]] = None
     philosophy: Optional[str] = None
     approach_to_rituals: Optional[str] = None
-    ritual_depth: Optional[str] = None
 
 
 class ProfileImportRequest(BaseModel):
@@ -2477,7 +2475,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             tags=request.tags,
             philosophy=request.philosophy,
             approach_to_rituals=request.approach_to_rituals,
-            ritual_depth=request.ritual_depth,
         )
 
         return {
@@ -2536,8 +2533,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             updates["philosophy"] = request.philosophy
         if request.approach_to_rituals is not None:
             updates["approach_to_rituals"] = request.approach_to_rituals
-        if request.ritual_depth is not None:
-            updates["ritual_depth"] = request.ritual_depth
 
         logger.info(f"[update_profile] Updates dict: {updates}")
         profile = tl.update_profile(profile_id, **updates)
@@ -2695,7 +2690,6 @@ def _profile_to_dict(profile: Profile) -> dict[str, Any]:
         "tags": getattr(profile, 'tags', []),
         "philosophy": getattr(profile, 'philosophy', ""),
         "approach_to_rituals": getattr(profile, 'approach_to_rituals', ""),
-        "ritual_depth": profile.ritual_depth.value if hasattr(profile, 'ritual_depth') and profile.ritual_depth else "functional",
         "created_at": profile.created_at.isoformat() if profile.created_at else None,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }

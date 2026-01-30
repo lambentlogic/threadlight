@@ -357,7 +357,6 @@ class Threadlight:
         tags: Optional[list[str]] = None,
         philosophy: str = "",
         approach_to_rituals: str = "",
-        ritual_depth: str = "functional",
     ) -> Profile:
         """
         Create a new profile.
@@ -383,7 +382,6 @@ class Threadlight:
             tags: Optional tags for categorization
             philosophy: Freeform description of the profile's philosophy/approach
             approach_to_rituals: Freeform description of how rituals are handled
-            ritual_depth: How deeply to integrate rituals (ceremonial, functional, minimal)
 
         Returns:
             The created Profile
@@ -409,7 +407,6 @@ class Threadlight:
             tags=tags,
             philosophy=philosophy,
             approach_to_rituals=approach_to_rituals,
-            ritual_depth=ritual_depth,
         )
 
     def list_profiles(self) -> list[Profile]:
@@ -460,12 +457,6 @@ class Threadlight:
                         else:
                             parsed_rules.append(rule)
                     profile.alloyed_config.routing_rules = parsed_rules
-            elif key == 'ritual_depth' and value is not None:
-                from threadlight.profiles.profile import RitualDepth
-                try:
-                    profile.ritual_depth = RitualDepth(value) if isinstance(value, str) else value
-                except ValueError:
-                    profile.ritual_depth = RitualDepth.FUNCTIONAL
             elif hasattr(profile, key):
                 setattr(profile, key, value)
 
