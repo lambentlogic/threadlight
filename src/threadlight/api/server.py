@@ -233,6 +233,11 @@ class EmbeddingsConfigRequest(BaseModel):
     model: str = "all-MiniLM-L6-v2"
 
 
+class GenerateEmbeddingsRequest(BaseModel):
+    include_memories: bool = True
+    include_conversations: bool = True
+
+
 # ============================================================================
 # Global State
 # ============================================================================
@@ -1754,10 +1759,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         except Exception as e:
             logger.error(f"Semantic search failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
-
-    class GenerateEmbeddingsRequest(BaseModel):
-        include_memories: bool = True
-        include_conversations: bool = True
 
     @app.post("/api/embeddings/generate")
     async def generate_embeddings(request: GenerateEmbeddingsRequest):
