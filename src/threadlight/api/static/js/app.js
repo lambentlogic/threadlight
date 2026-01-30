@@ -1007,7 +1007,19 @@ function threadlightApp() {
 
                 if (!response.ok) {
                     const data = await response.json().catch(() => ({}));
-                    const errorMsg = data.detail || data.error || data.message || 'Failed to update embeddings config';
+                    let errorMsg = 'Failed to update embeddings config';
+
+                    // Handle FastAPI validation errors (detail is an array)
+                    if (Array.isArray(data.detail)) {
+                        errorMsg = data.detail.map(err => err.msg || JSON.stringify(err)).join(', ');
+                    } else if (data.detail) {
+                        errorMsg = data.detail;
+                    } else if (data.error) {
+                        errorMsg = data.error;
+                    } else if (data.message) {
+                        errorMsg = data.message;
+                    }
+
                     throw new Error(errorMsg);
                 }
 
@@ -1372,7 +1384,19 @@ function threadlightApp() {
 
                 if (!response.ok) {
                     const data = await response.json().catch(() => ({}));
-                    const errorMsg = data.detail || data.error || data.message || 'Failed to update isolation setting';
+                    let errorMsg = 'Failed to update isolation setting';
+
+                    // Handle FastAPI validation errors (detail is an array)
+                    if (Array.isArray(data.detail)) {
+                        errorMsg = data.detail.map(err => err.msg || JSON.stringify(err)).join(', ');
+                    } else if (data.detail) {
+                        errorMsg = data.detail;
+                    } else if (data.error) {
+                        errorMsg = data.error;
+                    } else if (data.message) {
+                        errorMsg = data.message;
+                    }
+
                     throw new Error(errorMsg);
                 }
 
@@ -1424,7 +1448,19 @@ function threadlightApp() {
 
                 if (!response.ok) {
                     const data = await response.json().catch(() => ({}));
-                    const errorMsg = data.detail || data.error || data.message || 'Failed to update default shared setting';
+                    let errorMsg = 'Failed to update default shared setting';
+
+                    // Handle FastAPI validation errors (detail is an array)
+                    if (Array.isArray(data.detail)) {
+                        errorMsg = data.detail.map(err => err.msg || JSON.stringify(err)).join(', ');
+                    } else if (data.detail) {
+                        errorMsg = data.detail;
+                    } else if (data.error) {
+                        errorMsg = data.error;
+                    } else if (data.message) {
+                        errorMsg = data.message;
+                    }
+
                     throw new Error(errorMsg);
                 }
 
