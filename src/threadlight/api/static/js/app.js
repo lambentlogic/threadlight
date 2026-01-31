@@ -649,6 +649,11 @@ function threadlightApp() {
                 if (convResponse.ok) {
                     const convData = await convResponse.json();
                     this.isGroupChat = convData.participant_profiles && convData.participant_profiles.length > 1;
+
+                    // Update current model to match conversation's model
+                    if (convData.model && convData.model !== this.currentModelId) {
+                        this.currentModelId = convData.model;
+                    }
                 }
 
                 const response = await fetch(`/api/conversations/${conversationId}/messages`);
