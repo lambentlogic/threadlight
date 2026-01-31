@@ -888,9 +888,9 @@ function threadlightApp() {
         renderMarkdown(text) {
             if (!text) return '';
             const html = marked.parse(text);
-            // Apply syntax highlighting to code blocks
+            // Apply syntax highlighting to code blocks that haven't been highlighted yet
             this.$nextTick(() => {
-                document.querySelectorAll('pre code').forEach((block) => {
+                document.querySelectorAll('pre code:not([data-highlighted])').forEach((block) => {
                     hljs.highlightElement(block);
                 });
             });

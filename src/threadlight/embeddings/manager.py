@@ -334,9 +334,11 @@ class EmbeddingManager:
 
     def get_capsules_needing_embeddings(self) -> list[MemoryCapsule]:
         """Get all capsules that don't have embeddings."""
-        # Get all capsules
+        # Use the optimized storage method if available
+        if hasattr(self.storage, 'get_capsules_needing_embeddings'):
+            return self.storage.get_capsules_needing_embeddings(limit=10000)
+        # Fallback: get all capsules and filter in Python
         all_capsules = self.storage.list_capsules(CapsuleFilter(limit=10000))
-        # Filter to those without embeddings
         return [c for c in all_capsules if c.embedding is None]
 
     def get_messages_needing_embeddings(self, limit: int = 10000) -> list[Message]:
