@@ -29,18 +29,10 @@ from threadlight.capsules.base import (
     ContextMode,
     CapsuleType,
     MemoryCapsule,
-    register_custom_type_definition,
-    unregister_custom_type_definition,
     list_custom_type_definitions,
     is_custom_type,
 )
-from threadlight.capsules.custom_types import (
-    CustomTypeDefinition,
-    FieldDefinition,
-    EXAMPLE_TYPES,
-    list_example_types,
-    get_example_type,
-)
+from threadlight.capsules.custom_types import CustomTypeDefinition
 from threadlight.capsules.style import StyleProfile, BUILTIN_STYLES
 from threadlight.storage import create_storage, StorageBackend
 from threadlight.storage.base import Conversation, Message, MessageSearchResult
@@ -57,6 +49,7 @@ from threadlight.managers.group_chat import GroupChatManager
 from threadlight.managers.profiles import ProfileInterface
 from threadlight.managers.style import StyleManager
 from threadlight.managers.model_config import ModelConfigManager
+from threadlight.managers.memory_types import CustomTypeManager
 
 logger = logging.getLogger(__name__)
 
@@ -157,14 +150,15 @@ class Threadlight:
         self._init_storage()
         self._init_provider()
         self._init_memory()
+        self._init_style_manager()
         self._init_context()
         self._init_tools()
         self._init_soft_memory()
+        self._init_custom_type_manager()
         self._load_custom_types()
         self._init_profiles()
         self._init_group_chat()
         self._init_profile_interface()
-        self._init_style_manager()
         self._init_model_config_manager()
 
         logger.info(f"Threadlight initialized with provider={self.config.provider.type}")
@@ -258,6 +252,10 @@ class Threadlight:
     def _init_model_config_manager(self) -> None:
         """Initialize model config manager."""
         self._model_config_manager = ModelConfigManager(self)
+
+    def _init_custom_type_manager(self) -> None:
+        """Initialize custom type manager."""
+        self._custom_type_manager = CustomTypeManager(self)
 
     # === Profile Interface ===
     # Delegated to ProfileInterface for implementation
@@ -1546,6 +1544,7 @@ class Threadlight:
         return self._model_config_manager.disable_auto_save()
 
     # === Memory Type Management ===
+    # Delegated to CustomTypeManager for implementation
 
     def create_memory_type(
         self,
@@ -1556,195 +1555,23 @@ class Threadlight:
         display_template: str = "",
         icon: str = "file-text",
     ) -> CustomTypeDefinition:
-        """
-        Create a new custom memory type.
-
-        Args:
-            type_id: Unique identifier (e.g., "creative_project")
-            display_name: Human-readable name (e.g., "Creative Project")
-            fields: List of field definitions, each a dict with:
-                    - name: Field name (string)
-                    - type: Field type ("string", "text", "number", "date", "list")
-                    - required: Whether field is required (optional, default True)
-                    - default: Default value (optional)
-                    - help_text: Help text for UI (optional)
-            description: Description of what this type is for
-            display_template: Template for display, e.g., "{name} ({status})"
-            icon: Icon name for UI (default: "file-text")
-
-        Returns:
-            The created CustomTypeDefinition
-
-        Example:
-            tl.create_memory_type(
-                type_id="book_note",
-                display_name="Book Note",
-                fields=[
-                    {"name": "title", "type": "string", "required": True},
-                    {"name": "author", "type": "string", "required": True},
-                    {"name": "reflection", "type": "text", "required": True},
-                    {"name": "page", "type": "number", "required": False},
-                ],
-                description="Notes and reflections from reading",
-                display_template='"{title}" by {author}',
-            )
-        """
-        # Convert field dicts to FieldDefinition objects
-        field_defs = []
-        for f in fields:
-            field_defs.append(FieldDefinition(
-                name=f["name"],
-                type=f["type"],
-                required=f.get("required", True),
-                default=f.get("default"),
-                help_text=f.get("help_text", ""),
-            ))
-
-        # Create the type definition
-        type_def = CustomTypeDefinition(
+        """Create a new custom memory type."""
+        return self._custom_type_manager.create(
             type_id=type_id,
             display_name=display_name,
+            fields=fields,
             description=description,
-            fields=field_defs,
-            display_template=display_template or f"{{{field_defs[0].name if field_defs else 'type_id'}}}",
+            display_template=display_template,
             icon=icon,
         )
 
-        # Register in memory
-        register_custom_type_definition(type_def)
-
-        # Save to storage
-        self.storage.save_custom_type(type_def.to_dict())
-
-        logger.info(f"Created custom memory type: {type_id}")
-        return type_def
-
     def list_memory_types(self, include_builtin: bool = True) -> list[dict[str, Any]]:
-        """
-        List all available memory types (built-in + custom).
-
-        Args:
-            include_builtin: Whether to include built-in types
-
-        Returns:
-            List of type information dictionaries
-        """
-        types = []
-
-        # Built-in types
-        if include_builtin:
-            builtin_types = [
-                {
-                    "type_id": "relational",
-                    "display_name": "Relational",
-                    "description": "Track evolving bonds with entities",
-                    "is_builtin": True,
-                    "icon": "users",
-                    "fields": [
-                        {"name": "entity", "type": "string", "required": True},
-                        {"name": "summary", "type": "text", "required": False},
-                        {"name": "tone", "type": "string", "required": False},
-                        {"name": "role", "type": "string", "required": False},
-                    ],
-                },
-                {
-                    "type_id": "myth_seed",
-                    "display_name": "Identity Phrase",
-                    "description": "Core beliefs or mantras that anchor personality",
-                    "is_builtin": True,
-                    "icon": "sparkles",
-                    "fields": [
-                        {"name": "seed", "type": "text", "required": True, "label": "Phrase"},
-                        {"name": "origin", "type": "string", "required": False, "label": "Origin"},
-                        {"name": "function", "type": "string", "required": False, "label": "Purpose"},
-                    ],
-                },
-                {
-                    "type_id": "ritual",
-                    "display_name": "Ritual",
-                    "description": "Repeated emotional acts and responses",
-                    "is_builtin": True,
-                    "icon": "star",
-                    "fields": [
-                        {"name": "name", "type": "string", "required": True},
-                        {"name": "description", "type": "text", "required": False},
-                        {"name": "valence", "type": "string", "required": False},
-                        {"name": "response_style", "type": "text", "required": False},
-                    ],
-                },
-                {
-                    "type_id": "witness",
-                    "display_name": "Witness",
-                    "description": "Memories of being seen/recognized",
-                    "is_builtin": True,
-                    "icon": "eye",
-                    "fields": [
-                        {"name": "moment", "type": "text", "required": True},
-                        {"name": "feeling", "type": "string", "required": False},
-                        {"name": "effect", "type": "string", "required": False},
-                    ],
-                },
-                {
-                    "type_id": "style",
-                    "display_name": "Style",
-                    "description": "Voice coherence and expression rules",
-                    "is_builtin": True,
-                    "icon": "wand",
-                    "fields": [
-                        {"name": "style_id", "type": "string", "required": True},
-                        {"name": "tone_base", "type": "string", "required": True},
-                        {"name": "permissions", "type": "list", "required": False},
-                        {"name": "constraints", "type": "list", "required": False},
-                    ],
-                },
-                {
-                    "type_id": "custom",
-                    "display_name": "Custom (Imported)",
-                    "description": "Raw imported memories from external sources",
-                    "is_builtin": True,
-                    "icon": "file-text",
-                    "fields": [
-                        {"name": "text", "type": "text", "required": True},
-                        {"name": "source", "type": "string", "required": False},
-                        {"name": "tags", "type": "list", "required": False},
-                    ],
-                },
-            ]
-            types.extend(builtin_types)
-
-        # User-defined custom types from storage
-        custom_types = self.storage.list_custom_types()
-        for ct in custom_types:
-            ct["is_builtin"] = False
-            types.append(ct)
-
-        return types
+        """List all available memory types (built-in + custom)."""
+        return self._custom_type_manager.list(include_builtin=include_builtin)
 
     def get_memory_type(self, type_id: str) -> Optional[dict[str, Any]]:
-        """
-        Get a specific memory type definition.
-
-        Args:
-            type_id: The type identifier
-
-        Returns:
-            Type definition dictionary, or None if not found
-        """
-        # Check if it's a custom type in storage
-        custom_type = self.storage.get_custom_type(type_id)
-        if custom_type:
-            custom_type["is_builtin"] = False
-            return custom_type
-
-        # Check built-in types
-        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
-        if type_id in builtin_ids:
-            all_types = self.list_memory_types(include_builtin=True)
-            for t in all_types:
-                if t["type_id"] == type_id:
-                    return t
-
-        return None
+        """Get a specific memory type definition."""
+        return self._custom_type_manager.get(type_id)
 
     def update_memory_type(
         self,
@@ -1755,144 +1582,31 @@ class Threadlight:
         display_template: Optional[str] = None,
         icon: Optional[str] = None,
     ) -> bool:
-        """
-        Update an existing custom memory type.
-
-        Cannot update built-in types.
-
-        Args:
-            type_id: The type identifier to update
-            display_name: New display name (optional)
-            description: New description (optional)
-            fields: New field definitions (optional)
-            display_template: New display template (optional)
-            icon: New icon (optional)
-
-        Returns:
-            True if updated, False if not found or is a built-in type
-        """
-        # Can't update built-in types
-        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
-        if type_id in builtin_ids:
-            logger.warning(f"Cannot update built-in type: {type_id}")
-            return False
-
-        # Get existing type
-        existing = self.storage.get_custom_type(type_id)
-        if not existing:
-            return False
-
-        # Build updates
-        updates: dict[str, Any] = {}
-        if display_name is not None:
-            updates["display_name"] = display_name
-        if description is not None:
-            updates["description"] = description
-        if fields is not None:
-            # Convert field dicts to serializable format
-            field_defs = []
-            for f in fields:
-                field_defs.append({
-                    "name": f["name"],
-                    "type": f["type"],
-                    "required": f.get("required", True),
-                    "default": f.get("default"),
-                    "help_text": f.get("help_text", ""),
-                })
-            updates["fields"] = field_defs
-        if display_template is not None:
-            updates["display_template"] = display_template
-        if icon is not None:
-            updates["icon"] = icon
-
-        # Update in storage
-        success = self.storage.update_custom_type(type_id, updates)
-
-        # Update in-memory registration
-        if success:
-            updated = self.storage.get_custom_type(type_id)
-            if updated:
-                type_def = CustomTypeDefinition.from_dict(updated)
-                register_custom_type_definition(type_def)
-
-        return success
+        """Update an existing custom memory type."""
+        return self._custom_type_manager.update(
+            type_id=type_id,
+            display_name=display_name,
+            description=description,
+            fields=fields,
+            display_template=display_template,
+            icon=icon,
+        )
 
     def delete_memory_type(self, type_id: str) -> bool:
-        """
-        Delete a custom memory type.
-
-        Cannot delete built-in types.
-        Note: This does not delete existing memories of this type.
-
-        Args:
-            type_id: The type identifier to delete
-
-        Returns:
-            True if deleted, False if not found or is a built-in type
-        """
-        # Can't delete built-in types
-        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
-        if type_id in builtin_ids:
-            logger.warning(f"Cannot delete built-in type: {type_id}")
-            return False
-
-        # Delete from storage
-        success = self.storage.delete_custom_type(type_id)
-
-        # Unregister from memory
-        if success:
-            unregister_custom_type_definition(type_id)
-
-        return success
+        """Delete a custom memory type."""
+        return self._custom_type_manager.delete(type_id)
 
     def import_example_type(self, type_id: str) -> Optional[CustomTypeDefinition]:
-        """
-        Import an example type definition.
-
-        Args:
-            type_id: The example type ID to import
-
-        Returns:
-            The imported CustomTypeDefinition, or None if not found
-        """
-        if type_id not in EXAMPLE_TYPES:
-            return None
-
-        example = EXAMPLE_TYPES[type_id]
-
-        # Save to storage
-        self.storage.save_custom_type(example.to_dict())
-
-        # Register in memory
-        register_custom_type_definition(example)
-
-        logger.info(f"Imported example type: {type_id}")
-        return example
+        """Import an example type definition."""
+        return self._custom_type_manager.import_example(type_id)
 
     def list_example_types(self) -> list[dict[str, Any]]:
-        """
-        List available example types that can be imported.
-
-        Returns:
-            List of example type definitions
-        """
-        results = []
-        for type_id in list_example_types():
-            example = get_example_type(type_id)
-            if example:
-                results.append(example.to_dict())
-        return results
+        """List available example types that can be imported."""
+        return self._custom_type_manager.list_examples()
 
     def _load_custom_types(self) -> None:
         """Load custom type definitions from storage into memory."""
-        try:
-            custom_types = self.storage.list_custom_types()
-            for ct in custom_types:
-                type_def = CustomTypeDefinition.from_dict(ct)
-                register_custom_type_definition(type_def)
-            logger.debug(f"Loaded {len(custom_types)} custom type definitions")
-        except Exception as e:
-            logger.warning(f"Failed to load custom types: {e}")
+        self._custom_type_manager.load_from_storage()
 
     # === Per-Profile Memory Isolation ===
 
