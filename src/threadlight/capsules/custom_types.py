@@ -40,7 +40,7 @@ class FieldDefinition:
     - list: List of strings (comma-separated in UI)
 
     The `output_template` field defines how this field should be rendered in context
-    composition. Use {field_name} as a placeholder for the field's value.
+    composition. Use {field_name} or {value} as a placeholder for the field's value.
     Example: "There is {tone} in your tone when speaking of them."
     If no template is provided, the field will be rendered as "field_name: value".
     """
@@ -50,7 +50,7 @@ class FieldDefinition:
     required: bool = True
     default: Any = None
     help_text: str = ""
-    output_template: str = ""  # Shows how field appears in AI context
+    output_template: str = ""  # How field appears in AI context
     label: str = ""  # Display label (optional, defaults to name)
 
     def __post_init__(self) -> None:
@@ -121,7 +121,7 @@ class FieldDefinition:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> FieldDefinition:
         """Deserialize from dictionary."""
-        # Support both output_template (new) and template (legacy)
+        # Support both output_template (preferred) and template (legacy)
         output_template = data.get("output_template") or data.get("template") or ""
         return cls(
             name=data["name"],
@@ -135,10 +135,10 @@ class FieldDefinition:
 
     def format_value(self, value: Any) -> str:
         """
-        Format a field value using the output template.
+        Format a field value using the output_template.
 
-        If an output_template is defined, substitutes {field_name} or {value}
-        with the actual value. Otherwise returns a simple "name: value" format.
+        If an output_template is defined, substitutes {value} or {field_name} with
+        the actual value. Otherwise returns a simple "name: value" format.
 
         Args:
             value: The field value to format
@@ -156,9 +156,9 @@ class FieldDefinition:
             value_str = str(value)
 
         if self.output_template:
-            # Support both {field_name} and {value} as placeholders
-            result = self.output_template.replace(f"{{{self.name}}}", value_str)
-            result = result.replace("{value}", value_str)
+            # Support both {value} and {field_name} as placeholders
+            result = self.output_template.replace("{value}", value_str)
+            result = result.replace(f"{{{self.name}}}", value_str)
             return result
         else:
             display_name = self.label or self.name

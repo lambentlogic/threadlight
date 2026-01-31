@@ -256,12 +256,11 @@ class SemanticSearchRequest(BaseModel):
 class FieldDefinitionRequest(BaseModel):
     name: str
     field_type: Optional[str] = None  # "string", "text", "number", "date", "list" (preferred)
-    type: Optional[str] = None  # Deprecated: use field_type (kept for JS compatibility)
+    type: Optional[str] = None  # Deprecated: use field_type (kept for backward compatibility)
     required: bool = True
     default: Optional[Any] = None
     help_text: str = ""
-    output_template: str = ""  # Shows how field appears in AI context, e.g., "There is {tone} in your tone"
-    template: str = ""  # Deprecated: use output_template
+    template: str = ""  # How field appears in AI context, e.g., "There is {value} in your tone"
     label: str = ""  # Display label (optional, defaults to name)
 
 

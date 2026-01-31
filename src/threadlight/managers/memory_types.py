@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Built-in type definitions for list_types()
 # Each field includes:
 # - help_text: Explains what to enter in this field
-# - template: Shows how this field appears in the AI's context
+# - output_template: Shows how this field appears in the AI's context
 BUILTIN_TYPES = [
     {
         "type_id": "relational",
@@ -37,28 +37,28 @@ BUILTIN_TYPES = [
                 "type": "string",
                 "required": True,
                 "help_text": "Name of the person, place, or thing",
-                "template": "(You recall {entity}...)",
+                "output_template": "(You recall {entity}...)",
             },
             {
                 "name": "summary",
                 "type": "text",
                 "required": True,
                 "help_text": "Key information to remember about them",
-                "template": "{summary}.",
+                "output_template": "{summary}.",
             },
             {
                 "name": "tone",
                 "type": "string",
                 "required": False,
                 "help_text": "How you feel about them (e.g., warm, professional, playful)",
-                "template": "There is {tone} in your tone when speaking of them.",
+                "output_template": "There is {tone} in your tone when speaking of them.",
             },
             {
                 "name": "role",
                 "type": "string",
                 "required": False,
                 "help_text": "Their role or relationship (e.g., friend, coworker, mentor)",
-                "template": "({role})",
+                "output_template": "({role})",
             },
         ],
         "example_output": "(You recall Sarah (mentor). She taught me Python and always "
@@ -78,7 +78,7 @@ BUILTIN_TYPES = [
                 "required": True,
                 "label": "Phrase",
                 "help_text": "The phrase or belief itself",
-                "template": '(A core belief: "{seed}")',
+                "output_template": '(A core belief: "{seed}")',
             },
             {
                 "name": "origin",
@@ -86,7 +86,7 @@ BUILTIN_TYPES = [
                 "required": False,
                 "label": "Origin",
                 "help_text": "Where this phrase comes from (e.g., a book, personal experience)",
-                "template": "(from {origin})",
+                "output_template": "(from {origin})",
             },
             {
                 "name": "function",
@@ -94,7 +94,7 @@ BUILTIN_TYPES = [
                 "required": False,
                 "label": "Purpose",
                 "help_text": "What this belief helps with (e.g., stay calm, be honest)",
-                "template": "It serves to {function}.",
+                "output_template": "It serves to {function}.",
             },
         ],
         "example_output": '(A core belief (from experience): "I acknowledge uncertainty '
@@ -113,28 +113,28 @@ BUILTIN_TYPES = [
                 "type": "string",
                 "required": True,
                 "help_text": "Command name starting with / (e.g., /morning, /focus)",
-                "template": "[Command: {name}]",
+                "output_template": "[Command: {name}]",
             },
             {
                 "name": "description",
                 "type": "text",
                 "required": False,
                 "help_text": "What this command means or does",
-                "template": "Meaning: {description}",
+                "output_template": "Meaning: {description}",
             },
             {
                 "name": "valence",
                 "type": "string",
                 "required": False,
                 "help_text": "Emotional tone: comforting, grounding, playful, reflective",
-                "template": "Valence: {valence}",
+                "output_template": "Valence: {valence}",
             },
             {
                 "name": "response_style",
                 "type": "text",
                 "required": False,
                 "help_text": "How to respond (e.g., brief and direct, warm and supportive)",
-                "template": "Style: {response_style}",
+                "output_template": "Style: {response_style}",
             },
         ],
         "example_output": "[Command: /focus] Meaning: Time to concentrate on the task. "
@@ -153,21 +153,21 @@ BUILTIN_TYPES = [
                 "type": "text",
                 "required": True,
                 "help_text": "What happened or what was realized",
-                "template": "(You remember: {moment}.",
+                "output_template": "(You remember: {moment}.",
             },
             {
                 "name": "feeling",
                 "type": "string",
                 "required": False,
                 "help_text": "The emotional response (e.g., gratitude, clarity, pride)",
-                "template": "You felt {feeling}.",
+                "output_template": "You felt {feeling}.",
             },
             {
                 "name": "effect",
                 "type": "string",
                 "required": False,
                 "help_text": "How it changed things going forward",
-                "template": "{effect})",
+                "output_template": "{effect})",
             },
         ],
         "example_output": "(You remember: When they thanked me for being patient. "
@@ -186,28 +186,28 @@ BUILTIN_TYPES = [
                 "type": "string",
                 "required": True,
                 "help_text": "Unique name for this style (e.g., professional, casual)",
-                "template": "Style: {style_id}",
+                "output_template": "Style: {style_id}",
             },
             {
                 "name": "tone_base",
                 "type": "string",
                 "required": True,
                 "help_text": "Base tone (e.g., warm and direct, formal and precise)",
-                "template": "Your voice is {tone_base}.",
+                "output_template": "Your voice is {tone_base}.",
             },
             {
                 "name": "permissions",
                 "type": "list",
                 "required": False,
                 "help_text": "Things the AI is allowed to do (e.g., use humor, be brief)",
-                "template": "You are permitted to: {permissions}.",
+                "output_template": "You are permitted to: {permissions}.",
             },
             {
                 "name": "constraints",
                 "type": "list",
                 "required": False,
                 "help_text": "Things to avoid (e.g., avoid jargon, no emojis)",
-                "template": "Avoid: {constraints}.",
+                "output_template": "Avoid: {constraints}.",
             },
         ],
         "example_output": "Your voice is warm and direct. You are permitted to: use humor, "
@@ -226,14 +226,14 @@ BUILTIN_TYPES = [
                 "type": "text",
                 "required": True,
                 "help_text": "The note itself - any text you want to remember",
-                "template": "{content}",
+                "output_template": "{content}",
             },
             {
                 "name": "about",
                 "type": "string",
                 "required": False,
                 "help_text": "What or who this note is about (optional context)",
-                "template": "(Re: {about})",
+                "output_template": "(Re: {about})",
             },
         ],
         "example_output": "(Re: project deadline) The deadline moved to Friday, "
@@ -270,7 +270,7 @@ class CustomTypeManager:
         display_name: str,
         fields: list[dict[str, Any]],
         description: str = "",
-        display_template: str = "",
+        display_output_template: str = "",
         icon: str = "file-text",
     ) -> 'CustomTypeDefinition':
         """
@@ -286,7 +286,7 @@ class CustomTypeManager:
                     - default: Default value (optional)
                     - help_text: Help text for UI (optional)
             description: Description of what this type is for
-            display_template: Template for display, e.g., "{name} ({status})"
+            display_output_template: Template for display, e.g., "{name} ({status})"
             icon: Icon name for UI (default: "file-text")
 
         Returns:
@@ -315,7 +315,7 @@ class CustomTypeManager:
             display_name=display_name,
             description=description,
             fields=field_defs,
-            display_template=display_template or f"{{{field_defs[0].name if field_defs else 'type_id'}}}",
+            display_output_template=display_output_template or f"{{{field_defs[0].name if field_defs else 'type_id'}}}",
             icon=icon,
         )
 
@@ -383,7 +383,7 @@ class CustomTypeManager:
         display_name: Optional[str] = None,
         description: Optional[str] = None,
         fields: Optional[list[dict[str, Any]]] = None,
-        display_template: Optional[str] = None,
+        display_output_template: Optional[str] = None,
         icon: Optional[str] = None,
     ) -> bool:
         """
@@ -396,7 +396,7 @@ class CustomTypeManager:
             display_name: New display name (optional)
             description: New description (optional)
             fields: New field definitions (optional)
-            display_template: New display template (optional)
+            display_output_template: New display output_template (optional)
             icon: New icon (optional)
 
         Returns:
@@ -433,8 +433,8 @@ class CustomTypeManager:
                     "help_text": f.get("help_text", ""),
                 })
             updates["fields"] = field_defs
-        if display_template is not None:
-            updates["display_template"] = display_template
+        if display_output_template is not None:
+            updates["display_output_template"] = display_output_template
         if icon is not None:
             updates["icon"] = icon
 

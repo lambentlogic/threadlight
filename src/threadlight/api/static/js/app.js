@@ -2963,13 +2963,13 @@ function threadlightApp() {
                 display_name: '',
                 description: '',
                 display_template: '',
-                fields: [{ name: '', field_type: 'string', required: false, help_text: '', template: '' }],
+                fields: [{ name: '', field_type: 'string', required: false, help_text: '', output_template: '' }],
             };
             this.showMemoryTypeEditor = true;
         },
 
         addMemoryTypeField() {
-            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false, help_text: '', template: '' });
+            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false, help_text: '', output_template: '' });
         },
 
         removeMemoryTypeField(index) {
@@ -3003,7 +3003,7 @@ function threadlightApp() {
                             field_type: f.field_type,
                             required: f.required,
                             help_text: f.help_text || '',
-                            template: f.template || '',
+                            output_template: f.output_template || '',
                         })),
                     }),
                 });

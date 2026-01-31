@@ -2845,9 +2845,9 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                         </div>
                                         <p x-show="field.help_text" class="text-sm text-threadlight-muted" x-text="field.help_text"></p>
                                         <p x-show="field.description && !field.help_text" class="text-sm text-threadlight-muted" x-text="field.description"></p>
-                                        <div x-show="field.template" class="mt-2 p-2 bg-threadlight-surface rounded border-l-2 border-threadlight-accent/50">
-                                            <span class="text-xs text-threadlight-muted">Context template:</span>
-                                            <code class="block text-xs text-threadlight-accent mt-1" x-text="field.template"></code>
+                                        <div x-show="field.output_template" class="mt-2 p-2 bg-threadlight-surface rounded border-l-2 border-threadlight-accent/50">
+                                            <span class="text-xs text-threadlight-muted">Output format:</span>
+                                            <code class="block text-xs text-threadlight-accent mt-1" x-text="field.output_template"></code>
                                         </div>
                                     </div>
                                 </template>
@@ -2979,12 +2979,12 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                                 <input type="text" x-model="field.help_text" placeholder="Describe what this field is for..."
                                                     class="w-full bg-threadlight-elevated border border-threadlight-border rounded px-3 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none">
                                             </div>
-                                            <!-- Row 3: Context Template -->
+                                            <!-- Row 3: Output Template -->
                                             <div>
-                                                <label class="block text-xs text-threadlight-muted mb-1">Context Template (how this field appears to the AI)</label>
-                                                <input type="text" x-model="field.template" placeholder="e.g., There is {value} in your tone when speaking of them."
+                                                <label class="block text-xs text-threadlight-muted mb-1">Output Format (how this appears to the AI)</label>
+                                                <input type="text" x-model="field.output_template" placeholder="e.g., There is {tone} in your tone when speaking of them."
                                                     class="w-full bg-threadlight-elevated border border-threadlight-border rounded px-3 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none">
-                                                <p class="text-xs text-threadlight-muted mt-1">Use {value} as a placeholder. If empty, shows as "field_name: value"</p>
+                                                <p class="text-xs text-threadlight-muted mt-1">Use {field_name} as placeholder. E.g., "You feel {mood}." becomes "You feel happy."</p>
                                             </div>
                                         </div>
                                     </div>
