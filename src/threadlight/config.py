@@ -23,6 +23,10 @@ def save_api_key_to_env(provider_id: str, api_key: str) -> Path:
     The key is saved in the format: <PROVIDER_ID>_API_KEY=<key>
     This allows automatic loading via load_dotenv() on startup.
 
+    After saving, the .env file is reloaded with override=True so the
+    new value is immediately available to the running process without
+    requiring a server restart.
+
     Args:
         provider_id: The provider identifier (e.g., "openai", "anthropic")
         api_key: The API key to save
@@ -47,6 +51,11 @@ def save_api_key_to_env(provider_id: str, api_key: str) -> Path:
     # Use python-dotenv's set_key to add/update the key
     # This preserves other variables in the file
     set_key(str(env_path), env_var_name, api_key)
+
+    # Reload the .env file so the new value is immediately available
+    # to the running process. override=True ensures the new value
+    # replaces any existing environment variable.
+    load_dotenv(env_path, override=True)
 
     return env_path
 
