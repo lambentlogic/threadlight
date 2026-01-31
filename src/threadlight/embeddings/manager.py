@@ -338,7 +338,12 @@ class EmbeddingManager:
         if hasattr(self.storage, 'get_capsules_needing_embeddings'):
             return self.storage.get_capsules_needing_embeddings(limit=10000)
         # Fallback: get all capsules and filter in Python
-        all_capsules = self.storage.list_capsules(CapsuleFilter(limit=10000))
+        # Explicitly bypass profile scoping to get ALL capsules
+        all_capsules = self.storage.list_capsules(CapsuleFilter(
+            limit=10000,
+            profile_scope=None,  # Explicit: no profile filtering
+            include_shared=True,  # Explicit: include everything
+        ))
         return [c for c in all_capsules if c.embedding is None]
 
     def get_messages_needing_embeddings(self, limit: int = 10000) -> list[Message]:
@@ -379,8 +384,12 @@ class EmbeddingManager:
         # Generate query embedding
         query_embedding = self.provider.embed(query)
 
-        # Get capsules with embeddings
-        capsules = self.storage.list_capsules(CapsuleFilter(limit=10000))
+        # Get capsules with embeddings - search across all profiles
+        capsules = self.storage.list_capsules(CapsuleFilter(
+            limit=10000,
+            profile_scope=None,  # Search across all profiles
+            include_shared=True,
+        ))
         capsules_with_embeddings = [c for c in capsules if c.embedding is not None]
 
         # Filter by type if specified
@@ -508,8 +517,12 @@ class EmbeddingManager:
         capsules_cleared = 0
         messages_cleared = 0
 
-        # Clear capsule embeddings
-        all_capsules = self.storage.list_capsules(CapsuleFilter(limit=10000))
+        # Clear capsule embeddings - across all profiles
+        all_capsules = self.storage.list_capsules(CapsuleFilter(
+            limit=10000,
+            profile_scope=None,  # Clear across all profiles
+            include_shared=True,
+        ))
         for capsule in all_capsules:
             if capsule.embedding is not None:
                 capsule.embedding = None
@@ -542,8 +555,24 @@ class EmbeddingManager:
 
     def get_embedding_stats(self) -> dict[str, Any]:
         """Get statistics about embedding coverage."""
-        all_capsules = self.storage.list_capsules(CapsuleFilter(limit=10000))
+        # Use count_capsules for total count (more efficient for stats)
+        # When filter is None, count_capsules returns ALL capsules regardless of scope
+        total_capsules = self.storage.count_capsules()
+
+        # For counting embeddings, we need to check each capsule
+        # Use a high limit to get all capsules, explicitly no profile filtering
+        all_capsules = self.storage.list_capsules(CapsuleFilter(
+            limit=10000,
+            profile_scope=None,  # Explicit: no profile filtering
+            include_shared=True,  # Explicit: include everything
+        ))
         capsules_with_embeddings = sum(1 for c in all_capsules if c.embedding is not None)
+
+        # Use actual total from count_capsules (handles case where limit is exceeded)
+        if total_capsules > len(all_capsules):
+            # If there are more capsules than our limit, we can't accurately count embeddings
+            # Use the count we have as a lower bound
+            logger.warning(f"Capsule count ({total_capsules}) exceeds limit, embedding count may be incomplete")
 
         # Count messages with embeddings
         total_messages = self.storage.count_messages()
@@ -555,9 +584,9 @@ class EmbeddingManager:
             "provider": self.provider.model_name,
             "dimension": self.provider.dimension,
             "capsules": {
-                "total": len(all_capsules),
+                "total": total_capsules,
                 "with_embeddings": capsules_with_embeddings,
-                "coverage": capsules_with_embeddings / len(all_capsules) if all_capsules else 0,
+                "coverage": capsules_with_embeddings / total_capsules if total_capsules else 0,
             },
             "messages": {
                 "total": total_messages,
