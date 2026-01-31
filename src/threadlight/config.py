@@ -543,7 +543,7 @@ class ThreadlightConfig:
         return cls(
             provider=ProviderConfig(
                 type=os.getenv("THREADLIGHT_PROVIDER", "openai"),
-                api_base=os.getenv(
+                _api_base=os.getenv(
                     "THREADLIGHT_API_BASE",
                     "https://inference-api.nousresearch.com/v1"
                 ),
