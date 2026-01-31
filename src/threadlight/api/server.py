@@ -2336,8 +2336,10 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         """Create a new provider definition.
 
         This adds a named provider that can be referenced by models via provider_id.
+        If an api_key is provided, it will be saved to ~/.config/threadlight/.env
+        and the provider will use the environment variable instead of storing the key.
         """
-        from threadlight.config import ProviderDefinition, Endpoint
+        from threadlight.config import ProviderDefinition, Endpoint, save_api_key_to_env
 
         tl = get_threadlight()
 
@@ -2359,13 +2361,22 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     purpose=ep.purpose,
                 ))
 
+        # Handle API key: save to .env file if provided
+        api_key_env_var = request.api_key_env_var
+        if request.api_key:
+            # Save the key to .env file
+            save_api_key_to_env(request.id, request.api_key)
+            # Set the env var name so the provider loads it from environment
+            api_key_env_var = f"{request.id.upper()}_API_KEY"
+
         # Create provider definition
+        # Note: api_key is intentionally None - we use api_key_env_var instead
         provider = ProviderDefinition(
             id=request.id,
             name=request.name,
             type=request.type,
-            api_key=request.api_key,
-            api_key_env_var=request.api_key_env_var,
+            api_key=None,  # Don't store in memory, use env var
+            api_key_env_var=api_key_env_var,
             endpoints=endpoints,
             default_model=request.default_model,
             timeout=request.timeout,
@@ -2416,8 +2427,12 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     @app.put("/api/providers/{provider_id}")
     async def update_provider(provider_id: str, request: ProviderUpdateRequest):
-        """Update an existing provider definition."""
-        from threadlight.config import Endpoint
+        """Update an existing provider definition.
+
+        If an api_key is provided, it will be saved to ~/.config/threadlight/.env
+        and the provider will use the environment variable instead of storing the key.
+        """
+        from threadlight.config import Endpoint, save_api_key_to_env
 
         tl = get_threadlight()
 
@@ -2431,12 +2446,23 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         if request.type is not None:
             provider_def.type = request.type
 
-        # Handle API key updates - allow clearing by sending empty string
-        # This enables switching between direct key and env var modes
-        if request.api_key is not None:
-            provider_def.api_key = request.api_key if request.api_key else None
+        # Handle API key updates
+        # If a new api_key is provided, save it to .env and use env var
+        if request.api_key is not None and request.api_key:
+            # Save the key to .env file
+            save_api_key_to_env(provider_id, request.api_key)
+            # Set the env var name so the provider loads it from environment
+            provider_def.api_key_env_var = f"{provider_id.upper()}_API_KEY"
+            # Clear in-memory key
+            provider_def.api_key = None
+        elif request.api_key == "":
+            # Empty string means clear the key entirely
+            provider_def.api_key = None
+
+        # Allow explicit api_key_env_var override (for manual env var references)
         if request.api_key_env_var is not None:
             provider_def.api_key_env_var = request.api_key_env_var if request.api_key_env_var else None
+
         if request.default_model is not None:
             provider_def.default_model = request.default_model
         if request.timeout is not None:

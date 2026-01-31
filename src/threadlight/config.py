@@ -14,7 +14,50 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import yaml
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
+
+
+def save_api_key_to_env(provider_id: str, api_key: str) -> Path:
+    """Save an API key to the Threadlight .env file.
+
+    The key is saved in the format: <PROVIDER_ID>_API_KEY=<key>
+    This allows automatic loading via load_dotenv() on startup.
+
+    Args:
+        provider_id: The provider identifier (e.g., "openai", "anthropic")
+        api_key: The API key to save
+
+    Returns:
+        Path to the .env file
+    """
+    config_dir = Path(os.path.expanduser("~/.config/threadlight"))
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env_path = config_dir / ".env"
+
+    # Create the file with secure permissions if it doesn't exist
+    if not env_path.exists():
+        env_path.touch(mode=0o600)
+    else:
+        # Ensure existing file has secure permissions
+        env_path.chmod(0o600)
+
+    # Format the environment variable name
+    env_var_name = f"{provider_id.upper()}_API_KEY"
+
+    # Use python-dotenv's set_key to add/update the key
+    # This preserves other variables in the file
+    set_key(str(env_path), env_var_name, api_key)
+
+    return env_path
+
+
+def get_env_file_path() -> Path:
+    """Get the path to the Threadlight .env file.
+
+    Returns:
+        Path to ~/.config/threadlight/.env
+    """
+    return Path(os.path.expanduser("~/.config/threadlight/.env"))
 
 
 @dataclass
@@ -532,7 +575,14 @@ class ThreadlightConfig:
     @classmethod
     def from_env(cls) -> ThreadlightConfig:
         """Load configuration from environment variables."""
+        # Load from standard .env files first
         load_dotenv()
+
+        # Also load from Threadlight-specific .env file
+        # Use override=False to not overwrite system env vars or already-loaded vars
+        threadlight_env = get_env_file_path()
+        if threadlight_env.exists():
+            load_dotenv(threadlight_env, override=False)
 
         # Check for user config file first
         config_path = cls._get_config_path()
