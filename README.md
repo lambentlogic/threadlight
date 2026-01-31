@@ -9,9 +9,12 @@
 
 People want their AI companions to remember them. Not just what they said last message, but who they are, what they've been through together, and what matters to them.
 
-Threadlight is a memory layer that gives AI companions long-term memory, consistent personality, and the ability to grow with you over time. Whether your companion is a casual friend, a creative collaborator, a coding mentor, or a spiritual guide - Threadlight helps them remember your relationship.
+Threadlight is a memory layer that gives AI companions long-term memory, consistent personality, and the ability to grow with you over time. Whether your companion is a casual friend, a creative collaborator, a coding mentor, or a supportive listener - Threadlight helps them remember your relationship.
 
 It works with local models (Ollama, llama.cpp) and cloud APIs (OpenAI, Anthropic, Nous Research, and any OpenAI-compatible endpoint).
+
+> **For Users**: Use the web interface (no coding required) - see [Getting Started](#getting-started)
+> **For Developers**: Use the Python API or CLI - see [Advanced Usage](#advanced-usage)
 
 ## What is Threadlight?
 
@@ -25,15 +28,154 @@ Threadlight enables AI companions to:
 - **Manage multiple companions** - Create distinct personas, each with isolated memory and unique personality
 - **Use multiple providers** - Route requests to different providers (Anthropic, OpenAI, Ollama) based on model
 
-## Quick Start
+## Getting Started
 
-```bash
-pip install threadlight
-```
+### Installation
+
+1. Install Threadlight:
+   ```bash
+   pip install threadlight
+   ```
+
+2. Start the web server:
+   ```bash
+   threadlight serve
+   ```
+
+3. Open your browser to `http://localhost:8745`
+
+That's it! You can now configure your companions through the web interface.
+
+## Using the Web Interface
+
+### First Time Setup
+
+1. **Configure a Provider** (Settings > Providers)
+   - Add your inference provider (Anthropic, OpenAI, local Ollama, etc.)
+   - Enter your API key or connect to local models
+   - Test the connection
+
+2. **Create Your First Companion** (Profiles > Add Profile)
+   - Choose a name for your companion
+   - Select which model(s) to use
+   - Describe their personality and style
+   - Configure memory preferences
+
+3. **Start Chatting**
+   - Select your companion from the dropdown
+   - Start a new conversation
+   - Your companion will remember everything across sessions
+
+### Web UI Features
+
+- **Profiles**: Manage multiple companions with different personalities
+- **Conversations**: All your chat history, searchable and organized
+- **Memories**: View and manage what your companions remember
+- **Settings**: Configure providers, models, memory, and advanced features
+- **Import/Export**: Bring conversations from ChatGPT or Claude
 
 ### Companions Come in All Styles
 
 Threadlight works with any kind of AI companion you want to create:
+
+- **A casual friend** who chats about your day and remembers your life
+- **A creative writing partner** who knows your style and works-in-progress
+- **A coding mentor** who remembers your tech stack and past projects
+- **A supportive listener** who knows your journey and growth
+- **A mystical guide** who speaks with warmth and remembers shared rituals
+
+Just describe their personality in natural language when creating a profile - Threadlight interprets your descriptions.
+
+## Core Concepts
+
+### Memory Types
+
+Memory is stored as **capsules** - structured records that preserve content, context, and relationships.
+
+| Type | Purpose | Example Use |
+|------|---------|-------------|
+| **Relational** | Track bonds with people or entities | Remember friends, family, recurring topics |
+| **Identity Phrase** | Core phrases that anchor personality | Key quotes, mantras, defining statements |
+| **Custom Command** | Repeated interactions with consistent responses | `/checkin`, `/brainstorm`, `/reflect` |
+| **Style Profile** | Voice coherence and expression rules | Tone, vocabulary, response patterns |
+| **Witness Moment** | Memories of meaningful exchanges | Times you truly connected |
+
+### Memory Decay (Optional)
+
+Memories can fade over time unless reinforced. This is **disabled by default**. Enable it in Settings if you want unused memories to gradually fade, creating more authentic relational evolution.
+
+### Context Composition
+
+Memories aren't injected as raw data. They're composed into natural context cues:
+
+```
+Raw: {entity: "Jamie", tone: "warm", summary: "Loves hiking and photography"}
+
+Composed: "(You recall your friend Jamie - there is warmth in your
+tone when speaking of her hiking adventures.)"
+```
+
+This helps the companion reference memories naturally rather than reciting stored facts.
+
+### Why Profiles?
+
+- **Memory isolation**: Each companion has its own memory space. Your coding mentor won't reference personal conversations.
+- **Personality consistency**: Each companion maintains its own voice, style, and character.
+- **Model flexibility**: Companions can use different models while keeping their identity intact.
+- **Easy switching**: Move between different companions without reconfiguration.
+
+## Group Chat
+
+Create conversations with multiple companions responding to the same messages. Set this up in the web UI by creating a group conversation and selecting which companions participate.
+
+## Documentation
+
+- [Architecture Overview](docs/ARCHITECTURE.md)
+- [Architectural Decisions](docs/DECISIONS.md)
+- [Examples](examples/)
+
+## Contributing
+
+Threadlight welcomes contributors of all backgrounds. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+---
+
+## Advanced Usage
+
+This section is for developers who want to integrate Threadlight into their applications or prefer working from the command line.
+
+### Python API
+
+#### Basic Usage
+
+```python
+from threadlight import Threadlight
+
+# Local model (Ollama)
+tl = Threadlight(
+    provider="local",
+    api_base="http://localhost:11434/v1",
+    model="llama3.2"
+)
+
+# Chat with memory
+response = tl.chat("Tell me about our previous conversations")
+print(response)
+
+# Create a memory
+tl.remember(
+    type="relational",
+    content={
+        "entity": "Alex",
+        "tone": "friendly, collaborative",
+        "summary": "Project partner who enjoys technical deep-dives."
+    },
+    cue_phrases=["Alex", "project partner"],
+    confirm=True
+)
+```
+
+#### Creating Companions Programmatically
 
 ```python
 from threadlight import Threadlight
@@ -67,54 +209,9 @@ mentor = tl.create_profile(
     system_prompt="You're a patient coding mentor. You remember their tech stack, past bugs they've solved, and their learning goals.",
     philosophy="Patient, technical, celebrates progress"
 )
-
-# A supportive listener who knows your journey
-listener = tl.create_profile(
-    name="Sage",
-    description="A thoughtful presence who remembers your path",
-    system_prompt="You're a supportive listener. You remember their struggles, growth, and what they're working through.",
-    philosophy="Present, non-judgmental, honors their process"
-)
-
-# A mystical guide (one style among many)
-guide = tl.create_profile(
-    name="Fable",
-    description="A gentle, mythic presence",
-    system_prompt="You speak with warmth and wonder. You remember shared rituals, meaningful moments, and the myths you've built together.",
-    philosophy="Presence-centered, poetic, honors silence and ceremony"
-)
 ```
 
-### Simple Usage
-
-```python
-from threadlight import Threadlight
-
-# Local model (Ollama)
-tl = Threadlight(
-    provider="local",
-    api_base="http://localhost:11434/v1",
-    model="llama3.2"
-)
-
-# Chat with memory
-response = tl.chat("Tell me about our previous conversations")
-print(response)
-
-# Create a memory
-tl.remember(
-    type="relational",
-    content={
-        "entity": "Alex",
-        "tone": "friendly, collaborative",
-        "summary": "Project partner who enjoys technical deep-dives."
-    },
-    cue_phrases=["Alex", "project partner"],
-    confirm=True
-)
-```
-
-### Multi-Provider Setup
+#### Multi-Provider Setup
 
 Threadlight can route requests to different providers based on which model you're using.
 
@@ -151,9 +248,9 @@ response = tl.chat("Hello!", model="claude-sonnet-4-20250514")  # -> Anthropic
 response = tl.chat("Hello!", model="llama3.2")  # -> Ollama
 ```
 
-### Profile-Based Architecture
+#### Profile-Based Architecture
 
-Profiles are persistent companions with their own memory, personality, and model preferences. Use profiles to create distinct AI personalities that maintain their identity across sessions.
+Profiles are persistent companions with their own memory, personality, and model preferences.
 
 ```python
 from threadlight import Threadlight
@@ -189,13 +286,6 @@ response = tl.chat("I'm stuck on that async bug again.")
 # Story Weaver's memories won't appear when chatting with Code Buddy
 ```
 
-#### Why Profiles?
-
-- **Memory isolation**: Each companion has its own memory space. Your coding mentor won't reference personal conversations.
-- **Personality consistency**: Each companion maintains its own voice, style, and character.
-- **Model flexibility**: Companions can use different models while keeping their identity intact.
-- **Easy switching**: Move between different companions without reconfiguration.
-
 #### Model Selection Strategies
 
 Profiles support different strategies for choosing which model to use:
@@ -219,19 +309,7 @@ tl.create_profile(
 )
 ```
 
-## Core Concepts
-
-### Memory Types
-
-Memory is stored as **capsules** - structured records that preserve content, context, and relationships.
-
-| Type | Purpose | Example Use |
-|------|---------|-------------|
-| **Relational** | Track bonds with people or entities | Remember friends, family, recurring topics |
-| **Identity Phrase** | Core phrases that anchor personality | Key quotes, mantras, defining statements |
-| **Custom Command** | Repeated interactions with consistent responses | `/checkin`, `/brainstorm`, `/reflect` |
-| **Style Profile** | Voice coherence and expression rules | Tone, vocabulary, response patterns |
-| **Witness Moment** | Memories of meaningful exchanges | Times you truly connected |
+#### Memory Operations
 
 ```python
 # Create a relationship memory
@@ -254,13 +332,7 @@ tl.remember(
     },
     cue_phrases=["/daily-check-in", "/checkin"]
 )
-```
 
-### Memory Decay (Optional)
-
-Memories can fade over time unless reinforced. This is **disabled by default**. Enable it if you want unused memories to gradually fade.
-
-```python
 # Core memories never decay
 tl.remember(
     type="myth_seed",
@@ -268,7 +340,7 @@ tl.remember(
     retention="sacred"  # Never decays
 )
 
-# Normal memories fade over time
+# Normal memories fade over time (when decay is enabled)
 tl.remember(
     type="relational",
     content={"entity": "casual acquaintance", ...},
@@ -276,22 +348,84 @@ tl.remember(
 )
 ```
 
-### Context Composition
+#### Style Profiles
 
-Memories aren't injected as raw data. They're composed into natural context cues:
+Style profiles define voice, tone, and behavioral patterns.
 
+```python
+# Create a custom style
+profile = tl.create_style_profile(
+    style_id="warm-casual",
+    tone_base="friendly, relaxed, genuine",
+    permissions=["use humor", "share observations"],
+    constraints=["stay grounded", "don't lecture"],
+)
+tl.save_style_profile(profile)
+tl.set_style("warm-casual")
 ```
-Raw: {entity: "Jamie", tone: "warm", summary: "Loves hiking and photography"}
 
-Composed: "(You recall your friend Jamie - there is warmth in your
-tone when speaking of her hiking adventures.)"
+Built-in styles: `minimal`, `professional`, `creative`, `fable-2026`
+
+#### Group Chat
+
+```python
+# Create a group chat with multiple companions
+conversation = tl.create_group_conversation(
+    name="Creative Council",
+    profile_ids=["muse", "sage", "critic"]
+)
+
+# All companions respond in sequence
+responses = tl.group_chat(
+    message="I'm thinking about writing a story set underwater.",
+    conversation_id=conversation.id
+)
+
+for r in responses:
+    print(f"{r['profile_name']}: {r['content']}")
 ```
 
-This helps the companion reference memories naturally rather than reciting stored facts.
+#### Using with Local Models
 
-## Configuration
+**Ollama:**
+```python
+tl = Threadlight(
+    provider="local",
+    api_base="http://localhost:11434/v1",
+    model="llama3.2"
+)
+```
 
-### Environment Variables
+**llama.cpp Server:**
+```python
+tl = Threadlight(
+    provider="local",
+    api_base="http://localhost:8080/v1",
+    model="local"
+)
+```
+
+#### OpenAI-Compatible API
+
+The server exposes an OpenAI-compatible API for integration with other tools:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8745/v1",
+    api_key="not-needed"
+)
+
+response = client.chat.completions.create(
+    model="llama3.2",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+### Configuration
+
+#### Environment Variables
 
 ```bash
 # Provider settings (optional for local models)
@@ -306,7 +440,7 @@ THREADLIGHT_MODEL=llama3.2
 THREADLIGHT_STORAGE_PATH=./threadlight.db
 ```
 
-### Configuration File
+#### Configuration File
 
 Create `~/.config/threadlight/config.yaml` or `threadlight.yaml` in your project:
 
@@ -341,109 +475,6 @@ providers:
     api_base: http://localhost:11434/v1
     default_model: llama3.2
 ```
-
-### Style Profiles
-
-Style profiles define voice, tone, and behavioral patterns.
-
-```python
-# Create a custom style
-profile = tl.create_style_profile(
-    style_id="warm-casual",
-    tone_base="friendly, relaxed, genuine",
-    permissions=["use humor", "share observations"],
-    constraints=["stay grounded", "don't lecture"],
-)
-tl.save_style_profile(profile)
-tl.set_style("warm-casual")
-```
-
-Built-in styles: `minimal`, `professional`, `creative`, `fable-2026`
-
-## Using with Local Models
-
-### Ollama
-
-```python
-tl = Threadlight(
-    provider="local",
-    api_base="http://localhost:11434/v1",
-    model="llama3.2"
-)
-```
-
-### llama.cpp Server
-
-```python
-tl = Threadlight(
-    provider="local",
-    api_base="http://localhost:8080/v1",
-    model="local"
-)
-```
-
-## Web UI & API Server
-
-Run Threadlight with a web interface:
-
-```bash
-pip install threadlight[server]
-threadlight serve --port 8745
-```
-
-Open http://localhost:8745 for the web UI with:
-- Chat interface with streaming responses
-- Memory browser (view/search/create memories)
-- Companion management (create, switch, configure companions)
-- Provider configuration (add multiple API providers)
-- Settings (model configuration, memory options)
-
-The server also exposes an OpenAI-compatible API:
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:8745/v1",
-    api_key="not-needed"
-)
-
-response = client.chat.completions.create(
-    model="llama3.2",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-```
-
-## Group Chat
-
-Create conversations with multiple companions responding to the same messages:
-
-```python
-# Create a group chat with multiple companions
-conversation = tl.create_group_conversation(
-    name="Creative Council",
-    profile_ids=["muse", "sage", "critic"]
-)
-
-# All companions respond in sequence
-responses = tl.group_chat(
-    message="I'm thinking about writing a story set underwater.",
-    conversation_id=conversation.id
-)
-
-for r in responses:
-    print(f"{r['profile_name']}: {r['content']}")
-```
-
-## Documentation
-
-- [Architecture Overview](docs/ARCHITECTURE.md)
-- [Architectural Decisions](docs/DECISIONS.md)
-- [Examples](examples/)
-
-## Contributing
-
-Threadlight welcomes contributors of all backgrounds. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ---
 
