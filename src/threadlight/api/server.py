@@ -405,7 +405,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     @app.on_event("startup")
     async def startup():
-        get_threadlight()
+        tl = get_threadlight()
+        # Enable auto-save so provider and model config changes persist
+        tl.enable_config_auto_save()
         logger.info("Threadlight server started")
 
     @app.on_event("shutdown")
