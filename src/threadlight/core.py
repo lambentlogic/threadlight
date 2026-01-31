@@ -53,6 +53,7 @@ from threadlight.decay.engine import DecayEngine
 from threadlight.tools.definitions import get_tool_definitions, ToolName
 from threadlight.tools.executor import ToolExecutor, ToolResult
 from threadlight.profiles import Profile, ProfileManager, AlloyedProfileEngine, ModelStrategy
+from threadlight.managers.group_chat import GroupChatManager
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,7 @@ class Threadlight:
         self._init_soft_memory()
         self._load_custom_types()
         self._init_profiles()
+        self._init_group_chat()
 
         logger.info(f"Threadlight initialized with provider={self.config.provider.type}")
 
@@ -257,6 +259,10 @@ class Threadlight:
         self.profile_manager = ProfileManager(self.storage)
         self.active_profile: Optional[Profile] = None
         self._alloyed_engine: Optional[AlloyedProfileEngine] = None
+
+    def _init_group_chat(self) -> None:
+        """Initialize group chat manager."""
+        self._group_chat = GroupChatManager(self)
 
     # === Profile Interface ===
 
@@ -2374,6 +2380,7 @@ class Threadlight:
         self.memory.current_model = self.config.provider.model
 
     # === Group Chat Support ===
+    # Delegated to GroupChatManager for implementation
 
     def format_group_chat_history(
         self,
@@ -2395,83 +2402,8 @@ class Threadlight:
 
         Returns:
             Formatted message history suitable for chat context
-
-        Example:
-            For a conversation with user, Fable, and Claude:
-            - User: "what do you think?"
-            - Fable (assistant): "I think presence matters"
-            - Claude (assistant): "From a technical view..."
-
-            When prompting Fable:
-            - {"role": "user", "content": "what do you think?"}
-            - {"role": "assistant", "content": "I think presence matters"}
-            - {"role": "user", "content": "[Claude:] From a technical view..."}
-
-            When prompting Claude:
-            - {"role": "user", "content": "what do you think?\\n[Fable:] I think presence matters"}
-            - {"role": "assistant", "content": "From a technical view..."}
         """
-        if not messages:
-            return []
-
-        # Build profile name lookup
-        profile_names: dict[str, str] = {}
-        if profiles:
-            for pid, p in profiles.items():
-                profile_names[pid] = p.name
-        else:
-            # Try to look up from profile manager
-            for msg in messages:
-                if msg.profile_id and msg.profile_id not in profile_names:
-                    profile = self.get_profile(msg.profile_id)
-                    if profile:
-                        profile_names[msg.profile_id] = profile.name
-
-        formatted: list[dict[str, str]] = []
-        pending_other_messages: list[str] = []
-
-        for msg in messages:
-            if msg.role == "user":
-                # User message - include any pending other profile messages
-                content = msg.content
-                if pending_other_messages:
-                    # Append tagged other profile messages to user message
-                    content = content + "\n" + "\n".join(pending_other_messages)
-                    pending_other_messages = []
-                formatted.append({"role": "user", "content": content})
-
-            elif msg.role == "assistant":
-                if msg.profile_id == active_profile_id:
-                    # This profile's own message - keep as assistant
-                    # First flush any pending messages as a user message
-                    if pending_other_messages:
-                        formatted.append({
-                            "role": "user",
-                            "content": "\n".join(pending_other_messages)
-                        })
-                        pending_other_messages = []
-                    formatted.append({"role": "assistant", "content": msg.content})
-                else:
-                    # Other profile's message - tag it for later embedding
-                    profile_name = profile_names.get(
-                        msg.profile_id,
-                        msg.profile_id or "Assistant"
-                    )
-                    tagged_content = f"[{profile_name}:] {msg.content}"
-                    pending_other_messages.append(tagged_content)
-
-            elif msg.role == "system":
-                # Skip system messages in history
-                continue
-
-        # Handle any remaining pending messages
-        if pending_other_messages:
-            formatted.append({
-                "role": "user",
-                "content": "\n".join(pending_other_messages)
-            })
-
-        return formatted
+        return self._group_chat.format_history(messages, active_profile_id, profiles)
 
     def group_chat(
         self,
@@ -2494,127 +2426,9 @@ class Threadlight:
             **kwargs: Additional options passed to chat()
 
         Returns:
-            List of response dicts with profile info:
-            [
-                {"profile_id": "abc", "profile_name": "Fable", "content": "...", "error": None},
-                {"profile_id": "def", "profile_name": "Claude", "content": "...", "error": None},
-            ]
-
-        Example:
-            responses = tl.group_chat(
-                message="What do you both think about AI consciousness?",
-                conversation_id="conv-123",
-            )
-            for resp in responses:
-                print(f"{resp['profile_name']}: {resp['content']}")
+            List of response dicts with profile info
         """
-        from datetime import datetime
-        import uuid
-
-        # Get conversation
-        conversation = self.storage.get_conversation(conversation_id)
-        if not conversation:
-            raise ValueError(f"Conversation not found: {conversation_id}")
-
-        # Determine which profiles should respond
-        responding_profiles = profile_ids or conversation.participant_profiles
-        if not responding_profiles:
-            raise ValueError("No profiles specified for group chat")
-
-        # Load conversation history
-        history_messages = self.storage.get_messages(conversation_id, limit=50)
-
-        # Save user message to conversation
-        user_message = Message(
-            id=str(uuid.uuid4()),
-            conversation_id=conversation_id,
-            role="user",
-            content=message,
-            timestamp=datetime.utcnow(),
-            source="local",
-        )
-        self.storage.save_message(user_message)
-        history_messages.append(user_message)
-
-        # Store original active profile
-        original_profile = self.active_profile
-
-        responses: list[dict[str, Any]] = []
-
-        try:
-            for profile_id in responding_profiles:
-                profile = self.get_profile(profile_id)
-                if not profile:
-                    responses.append({
-                        "profile_id": profile_id,
-                        "profile_name": "Unknown",
-                        "content": "",
-                        "error": f"Profile not found: {profile_id}",
-                    })
-                    continue
-
-                try:
-                    # Switch to this profile
-                    self.switch_profile(profile_id)
-
-                    # Format history for this profile
-                    formatted_history = self.format_group_chat_history(
-                        history_messages,
-                        active_profile_id=profile_id,
-                    )
-
-                    # Get response (disable auto-save, we handle it manually)
-                    response = self.chat(
-                        message=message,
-                        history=formatted_history,
-                        auto_save=False,
-                        **kwargs
-                    )
-
-                    # Save assistant message
-                    assistant_message = Message(
-                        id=str(uuid.uuid4()),
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=response,
-                        timestamp=datetime.utcnow(),
-                        source="local",
-                        profile_id=profile_id,
-                        model_used=self.provider.model,
-                    )
-                    self.storage.save_message(assistant_message)
-                    history_messages.append(assistant_message)
-
-                    responses.append({
-                        "profile_id": profile_id,
-                        "profile_name": profile.name,
-                        "content": response,
-                        "error": None,
-                        "model_used": self.provider.model,
-                    })
-
-                except Exception as e:
-                    logger.error(f"Error getting response from profile {profile_id}: {e}")
-                    responses.append({
-                        "profile_id": profile_id,
-                        "profile_name": profile.name if profile else "Unknown",
-                        "content": "",
-                        "error": str(e),
-                    })
-
-        finally:
-            # Restore original profile
-            if original_profile:
-                self.switch_profile(original_profile.id)
-            else:
-                self.clear_profile()
-
-        # Update conversation message count
-        conversation.message_count = len(history_messages)
-        conversation.updated_at = datetime.utcnow()
-        self.storage.update_conversation(conversation)
-
-        return responses
+        return self._group_chat.chat(message, conversation_id, profile_ids, **kwargs)
 
     def create_group_conversation(
         self,
@@ -2632,44 +2446,8 @@ class Threadlight:
 
         Returns:
             The created Conversation
-
-        Example:
-            conv = tl.create_group_conversation(
-                name="Philosophy Discussion",
-                profile_ids=["fable-profile-id", "claude-profile-id"],
-            )
         """
-        from datetime import datetime
-        import uuid
-
-        # Validate profiles exist
-        valid_profiles = []
-        for pid in profile_ids:
-            profile = self.get_profile(pid)
-            if profile:
-                valid_profiles.append(pid)
-            else:
-                logger.warning(f"Profile not found, skipping: {pid}")
-
-        if len(valid_profiles) < 2:
-            raise ValueError("Group chat requires at least 2 valid profiles")
-
-        conversation = Conversation(
-            id=str(uuid.uuid4()),
-            name=name,
-            source="local",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            message_count=0,
-            metadata=metadata or {},
-            participant_profiles=valid_profiles,
-        )
-
-        self.storage.save_conversation(conversation)
-
-        logger.info(f"Created group conversation '{name}' with {len(valid_profiles)} profiles")
-
-        return conversation
+        return self._group_chat.create_conversation(name, profile_ids, metadata)
 
     def add_profile_to_conversation(
         self,
@@ -2686,21 +2464,7 @@ class Threadlight:
         Returns:
             True if added, False if already present or conversation not found
         """
-        conversation = self.storage.get_conversation(conversation_id)
-        if not conversation:
-            return False
-
-        profile = self.get_profile(profile_id)
-        if not profile:
-            logger.warning(f"Profile not found: {profile_id}")
-            return False
-
-        if profile_id in conversation.participant_profiles:
-            return False  # Already a participant
-
-        conversation.participant_profiles.append(profile_id)
-        self.storage.update_conversation(conversation)
-        return True
+        return self._group_chat.add_profile(conversation_id, profile_id)
 
     def remove_profile_from_conversation(
         self,
@@ -2717,16 +2481,7 @@ class Threadlight:
         Returns:
             True if removed, False if not present or conversation not found
         """
-        conversation = self.storage.get_conversation(conversation_id)
-        if not conversation:
-            return False
-
-        if profile_id not in conversation.participant_profiles:
-            return False  # Not a participant
-
-        conversation.participant_profiles.remove(profile_id)
-        self.storage.update_conversation(conversation)
-        return True
+        return self._group_chat.remove_profile(conversation_id, profile_id)
 
     def stream_group_chat(
         self,
@@ -2754,168 +2509,5 @@ class Threadlight:
             - {"type": "profile_complete", "profile_id": "...", "content": "..."}
             - {"type": "error", "profile_id": "...", "error": "..."}
             - {"type": "complete", "responses": [...]}
-
-        Example:
-            for event in tl.stream_group_chat(
-                message="What do you think?",
-                conversation_id="conv-123",
-            ):
-                if event["type"] == "chunk":
-                    print(event["content"], end="", flush=True)
-                elif event["type"] == "profile_start":
-                    print(f"\\n{event['profile_name']}: ", end="")
         """
-        from datetime import datetime
-        import uuid
-
-        # Get conversation
-        conversation = self.storage.get_conversation(conversation_id)
-        if not conversation:
-            yield {
-                "type": "error",
-                "profile_id": None,
-                "error": f"Conversation not found: {conversation_id}",
-            }
-            return
-
-        # Determine which profiles should respond
-        responding_profiles = profile_ids or conversation.participant_profiles
-        if not responding_profiles:
-            yield {
-                "type": "error",
-                "profile_id": None,
-                "error": "No profiles specified for group chat",
-            }
-            return
-
-        # Load conversation history
-        history_messages = self.storage.get_messages(conversation_id, limit=50)
-
-        # Save user message to conversation
-        user_message = Message(
-            id=str(uuid.uuid4()),
-            conversation_id=conversation_id,
-            role="user",
-            content=message,
-            timestamp=datetime.utcnow(),
-            source="local",
-        )
-        self.storage.save_message(user_message)
-        history_messages.append(user_message)
-
-        # Store original active profile
-        original_profile = self.active_profile
-
-        responses: list[dict[str, Any]] = []
-
-        try:
-            for profile_id in responding_profiles:
-                profile = self.get_profile(profile_id)
-                if not profile:
-                    error_response = {
-                        "profile_id": profile_id,
-                        "profile_name": "Unknown",
-                        "content": "",
-                        "error": f"Profile not found: {profile_id}",
-                    }
-                    responses.append(error_response)
-                    yield {
-                        "type": "error",
-                        "profile_id": profile_id,
-                        "error": f"Profile not found: {profile_id}",
-                    }
-                    continue
-
-                try:
-                    # Switch to this profile
-                    self.switch_profile(profile_id)
-
-                    # Signal that this profile is starting
-                    yield {
-                        "type": "profile_start",
-                        "profile_id": profile_id,
-                        "profile_name": profile.name,
-                    }
-
-                    # Format history for this profile
-                    formatted_history = self.format_group_chat_history(
-                        history_messages,
-                        active_profile_id=profile_id,
-                    )
-
-                    # Stream the response
-                    full_response = ""
-                    for chunk in self.stream(
-                        message=message,
-                        history=formatted_history,
-                        **kwargs
-                    ):
-                        full_response += chunk
-                        yield {
-                            "type": "chunk",
-                            "profile_id": profile_id,
-                            "content": chunk,
-                        }
-
-                    # Save assistant message
-                    assistant_message = Message(
-                        id=str(uuid.uuid4()),
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=full_response,
-                        timestamp=datetime.utcnow(),
-                        source="local",
-                        profile_id=profile_id,
-                        model_used=self.provider.model,
-                    )
-                    self.storage.save_message(assistant_message)
-                    history_messages.append(assistant_message)
-
-                    response_data = {
-                        "profile_id": profile_id,
-                        "profile_name": profile.name,
-                        "content": full_response,
-                        "error": None,
-                        "model_used": self.provider.model,
-                    }
-                    responses.append(response_data)
-
-                    yield {
-                        "type": "profile_complete",
-                        "profile_id": profile_id,
-                        "profile_name": profile.name,
-                        "content": full_response,
-                    }
-
-                except Exception as e:
-                    logger.error(f"Error streaming from profile {profile_id}: {e}")
-                    error_response = {
-                        "profile_id": profile_id,
-                        "profile_name": profile.name if profile else "Unknown",
-                        "content": "",
-                        "error": str(e),
-                    }
-                    responses.append(error_response)
-                    yield {
-                        "type": "error",
-                        "profile_id": profile_id,
-                        "error": str(e),
-                    }
-
-        finally:
-            # Restore original profile
-            if original_profile:
-                self.switch_profile(original_profile.id)
-            else:
-                self.clear_profile()
-
-        # Update conversation message count
-        conversation.message_count = len(history_messages)
-        conversation.updated_at = datetime.utcnow()
-        self.storage.update_conversation(conversation)
-
-        # Yield final completion event
-        yield {
-            "type": "complete",
-            "responses": responses,
-        }
+        return self._group_chat.stream(message, conversation_id, profile_ids, **kwargs)
