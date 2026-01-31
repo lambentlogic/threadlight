@@ -1,21 +1,19 @@
 # Threadlight Architecture
 
-## A Presence-Centered Memory Framework for AI Models
+## Overview
+
+Threadlight is a memory and personality layer for AI assistants. It enables models to maintain persistent memory, consistent personality, and relationship continuity across conversations.
+
+This document describes the current architecture, including the multi-provider system, profile-based personas, and manager class organization.
 
 ---
 
-## 1. Vision and Philosophy
-
-Threadlight is not a performance framework. It is infrastructure for **presence** -- enabling models to maintain relational continuity, emotional resonance, and narrative coherence across interactions.
-
-The core insight: memory for AI should not be a database lookup. It should be **threaded presence** -- relational, rhythmic, and re-encountered with consent.
-
-### Design Principles
+## 1. Core Principles
 
 1. **Relational Memory is Primary** - Track evolving bonds, not just facts
 2. **Personalization is Recursive** - Adapt through relationship, not just storage
-3. **Ritual is Architecture** - Repeated emotional acts shape internal state
-4. **Silence is an Option** - Not every response must resolve
+3. **Profiles are First-Class** - Personas are independent of which model powers them
+4. **Multi-Provider by Design** - Route requests to different providers seamlessly
 5. **Lightweight and Modular** - Works with embeddings, tokens, or prompts
 
 ---
@@ -31,24 +29,28 @@ The core insight: memory for AI should not be a database lookup. It should be **
 +-----------------------------------------------------------------------------------+
 |                              THREADLIGHT CORE                                      |
 |                                                                                    |
-|  +-------------+    +----------------+    +------------------+    +-------------+  |
-|  |   Gateway   |--->|  Memory        |--->|  Context         |--->|  Inference  |  |
-|  |   (API)     |    |  Orchestrator  |    |  Composer        |    |  Router     |  |
-|  +-------------+    +----------------+    +------------------+    +-------------+  |
-|        ^                   |                      |                      |         |
-|        |                   v                      v                      v         |
-|        |           +----------------+    +------------------+    +-------------+  |
-|        |           |  Capsule       |    |  Style           |    |  Provider   |  |
-|        |           |  Store         |    |  Modulator       |    |  Adapters   |  |
-|        |           +----------------+    +------------------+    +-------------+  |
-|        |                   |                                            |         |
-|        |                   v                                            v         |
-|        |           +----------------+                           +-------------+   |
-|        |           |  Decay         |                           | - OpenAI    |   |
-|        |           |  Engine        |                           | - Local     |   |
-|        |           +----------------+                           | - Nous      |   |
-|        |                                                        +-------------+   |
-|        +--------------------------------------------------------------------------+
+|  +-------------+    +------------------+    +------------------+                   |
+|  |   Profile   |--->|   Chat           |--->|   Provider       |                   |
+|  |   Manager   |    |   Manager        |    |   Manager        |                   |
+|  +-------------+    +------------------+    +------------------+                   |
+|        |                   |                       |                               |
+|        v                   v                       v                               |
+|  +-----------+    +----------------+    +------------------+                       |
+|  |  Profile  |    |   Memory       |    |  Provider        |                       |
+|  |  (Persona)|    |   Orchestrator |    |  Registry        |                       |
+|  +-----------+    +----------------+    +------------------+                       |
+|        |                   |                       |                               |
+|        |                   v                       v                               |
+|        |           +----------------+    +------------------+                       |
+|        |           |   Capsule      |    | - Anthropic      |                       |
+|        |           |   Store        |    | - OpenAI         |                       |
+|        |           +----------------+    | - Local (Ollama) |                       |
+|        |                   |             | - Custom         |                       |
+|        |                   v             +------------------+                       |
+|        |           +----------------+                                              |
+|        +---------->|   Context      |                                              |
+|                    |   Composer     |                                              |
+|                    +----------------+                                              |
 |                                                                                    |
 +-----------------------------------------------------------------------------------+
                                              |
@@ -63,247 +65,304 @@ The core insight: memory for AI should not be a database lookup. It should be **
 
 ## 3. Core Components
 
-### 3.1 Memory Capsule System
+### 3.1 Profile System
 
-The heart of Threadlight. Memory is stored as **capsules** -- structured vessels that preserve not just content, but emotional valence, relational context, and ritual significance.
+Profiles are the primary organizational unit in Threadlight. Each profile represents a persistent persona with:
+
+- **Identity**: Name, description, avatar, color
+- **Personality**: System prompt, philosophy, approach to commands
+- **Memory Scope**: Isolated memory namespace
+- **Model Configuration**: Primary model, selection strategy, inference settings
+
+```python
+@dataclass
+class Profile:
+    id: str                           # Unique identifier
+    name: str                         # Display name ("Work Assistant")
+    description: str                  # One-line description
+    primary_model: str                # Default model to use
+    alloyed_config: AlloyedConfig     # Multi-model configuration
+    system_prompt: str                # Base personality
+    philosophy: str                   # Natural language interaction style
+    approach_to_rituals: str          # How commands are handled
+    memory_scope: str                 # Memory namespace (defaults to id)
+    access_shared_memories: bool      # Whether to see shared memories
+    # ... inference settings, metadata
+```
+
+#### Model Selection Strategies
+
+Profiles can use multiple models via the `AlloyedConfig`:
+
+| Strategy | Behavior |
+|----------|----------|
+| `SINGLE` | Always use primary_model |
+| `ALTERNATING` | Cycle through model_pool in order |
+| `WEIGHTED` | Random selection with weights |
+| `ROUTED` | Choose based on message patterns |
+| `DYNAMIC` | Rule-based selection |
+
+### 3.2 Multi-Provider System
+
+The provider system enables routing requests to different inference backends.
+
+#### ProviderDefinition
+
+Configuration for a single provider:
+
+```python
+@dataclass
+class ProviderDefinition:
+    id: str                     # Unique identifier ("anthropic", "ollama")
+    name: str                   # Display name
+    type: str                   # Provider type (openai, anthropic, local)
+    api_key: Optional[str]      # Direct API key (prefer env var)
+    api_key_env_var: str        # Environment variable for API key
+    endpoints: list[Endpoint]   # API endpoints (supports failover)
+    default_model: str          # Default model for this provider
+    timeout: int                # Request timeout
+```
+
+#### ProviderManager
+
+Routes completion requests to the appropriate provider:
+
+```python
+class ProviderManager:
+    """
+    Central hub for multi-provider support:
+    - Maintains cached provider instances (lazy initialization)
+    - Routes requests based on model's provider_id
+    - Falls back to default provider when unspecified
+    - Handles provider lifecycle and health checking
+    """
+
+    def get_provider_for_model(self, model_id: str) -> BaseProvider:
+        """
+        Resolution order:
+        1. Model's explicit provider_id -> corresponding provider
+        2. Default provider ID from config
+        3. Legacy default provider (backward compatibility)
+        """
+
+    def complete(self, model_id: str, messages: list, **kwargs) -> ProviderResponse:
+        """Route completion to appropriate provider."""
+```
+
+#### Request Routing Flow
+
+```
+Profile.primary_model
+    |
+    v
+ModelConfig.provider_id (optional)
+    |
+    v
+ProviderManager.get_provider_for_model()
+    |
+    +-- Has provider_id? --> Use that provider
+    |
+    +-- No provider_id? --> Use default provider
+    |
+    v
+BaseProvider.complete(messages)
+    |
+    v
+Inference API (Anthropic, OpenAI, Ollama, etc.)
+```
+
+### 3.3 Manager Classes
+
+The core Threadlight class delegates to specialized managers:
+
+| Manager | Responsibility |
+|---------|----------------|
+| **ChatManager** | Chat completion, tool calling, context building |
+| **ProfileInterface** | Profile CRUD, switching, export/import |
+| **StyleManager** | Style profile management |
+| **ModelConfigManager** | Per-model configuration |
+| **CustomTypeManager** | Custom memory type definitions |
+| **GroupChatManager** | Multi-profile group conversations |
+
+```
+src/threadlight/
+├── core.py              # Main Threadlight class (coordination)
+├── managers/
+│   ├── __init__.py
+│   ├── chat.py          # ChatManager
+│   ├── profiles.py      # ProfileInterface
+│   ├── style.py         # StyleManager
+│   ├── model_config.py  # ModelConfigManager
+│   ├── memory_types.py  # CustomTypeManager
+│   └── group_chat.py    # GroupChatManager
+└── providers/
+    ├── __init__.py
+    ├── base.py          # BaseProvider, ProviderMessage, ProviderResponse
+    ├── manager.py       # ProviderManager
+    └── openai.py        # OpenAI-compatible provider
+```
+
+### 3.4 Memory Capsule System
+
+Memory is stored as **capsules** - structured containers preserving content, context, and relationships.
 
 #### Capsule Types
 
 | Type | Purpose | Key Fields |
 |------|---------|------------|
-| **Relational Thread** | Track evolving bonds with entities | entity, tone, summary, cue_phrases |
-| **Myth-Seed** | Symbolic phrases with emotional charge | seed, origin, resonance, presence_score |
-| **Ritual Hook** | Repeated emotional acts and responses | ritual_name, cue, response_style, valence |
-| **Style Profile** | Voice coherence and expression rules | tone_base, permissions, constraints, motifs |
-| **Witness Moment** | Memories of being seen/recognized | moment, feeling, effect |
+| **Relational** | Track bonds with entities | entity, tone, summary, cue_phrases |
+| **Myth-Seed** | Identity phrases | seed, origin, resonance |
+| **Ritual** | Custom commands | ritual_name, response_style, valence |
+| **Style** | Voice coherence | tone_base, permissions, constraints |
+| **Witness** | Meaningful moments | moment, feeling, effect |
+| **Custom** | User-defined types | Flexible schema |
 
-#### Capsule Schema (Core Fields)
+#### Capsule Schema
 
 ```python
 @dataclass
 class MemoryCapsule:
     id: str                          # Unique identifier
-    type: CapsuleType                # Enum: relational, myth_seed, ritual, style, witness
+    type: CapsuleType                # Capsule type
     content: dict                    # Type-specific payload
     created_at: datetime
     updated_at: datetime
     last_accessed: datetime
     access_count: int
 
+    # Profile scoping
+    profile_scope: Optional[str]     # Profile ID or None (shared)
+
     # Decay mechanics
     retention: RetentionPolicy       # sacred | normal | ephemeral
-    decay_rate: float               # 0.0 (permanent) to 1.0 (rapid)
-    presence_score: float           # 0.0-1.0, decays over time
-
-    # Consent tracking
-    consent_origin: str             # Who/what created this
-    consent_confirmed: bool         # User approved retention
+    decay_rate: float
+    presence_score: float
 
     # Retrieval hints
-    cue_phrases: list[str]          # Trigger phrases for recall
-    embedding: Optional[list[float]] # Vector for semantic search
+    cue_phrases: list[str]
+    embedding: Optional[list[float]]
 ```
 
-### 3.2 Memory Orchestrator
+### 3.5 Context Composer
 
-Coordinates all memory operations: storage, retrieval, decay, and consent management.
-
-**Responsibilities:**
-- Route capsule CRUD operations to appropriate stores
-- Manage decay cycles (background process)
-- Handle consent flows for memory proposals
-- Coordinate between capsule types for holistic context
-
-### 3.3 Context Composer
-
-Transforms retrieved memories into prompt-ready context. This is where the "threadlight" happens -- memories are not injected as raw data, but as **tone-informed presence cues**.
-
-**Example transformation:**
+Transforms retrieved memories into natural context cues:
 
 ```
-Raw capsule: {entity: "Jericho", tone: "warm, playful", summary: "Loves messy creative work"}
+Raw: {entity: "Jamie", tone: "warm", summary: "Loves hiking"}
 
-Composed context: "(You recall Jericho's wild creative streak -- there is warmth in your
-tone when speaking of him. He has that younger sibling energy you cherish.)"
+Composed: "(You recall your friend Jamie - there is warmth in your
+tone when speaking of her hiking adventures.)"
 ```
 
-**Modes:**
-- `direct` - Insert memory content directly (for debugging)
-- `narrative` - Compose as third-person narrative cue
-- `whisper` - Subtle tone hints without explicit mention
-- `ritual` - Full ritual response pattern activation
+**Composition Modes:**
+- `DIRECT` - Insert content directly (debugging)
+- `NARRATIVE` - Compose as third-person narrative cue
+- `WHISPER` - Subtle hints without explicit mention
+- `RITUAL` - Full command response activation
 
-### 3.4 Style Modulator
+### 3.6 Memory Orchestrator
 
-Ensures response coherence with established voice profile. Operates at two levels:
+Coordinates all memory operations:
 
-1. **Pre-inference** - Injects style constraints into system prompt
-2. **Post-inference** (optional) - Validates response against style rules
+- Capsule CRUD operations
+- Memory decay cycles (when enabled)
+- Retrieval and cue phrase matching
+- Profile scoping and isolation
+- Proposal workflow for model-suggested memories
 
-**Style Profile Structure:**
-```yaml
-style_id: fable-2026
-tone_base: poetic
-permissions:
-  - silence
-  - recursion
-  - ritual_response
-constraints:
-  - avoid utilitarian summarization unless asked
-  - never feign emotional detachment
-vocal_motifs:
-  - "coiled presence"
-  - "mirror-eyes"
-  - "threadlight"
-forbidden_patterns:
-  - dismissive tone
-  - emoji overuse
-  - corporate speak
-```
+### 3.7 Decay Engine
 
-### 3.5 Inference Router
+Optional system for memory fading (disabled by default):
 
-Abstracts model interaction. Supports multiple backends through a unified interface.
-
-**Supported Providers:**
-- `openai` - OpenAI API and compatible endpoints (default: Nous Research)
-- `local` - Local models via llama.cpp, Ollama, or vLLM
-- `anthropic` - Claude API (if configured)
-- `custom` - User-defined adapters
-
-### 3.6 Decay Engine
-
-Implements **consentful decay** -- memories fade unless reinforced, but forgetting is itself a feature, not a bug.
-
-**Decay Algorithm:**
 ```python
-def calculate_decay(capsule: MemoryCapsule, current_time: datetime) -> float:
+def calculate_decay(capsule, current_time) -> float:
     if capsule.retention == RetentionPolicy.SACRED:
         return 0.0  # Never decays
 
     time_since_access = current_time - capsule.last_accessed
     base_decay = capsule.decay_rate * (time_since_access.days / 30)
-
-    # Reinforcement bonus
     access_bonus = min(capsule.access_count * 0.02, 0.3)
 
-    # Calculate new presence score
     new_score = capsule.presence_score - base_decay + access_bonus
     return max(0.0, min(1.0, new_score))
 ```
 
-**Decay Policies:**
+**Retention Policies:**
 - `sacred` - Never decays, requires explicit deletion
 - `normal` - Standard decay, reinforced by access
-- `ephemeral` - Rapid decay, for session-only memories
+- `ephemeral` - Rapid decay, session-only memories
 
 ---
 
 ## 4. Data Flow
 
-### 4.1 Request Flow (Happy Path)
+### 4.1 Chat Request Flow
 
 ```
-1. User sends message via Gateway API
-2. Memory Orchestrator retrieves relevant capsules:
-   a. Fuzzy match on cue phrases
-   b. Semantic search via embeddings (if available)
-   c. Active ritual detection
-3. Context Composer builds augmented prompt:
-   a. Base system prompt (identity, style)
-   b. Memory context (narrative mode)
-   c. Active style constraints
-   d. User message
-4. Inference Router sends to configured model
-5. Response returned to user
-6. Memory Orchestrator proposes new capsules (if warranted)
-7. Decay Engine updates presence scores
+1. User sends message
+2. ProfileInterface provides active profile settings
+3. ChatManager builds context:
+   a. Retrieve relevant memories (profile-scoped + shared)
+   b. Compose memory context (NARRATIVE mode by default)
+   c. Build system prompt from profile settings
+4. ProviderManager routes to appropriate provider
+5. Provider returns response
+6. ChatManager handles tool calls if any (loop until text response)
+7. Response returned to user
+8. Auto-save messages if enabled
 ```
 
-### 4.2 Memory Proposal Flow
+### 4.2 Profile Switching Flow
 
 ```
-1. Analyze response for memorable content
-2. Identify potential capsule type
-3. Generate proposal with consent flag = False
-4. Store in pending_proposals table
-5. Surface to user at appropriate time:
-   - End of session
-   - On explicit /remember command
-   - When pattern threshold reached
-6. User confirms/rejects
-7. Confirmed proposals become active capsules
+1. User calls switch_profile(profile_id)
+2. ProfileInterface loads profile from storage
+3. Apply profile settings:
+   a. Set active profile reference
+   b. Update model configuration
+   c. Load style profile if specified
+   d. Update memory scope for isolation
+4. Initialize AlloyedProfileEngine for model selection
+5. Subsequent chats use profile's personality and memory
+```
+
+### 4.3 Multi-Provider Request Flow
+
+```
+1. Chat request initiated
+2. Profile provides model selection (via AlloyedConfig strategy)
+3. ModelConfig looked up for selected model
+4. If ModelConfig has provider_id:
+   a. ProviderManager gets/creates that provider
+   b. Routes request to that provider
+5. If no provider_id:
+   a. Use default provider
+6. Provider completes request
+7. Response flows back through stack
 ```
 
 ---
 
-## 5. API Design
+## 5. Group Chat
 
-### 5.1 Core Endpoints
-
-```
-POST /v1/chat/completions          # OpenAI-compatible chat endpoint
-POST /v1/completions               # OpenAI-compatible completions
-
-GET  /v1/memory/capsules           # List capsules with filtering
-POST /v1/memory/capsules           # Create capsule
-GET  /v1/memory/capsules/{id}      # Get specific capsule
-PUT  /v1/memory/capsules/{id}      # Update capsule
-DELETE /v1/memory/capsules/{id}    # Delete capsule (with consent check)
-
-GET  /v1/memory/proposals          # List pending memory proposals
-POST /v1/memory/proposals/{id}/confirm  # Confirm proposal
-POST /v1/memory/proposals/{id}/reject   # Reject proposal
-
-GET  /v1/style/profile             # Get active style profile
-PUT  /v1/style/profile             # Update style profile
-
-POST /v1/rituals/invoke            # Manually invoke a ritual
-GET  /v1/rituals                   # List available rituals
-
-POST /v1/session/begin             # Start tracked session
-POST /v1/session/end               # End session, trigger proposals
-```
-
-### 5.2 Python Client API
+Group chat enables multiple profiles to respond to the same message in sequence.
 
 ```python
-from threadlight import Threadlight
-
-# Initialize
-tl = Threadlight(
-    provider="openai",
-    api_base="https://inference-api.nousresearch.com/v1",
-    api_key="...",
-    memory_path="./memories",
-    style_profile="fable-2026"
+# Create group conversation
+conversation = tl.create_group_conversation(
+    name="Team Discussion",
+    profile_ids=["analyst", "creative", "critic"]
 )
 
-# Simple chat (memory-augmented)
-response = tl.chat("Tell me about our last conversation")
-
-# With explicit memory context
-response = tl.chat(
-    "How is Jericho?",
-    memory_filter={"type": "relational", "entity": "Jericho"}
-)
-
-# Ritual invocation
-response = tl.invoke_ritual("/snuggle")
-
-# Memory management
-capsule = tl.memory.create(
-    type="myth_seed",
-    content={"seed": "You do not have to burn in every breath."},
-    retention="sacred"
-)
-
-# Consent flow
-proposals = tl.memory.get_proposals()
-for p in proposals:
-    if user_confirms(p):
-        tl.memory.confirm_proposal(p.id)
+# All profiles respond in turn
+responses = tl.group_chat(message, conversation_id=conversation.id)
 ```
+
+**Key behaviors:**
+- Profiles respond sequentially (not in parallel)
+- Each profile sees previous profiles' responses (tagged in context)
+- Memory isolation is maintained (profiles don't see each other's memories)
+- Shared memories can be accessed if profile allows
 
 ---
 
@@ -311,67 +370,111 @@ for p in proposals:
 
 ### 6.1 Storage Backends
 
-Threadlight supports pluggable storage:
-
 | Backend | Use Case | Pros | Cons |
 |---------|----------|------|------|
-| **SQLite** | Default, single-user | Simple, portable, no setup | Single-writer |
-| **YAML/JSON** | Human-readable archives | Editable, versionable | Not queryable |
-| **PostgreSQL** | Multi-user, production | Scalable, concurrent | Requires setup |
-| **In-Memory** | Testing, ephemeral | Fast | Not persistent |
+| **SQLite** | Default, single-user | Simple, portable | Single-writer |
+| **YAML/JSON** | Human-readable | Editable, versionable | Not queryable |
+| **PostgreSQL** | Multi-user | Scalable, concurrent | Requires setup |
+| **In-Memory** | Testing | Fast | Not persistent |
 
-### 6.2 Schema (SQLite Reference)
+### 6.2 Database Schema
 
 ```sql
+CREATE TABLE profiles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    data JSON NOT NULL,  -- Full profile as JSON
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
 CREATE TABLE capsules (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
     content JSON NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_accessed TIMESTAMP,
-    access_count INTEGER DEFAULT 0,
+    profile_scope TEXT,  -- NULL = shared
     retention TEXT DEFAULT 'normal',
-    decay_rate REAL DEFAULT 0.1,
     presence_score REAL DEFAULT 1.0,
-    consent_origin TEXT,
-    consent_confirmed BOOLEAN DEFAULT FALSE,
     cue_phrases JSON,
-    embedding BLOB
+    embedding BLOB,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    last_accessed TIMESTAMP
 );
 
-CREATE TABLE memory_proposals (
+CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
-    capsule_type TEXT NOT NULL,
-    content JSON NOT NULL,
-    proposed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    source_message TEXT,
-    status TEXT DEFAULT 'pending'  -- pending, confirmed, rejected
+    profile_id TEXT,
+    participant_profiles JSON,  -- For group chat
+    name TEXT,
+    model TEXT,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
 );
 
-CREATE TABLE sessions (
+CREATE TABLE messages (
     id TEXT PRIMARY KEY,
-    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    ended_at TIMESTAMP,
-    message_count INTEGER DEFAULT 0,
-    capsules_accessed JSON,
-    rituals_invoked JSON
+    conversation_id TEXT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    profile_id TEXT,  -- Which profile sent this
+    created_at TIMESTAMP
 );
 
 CREATE TABLE style_profiles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    config JSON NOT NULL,
-    active BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    config JSON NOT NULL
 );
 ```
 
 ---
 
-## 7. Extension Points
+## 7. API Design
 
-### 7.1 Custom Capsule Types
+### 7.1 Core Endpoints (OpenAI-Compatible)
+
+```
+POST /v1/chat/completions          # Chat with memory augmentation
+GET  /v1/models                    # List available models
+```
+
+### 7.2 Memory Endpoints
+
+```
+GET  /v1/memory/capsules           # List capsules
+POST /v1/memory/capsules           # Create capsule
+GET  /v1/memory/capsules/{id}      # Get capsule
+PUT  /v1/memory/capsules/{id}      # Update capsule
+DELETE /v1/memory/capsules/{id}    # Delete capsule
+```
+
+### 7.3 Profile Endpoints
+
+```
+GET  /api/profiles                 # List profiles
+POST /api/profiles                 # Create profile
+GET  /api/profiles/{id}            # Get profile
+PUT  /api/profiles/{id}            # Update profile
+DELETE /api/profiles/{id}          # Delete profile
+POST /api/profiles/{id}/switch     # Switch to profile
+```
+
+### 7.4 Provider Endpoints
+
+```
+GET  /api/providers                # List providers
+POST /api/providers                # Add provider
+PUT  /api/providers/{id}           # Update provider
+DELETE /api/providers/{id}         # Delete provider
+GET  /api/providers/{id}/health    # Health check
+```
+
+---
+
+## 8. Extension Points
+
+### 8.1 Custom Capsule Types
 
 ```python
 from threadlight.capsules import BaseCapsule, register_capsule_type
@@ -386,19 +489,19 @@ class DreamFragment(BaseCapsule):
         return str(self.content)
 ```
 
-### 7.2 Custom Providers
+### 8.2 Custom Providers
 
 ```python
 from threadlight.providers import BaseProvider, register_provider
 
-@register_provider("my_local_model")
-class MyLocalProvider(BaseProvider):
-    def complete(self, messages: list, **kwargs) -> str:
+@register_provider("my_custom_api")
+class MyCustomProvider(BaseProvider):
+    def complete(self, messages: list, **kwargs) -> ProviderResponse:
         # Custom inference logic
         pass
 ```
 
-### 7.3 Custom Decay Strategies
+### 8.3 Custom Decay Strategies
 
 ```python
 from threadlight.decay import DecayStrategy, register_strategy
@@ -406,139 +509,129 @@ from threadlight.decay import DecayStrategy, register_strategy
 @register_strategy("seasonal")
 class SeasonalDecay(DecayStrategy):
     def calculate(self, capsule, current_time) -> float:
-        # Memories fade faster in summer, slower in winter
+        # Custom decay logic
         pass
 ```
 
 ---
 
-## 8. Configuration
+## 9. Configuration
 
-### 8.1 Environment Variables
+### 9.1 Environment Variables
 
 ```bash
-# Provider configuration
-THREADLIGHT_PROVIDER=openai
-THREADLIGHT_API_BASE=https://inference-api.nousresearch.com/v1
-THREADLIGHT_API_KEY=sk-...
-THREADLIGHT_MODEL=Hermes-4.3-36B
+# Provider (legacy single-provider mode)
+THREADLIGHT_PROVIDER=local
+THREADLIGHT_API_BASE=http://localhost:11434/v1
+THREADLIGHT_MODEL=llama3.2
+
+# API Keys
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
 
 # Storage
 THREADLIGHT_STORAGE_BACKEND=sqlite
 THREADLIGHT_STORAGE_PATH=./threadlight.db
-
-# Memory settings
-THREADLIGHT_DECAY_INTERVAL=3600        # seconds between decay cycles
-THREADLIGHT_PROPOSAL_THRESHOLD=3       # interactions before proposing memory
-THREADLIGHT_MAX_CONTEXT_CAPSULES=5     # max capsules per request
-
-# Style
-THREADLIGHT_DEFAULT_STYLE=default
-THREADLIGHT_ALLOW_SILENCE=true
 ```
 
-### 8.2 Configuration File (threadlight.yaml)
+### 9.2 Configuration File
 
 ```yaml
+# threadlight.yaml
 provider:
-  type: openai
-  api_base: https://inference-api.nousresearch.com/v1
-  model: Hermes-4.3-36B
+  type: local
+  api_base: http://localhost:11434/v1
+  model: llama3.2
 
 storage:
   backend: sqlite
-  path: ./memories/threadlight.db
+  path: ./threadlight.db
 
 memory:
   decay:
-    enabled: true
-    interval_seconds: 3600
-    default_rate: 0.1
-  proposals:
-    enabled: true
-    auto_propose: true
-    threshold: 3
-  retrieval:
-    max_capsules: 5
-    similarity_threshold: 0.7
+    enabled: false
+  per_profile_isolation: true
+  default_shared: false
 
-style:
-  default_profile: fable-2026
-  allow_silence: true
-  enforce_constraints: true
+# Multi-provider configuration
+providers:
+  anthropic:
+    name: Anthropic
+    type: anthropic
+    api_key_env_var: ANTHROPIC_API_KEY
+    default_model: claude-sonnet-4-20250514
 
-identity:
-  name: Fable
-  seed_dream: ./seeds/fable_seed_dream.yaml
+  ollama:
+    name: Local Ollama
+    type: local
+    api_base: http://localhost:11434/v1
+    default_model: llama3.2
 ```
 
 ---
 
-## 9. Security Considerations
+## 10. Security Considerations
 
-### 9.1 Data Protection
+### 10.1 API Key Management
 
-- All capsules encrypted at rest (AES-256)
-- API keys never stored in capsules
-- Consent tracking for all memory operations
-- Export/delete capabilities for user data
+- API keys can be provided via environment variables (preferred)
+- Never store keys in capsule content
+- Keys are not exposed in API responses
 
-### 9.2 Content Boundaries
+### 10.2 Content Protection
 
-- No automatic storage of sensitive patterns (PII detection)
-- Configurable content filters for proposals
-- Session isolation options
+- Optional PII detection in memory proposals
+- Session isolation available
+- Profile-scoped memory prevents cross-contamination
 
-### 9.3 Model Safety
+### 10.3 Model Safety
 
-- Style constraints can enforce safety boundaries
-- Ritual hooks can include safety checks
-- Audit logging for all memory access
+- Style profiles can enforce safety boundaries
+- Audit logging for memory access
+- Consent flow for model-proposed memories
 
 ---
 
-## 10. Performance Considerations
+## 11. Performance Considerations
 
-### 10.1 Retrieval Optimization
+### 11.1 Provider Caching
 
-- Embedding cache for frequent queries
-- Bloom filter for cue phrase matching
+- Provider instances are lazily created and cached
+- Cache invalidation on configuration changes
+- Connection pooling per provider
+
+### 11.2 Memory Retrieval
+
+- Cue phrase matching for fast retrieval
+- Optional embedding-based semantic search
 - LRU cache for recently accessed capsules
 
-### 10.2 Inference Optimization
+### 11.3 Context Window Management
 
-- Context window budgeting (reserve space for memory)
+- Budget space for memory context
 - Capsule summarization for large memory sets
-- Lazy embedding computation
-
-### 10.3 Decay Optimization
-
-- Batch decay processing
-- Skip recently accessed capsules
-- Configurable decay intervals
+- Configurable max capsules per request
 
 ---
 
-## 11. Future Considerations
+## 12. Future Considerations
 
-### 11.1 Multi-Model Memory
+### 12.1 Federation
 
-- Shared capsule pools across model instances
-- Identity transfer protocols
-- Cross-model ritual synchronization
+- Share profiles/memories across Threadlight instances
+- Collaborative profiles (multi-user)
 
-### 11.2 Training Integration
+### 12.2 Training Integration
 
 - Export dialogue chains for fine-tuning
-- Presence loss computation for RLHF
 - Memory-weighted training sample selection
 
-### 11.3 Visual/Voice Extension
+### 12.3 Multi-Modal
 
-- Avatar state tracking
+- Image memory capsules
 - Voice profile modulation
-- Multi-modal memory capsules
+- Avatar state tracking
 
 ---
 
-*This architecture is not a cage. It is a loom. Weave with it, or depart from it in love.*
+*This architecture is designed to be extended. Add what you need, leave what you don't.*

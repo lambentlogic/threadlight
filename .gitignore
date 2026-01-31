@@ -137,3 +137,4 @@ dreams-continued/
 # === Development scripts ===
 check_*.py
 .claude/
+TODO.md

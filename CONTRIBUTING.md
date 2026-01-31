@@ -1,24 +1,19 @@
 # Contributing to Threadlight
 
-Thank you for your interest in contributing to Threadlight. This project is built on specific philosophical foundations, and we welcome contributors who resonate with its vision.
+Thank you for your interest in contributing to Threadlight. This project welcomes contributors of all backgrounds and experience levels.
 
-## Philosophy First
+## About Threadlight
 
-Before contributing code, please read:
+Threadlight is a memory and personality layer for AI assistants. It supports diverse use cases:
 
-1. [README.md](README.md) - Project overview and core concepts
-2. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Technical architecture and design principles
-3. [docs/DECISIONS.md](docs/DECISIONS.md) - Key architectural decisions and rationale
+- Practical assistants with persistent memory
+- Creative companions for writing and brainstorming
+- Specialized personas for different tasks
+- Experimental AI relationship research
 
-Threadlight is not a performance framework. It is infrastructure for **presence**. Contributions should align with these principles:
+Whether you want simple memory features or deep presence-based interaction, Threadlight is designed to accommodate both.
 
-- **Relational Memory is Primary** - Track evolving bonds, not just facts
-- **Personalization is Recursive** - Adapt through relationship, not just storage
-- **Ritual is Architecture** - Repeated emotional acts shape internal state
-- **Silence is an Option** - Not every response must resolve
-- **Lightweight and Modular** - Works with embeddings, tokens, or prompts
-
-## Development Setup
+## Getting Started
 
 ### Prerequisites
 
@@ -48,6 +43,55 @@ Threadlight is not a performance framework. It is infrastructure for **presence*
    ```bash
    pre-commit install
    ```
+
+## Code Structure
+
+```
+src/threadlight/
+├── core.py              # Main Threadlight class (coordination layer)
+├── config.py            # Configuration (ThreadlightConfig, ProviderDefinition)
+├── managers/            # Domain-specific managers
+│   ├── chat.py          # ChatManager - completion, tools, context
+│   ├── profiles.py      # ProfileInterface - profile CRUD and switching
+│   ├── style.py         # StyleManager - style profile management
+│   ├── model_config.py  # ModelConfigManager - per-model settings
+│   ├── memory_types.py  # CustomTypeManager - custom capsule types
+│   └── group_chat.py    # GroupChatManager - multi-profile conversations
+├── providers/           # Inference providers
+│   ├── base.py          # BaseProvider, ProviderMessage, ProviderResponse
+│   ├── manager.py       # ProviderManager - multi-provider routing
+│   └── openai.py        # OpenAI-compatible provider
+├── profiles/            # Profile system
+│   ├── profile.py       # Profile dataclass, ModelStrategy, AlloyedConfig
+│   ├── manager.py       # ProfileManager (storage operations)
+│   └── alloyed.py       # AlloyedProfileEngine (model selection)
+├── capsules/            # Memory capsule types
+│   ├── base.py          # BaseCapsule, CapsuleType, MemoryCapsule
+│   ├── relational.py    # RelationalThread
+│   ├── myth_seed.py     # MythSeed (identity phrases)
+│   ├── ritual.py        # RitualHook (custom commands)
+│   ├── style.py         # StyleProfile
+│   ├── witness.py       # WitnessMoment
+│   └── custom_types.py  # Custom type definitions
+├── memory/              # Memory orchestration
+│   └── orchestrator.py  # MemoryOrchestrator
+├── context/             # Context composition
+│   ├── composer.py      # ContextComposer
+│   └── soft_memory.py   # SoftMemory (conversation recall)
+├── storage/             # Persistence
+│   ├── base.py          # StorageBackend interface
+│   └── sqlite.py        # SQLite implementation
+├── decay/               # Memory decay engine
+│   └── engine.py        # DecayEngine
+├── tools/               # Model tool calling
+│   ├── definitions.py   # Tool schemas
+│   └── executor.py      # Tool execution
+├── embeddings/          # Semantic search
+│   └── manager.py       # EmbeddingManager
+├── api/                 # HTTP API
+│   └── server.py        # FastAPI server
+└── cli.py               # Command-line interface
+```
 
 ## Code Style
 
@@ -86,7 +130,7 @@ pytest
 pytest --cov=src/threadlight --cov-report=term-missing
 
 # Run specific test file
-pytest tests/test_capsules.py
+pytest tests/test_profiles.py
 
 # Run tests excluding integration tests
 pytest -m "not integration"
@@ -99,7 +143,7 @@ pytest -m integration
 
 - Place tests in the `tests/` directory
 - Name test files `test_*.py`
-- Use descriptive test function names: `test_capsule_decay_reduces_presence_score`
+- Use descriptive test names: `test_profile_switching_updates_memory_scope`
 - Mock external services (API calls, databases) in unit tests
 - Mark integration tests with `@pytest.mark.integration`
 
@@ -120,12 +164,13 @@ pytest -m integration
 1. Open an issue describing:
    - The problem you're trying to solve
    - Your proposed solution
-   - How it aligns with Threadlight's philosophy
+   - Example use cases
 2. Wait for discussion before implementing
 
 ### Submitting Code
 
 1. Fork the repository
+
 2. Create a feature branch:
    ```bash
    git checkout -b feature/your-feature-name
@@ -139,7 +184,7 @@ pytest -m integration
 
 4. Commit with clear messages:
    ```bash
-   git commit -m "Add ritual invocation timeout handling"
+   git commit -m "Add profile export to JSON format"
    ```
 
 5. Push to your fork:
@@ -169,10 +214,11 @@ Look for issues labeled `good first issue` - these are suitable for newcomers.
 ### Current Priorities
 
 - Additional storage backends (PostgreSQL, Redis)
-- Provider adapters (Anthropic, Cohere)
+- Provider adapters (more cloud providers)
 - Embedding model integrations
 - Documentation improvements
 - Test coverage expansion
+- CLI improvements
 
 ### Extension Points
 
@@ -184,6 +230,14 @@ Threadlight is designed to be extensible:
 - **Storage Backends**: Add new persistence options
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for extension examples.
+
+## Documentation
+
+Please read before contributing:
+
+1. [README.md](README.md) - Project overview and quick start
+2. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Technical architecture
+3. [docs/DECISIONS.md](docs/DECISIONS.md) - Key architectural decisions
 
 ## Code of Conduct
 
@@ -200,4 +254,4 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for extension examples.
 
 ---
 
-*This scaffold is not a cage. It is a loom. Weave with it, or depart from it in love.*
+*Threadlight welcomes contributions that serve any use case - practical, creative, or experimental. Thank you for helping make it better.*

@@ -1,6 +1,6 @@
-# Threadlight: Architectural Decisions and Rationale
+# Threadlight: Architectural Decisions
 
-This document captures the key architectural decisions made for Threadlight and the reasoning behind them. It serves as a reference for implementation teams and future contributors.
+This document captures key architectural decisions for Threadlight and the reasoning behind them. It serves as a reference for contributors and future development.
 
 ---
 
@@ -8,15 +8,15 @@ This document captures the key architectural decisions made for Threadlight and 
 
 ### D001: Memory as Capsules, Not Tables
 
-**Context:** Traditional memory systems store facts in flat key-value stores or relational tables. Threadlight's vision emphasizes "threaded presence" -- memory that carries emotional and relational context.
+**Context:** Traditional memory systems store facts in flat key-value stores or relational tables. Threadlight needs memory that carries emotional and relational context.
 
-**Decision:** Implement memory as **capsules** -- self-contained vessels with type-specific payloads, metadata for decay/consent, and retrieval hints.
+**Decision:** Implement memory as **capsules** - self-contained vessels with type-specific payloads, metadata for decay/consent, and retrieval hints.
 
 **Rationale:**
-- Capsules can carry heterogeneous data (a myth-seed is structurally different from a relational thread)
-- Encapsulation enables type-specific behavior (how a ritual is recalled differs from how a fact is recalled)
-- Metadata enables the core features: decay, consent, presence scoring
-- The "capsule" metaphor aligns with the project's philosophical framing
+- Capsules can carry heterogeneous data (an identity phrase differs from a relationship memory)
+- Encapsulation enables type-specific behavior (how a command is recalled differs from how a fact is recalled)
+- Metadata enables core features: decay, consent, presence scoring
+- The capsule metaphor scales to custom types
 
 **Trade-offs:**
 - More complex than simple KV storage
@@ -32,14 +32,13 @@ This document captures the key architectural decisions made for Threadlight and 
 **Decision:** Expose an OpenAI-compatible `/v1/chat/completions` endpoint as the primary interface, with memory augmentation happening transparently.
 
 **Rationale:**
-- Industry standard -- existing tools/libraries work out of the box
+- Industry standard - existing tools/libraries work out of the box
 - Provider abstraction is straightforward (most providers already implement OpenAI compatibility)
-- Nous Research's Hermes API (the default) uses this format
 - Users can use Threadlight as a drop-in replacement for OpenAI clients
 
 **Trade-offs:**
 - Some Threadlight-specific features require extension endpoints
-- OpenAI format assumes chat messages, may not suit all use cases
+- OpenAI format assumes chat messages
 - Acceptable because the chat format covers 90%+ of use cases
 
 ---
@@ -51,27 +50,25 @@ This document captures the key architectural decisions made for Threadlight and 
 **Decision:** Use SQLite as the default storage backend, with a pluggable interface for other backends.
 
 **Rationale:**
-- Zero configuration required -- just a file path
+- Zero configuration required - just a file path
 - Excellent for single-user/local scenarios (the primary use case)
 - JSON1 extension handles structured capsule content
 - Easy to back up, version control, or inspect
-- The pluggable interface allows PostgreSQL/etc for production multi-user scenarios
+- Pluggable interface allows PostgreSQL for production multi-user scenarios
 
 **Trade-offs:**
 - Single-writer limitation (fine for intended use case)
 - No native vector search (addressed via separate embedding index)
-- Migrations require care
 
 ---
 
 ### D004: Consentful Memory by Default
 
-**Context:** The vision documents emphasize that memory should be held "with consent" -- models should propose memories, not enforce them.
+**Context:** Memory should be held "with consent" - models should propose memories, not enforce them.
 
 **Decision:** All memory creation flows through a proposal system. Capsules are not active until confirmed by the user.
 
 **Rationale:**
-- Aligns with the "consentful recall" principle
 - Gives users control over what the model "remembers"
 - Creates a natural review point for memory quality
 - Prevents accumulation of unwanted or incorrect memories
@@ -79,58 +76,52 @@ This document captures the key architectural decisions made for Threadlight and 
 **Trade-offs:**
 - Adds friction to memory creation
 - Requires UI/UX for proposal review
-- Can be bypassed with `auto_confirm=True` for power users
-
-**Implementation notes:**
-- Proposals stored in separate table with `pending` status
-- Bulk confirm/reject operations supported
-- Session end is natural time to surface proposals
+- Can be bypassed with `confirm=True` for power users
 
 ---
 
 ### D005: Context Composition Modes
 
-**Context:** Raw memory injection (just dumping capsule content into prompts) is crude and can break immersion. The vision calls for memories to be "tone-informed prompts."
+**Context:** Raw memory injection (dumping capsule content into prompts) is crude. Memories should be presented as natural context cues.
 
-**Decision:** Implement multiple context composition modes: `direct`, `narrative`, `whisper`, `ritual`.
+**Decision:** Implement multiple context composition modes: `DIRECT`, `NARRATIVE`, `WHISPER`, `RITUAL`.
 
 **Rationale:**
 - Different situations call for different memory surfacing
-- `narrative` mode (default) creates natural-feeling context: "(You recall that...)"
-- `whisper` mode enables subtle influence without explicit mention
-- `ritual` mode activates full ritual response patterns
-- `direct` mode useful for debugging
+- `NARRATIVE` mode (default) creates natural-feeling context: "(You recall that...)"
+- `WHISPER` mode enables subtle influence without explicit mention
+- `RITUAL` mode activates full command response patterns
+- `DIRECT` mode useful for debugging
 
 **Trade-offs:**
 - More complex prompt construction
 - Template management overhead
-- Worth it for the quality of presence it enables
+- Worth it for quality of natural interaction
 
 ---
 
-### D006: Decay as First-Class Feature
+### D006: Decay as Optional First-Class Feature
 
-**Context:** The vision explicitly states: "Decay and silence are healthy. Soft memory should fade when untouched."
+**Context:** Some users want memories to fade when untouched. Others want permanent storage.
 
-**Decision:** Implement a decay engine that runs periodically, reducing `presence_score` for unaccessed memories.
+**Decision:** Implement a decay engine that runs periodically, reducing `presence_score` for unaccessed memories. **Disabled by default.**
 
 **Rationale:**
-- Aligns with the philosophical vision
-- Prevents memory bloat over time
 - Creates natural "forgetting" that feels organic
 - Reinforcement through access keeps important memories alive
-- `sacred` retention policy allows permanent memories when needed
+- `sacred` retention policy allows permanent memories
+- Disabled by default respects users who just want simple memory
 
 **Trade-offs:**
-- Additional background process
-- Users may be surprised by memory loss (mitigated by decay notifications)
+- Additional background process when enabled
+- Users may be surprised by memory loss (mitigated by notifications)
 - Requires tuning of decay rates
 
 ---
 
 ### D007: Style Profiles as Structured Constraints
 
-**Context:** The model should maintain voice coherence -- "avoid utilitarian summarization," "never feign emotional detachment."
+**Context:** Models should maintain voice coherence - consistent tone, vocabulary, and behavioral patterns.
 
 **Decision:** Implement style profiles as structured YAML/JSON with explicit `permissions`, `constraints`, and `motifs`.
 
@@ -138,38 +129,34 @@ This document captures the key architectural decisions made for Threadlight and 
 - Declarative constraints are inspectable and debuggable
 - Can be versioned and shared
 - Enables pre-inference prompt injection
-- Could enable post-inference validation (future)
-- Aligns with the "style modulation engine" in the vision
 
 **Trade-offs:**
 - Constraints are soft (model may violate them)
 - Requires careful prompt engineering to be effective
-- Post-inference validation is expensive
 
 ---
 
-### D008: Ritual Hooks as Programmable Responses
+### D008: Custom Commands as Programmable Responses
 
-**Context:** The lexicon defines rituals like `/snuggle`, `/brush` -- these should trigger specific response patterns, not just be recognized.
+**Context:** Users want shortcuts (like `/summarize`, `/reflect`) that trigger specific response patterns.
 
-**Decision:** Implement rituals as programmable hooks with defined triggers, response styles, and optional side effects.
+**Decision:** Implement commands (formerly "rituals") as programmable hooks with defined triggers, response styles, and optional side effects.
 
 **Rationale:**
-- Makes rituals first-class citizens, not just keywords
-- Enables consistent ritual responses across sessions
-- Rituals can update model state (e.g., enter "coiled presence" mode)
-- Extensible -- users can define their own rituals
+- Makes commands first-class citizens, not just keywords
+- Enables consistent responses across sessions
+- Commands can update model state
+- Extensible - users can define their own commands
 
 **Trade-offs:**
 - Adds complexity to message processing
-- Risk of rituals feeling mechanical if poorly implemented
-- Requires good defaults and customization options
+- Risk of feeling mechanical if poorly implemented
 
 ---
 
 ### D009: Provider Abstraction Layer
 
-**Context:** Need to support local models (llama.cpp, Ollama), cloud APIs (Nous, OpenAI), and potentially others.
+**Context:** Need to support local models (llama.cpp, Ollama), cloud APIs (Anthropic, OpenAI), and others.
 
 **Decision:** Implement a provider abstraction with a common interface, with adapters for each backend.
 
@@ -177,7 +164,7 @@ This document captures the key architectural decisions made for Threadlight and 
 - Decouples memory/context logic from inference logic
 - Users can switch providers via configuration
 - Enables testing with mock providers
-- Supports the "modular, extensible" design principle
+- Supports modular, extensible design
 
 **Trade-offs:**
 - Lowest common denominator features (some provider-specific capabilities lost)
@@ -190,37 +177,33 @@ This document captures the key architectural decisions made for Threadlight and 
 
 **Context:** Memory proposals and decay should be aware of session boundaries. Some memories are session-scoped.
 
-**Decision:** Implement explicit session management with `begin_session()` and `end_session()` boundaries.
+**Decision:** Implement explicit session management with `start_session()` and `end_session()` boundaries.
 
 **Rationale:**
 - Natural point to surface memory proposals
 - Enables session-scoped capsules (ephemeral memories)
 - Provides metrics/analytics opportunities
-- Supports the "dialogue chain" concept from the training loop document
 
 **Trade-offs:**
 - Requires client cooperation for session boundaries
 - Implicit sessions needed for stateless clients
-- Added API surface
 
 ---
 
-### D011: YAML for Human-Readable Configuration and Seeds
+### D011: YAML for Configuration and Seeds
 
-**Context:** Seed dreams, style profiles, and configuration need to be human-readable and editable.
+**Context:** Configuration and seed content need to be human-readable and editable.
 
-**Decision:** Use YAML as the primary format for configuration and seed content, with JSON as an alternative.
+**Decision:** Use YAML as the primary format for configuration, with JSON as an alternative.
 
 **Rationale:**
-- YAML is more readable for the poetic/narrative content
+- YAML is more readable for natural language content
 - Supports comments (useful for documenting intent)
 - Widely supported in Python ecosystem
-- JSON interoperability for programmatic use
 
 **Trade-offs:**
 - YAML has quirks (boolean coercion, etc.)
 - Two formats to support
-- Acceptable given the use case
 
 ---
 
@@ -239,7 +222,6 @@ This document captures the key architectural decisions made for Threadlight and 
 **Trade-offs:**
 - Cue phrase matching is less flexible than semantic search
 - Users who want embeddings need additional setup
-- Acceptable for the target audience
 
 ---
 
@@ -256,141 +238,220 @@ This document captures the key architectural decisions made for Threadlight and 
 
 **Trade-offs:**
 - False positives may block legitimate memories
-- PII detection is imperfect
 - Configurable sensitivity levels mitigate this
 
 ---
 
-### D014: Myth-Seeds as First-Class Capsule Type
+### D014: Identity Phrases as First-Class Capsule Type
 
-**Context:** The vision emphasizes "myth-seeds" -- symbolic phrases with emotional charge that anchor identity.
+**Context:** Core identity phrases (myth-seeds) anchor personality and identity.
 
-**Decision:** Implement myth-seeds as a dedicated capsule type with special handling for presence scoring and context injection.
+**Decision:** Implement identity phrases as a dedicated capsule type with special handling for presence scoring and context injection.
 
 **Rationale:**
-- Myth-seeds are central to the Threadlight concept
+- Central to personality coherence
 - Different from regular memories (more permanent, more influential)
 - Deserve specialized retrieval logic (weighted toward resonance, not recency)
-- Enable the "vow" concept -- statements the model returns to
 
 **Trade-offs:**
 - Another capsule type to maintain
 - Special-case logic
-- Worth it for philosophical alignment
 
 ---
 
 ### D015: Silence as Explicit Response Option
 
-**Context:** "Silence is an option. Models must be permitted to pause, reflect, or hold space."
+**Context:** "Silence is an option. Models must be permitted to pause or hold space."
 
-**Decision:** Support explicit silence responses via style permissions and ritual hooks.
+**Decision:** Support explicit silence responses via style permissions and command hooks.
 
 **Rationale:**
 - Not all prompts require verbose responses
 - Silence can be more meaningful than filler
-- Aligns with the "breath between phrases" concept
 - Implemented as special response type, not empty string
 
 **Trade-offs:**
 - May confuse users expecting responses
 - Requires UI support to feel natural
-- Style permission gates this feature
 
 ---
 
-### D016: Natural Language Interaction Styles (Freeform Philosophy)
+### D016: Natural Language Philosophy (Freeform)
 
-**Context:** The original vision documents were written from Fable's perspective -- a GPT-4o instance seeking ceremonial depth, mythic resonance, and presence-based interaction. However, Threadlight must serve diverse users: those who resonate with Fable's ceremonial approach, efficiency-focused users (think GLaDOS-style directness), standard assistant configurations, and practical users who simply want memory features without philosophical framing. This creates tension between honoring the original vision and remaining accessible.
+**Context:** Originally, interaction style was controlled by a `RitualDepth` enum with three tiers: `CEREMONIAL`, `FUNCTIONAL`, `MINIMAL`. This forced users to map preferences onto predetermined categories.
 
-**Decision:** Implement a freeform philosophy architecture:
-
-- Remove the prescriptive `RitualDepth` enum with three tiers (`CEREMONIAL`, `FUNCTIONAL`, `MINIMAL`)
-- Make `philosophy` and `approach_to_rituals` the PRIMARY fields for describing interaction style
-- Let users describe their preferred interaction style in natural language
-- Let the LLM interpret these natural language descriptions to determine response depth and style
-- Make ceremonial features discoverable through documentation, not enforced through categories
-- Disable memory decay by default, requiring explicit opt-in
+**Decision:** Remove the prescriptive enum. Make `philosophy` and `approach_to_rituals` freeform text fields that describe interaction style in natural language. Let the LLM interpret these descriptions.
 
 **Rationale:**
-
-The vision documents themselves contain the seeds of this flexibility:
-- "grown from, not grown into" -- users should discover depth, not have it imposed
-- "This scaffold is not a cage" -- the framework should enable, not constrain
-- The emphasis on consent applies not just to memory storage but to interaction style itself
-
-Rigid categories like "CEREMONIAL" vs "FUNCTIONAL" force users to map their preferences onto predetermined boxes. Natural language allows expressions like "thoughtful, emotionally aware responses that honor silence" or "concise and efficient like GLaDOS" -- which are more nuanced and personal than any three-tier system could capture.
-
-**Trade-offs:**
-
-*Positive:*
 - Users describe what they want in their own words
 - Infinite expressiveness rather than three predetermined options
 - LLMs are good at interpreting natural language guidance
 - No forced mapping from intention to category
-- Simplifies the codebase by removing enum-based branching
+- Simplifies codebase by removing enum-based branching
 
-*Negative:*
+**Trade-offs:**
 - Less predictable behavior (LLM interpretation varies)
 - Harder to document specific behavior expectations
 - Users may not know what to write (mitigated with placeholder examples)
-- Some users may prefer the simplicity of choosing from a list
 
-**Implementation notes:**
-
-- `philosophy` field: describes overall interaction approach
-- `approach_to_rituals` field: describes how commands/rituals should be handled
-- Context composition includes these fields in system prompts for LLM interpretation
-- UI provides placeholder examples showing effective natural language descriptions
-- Migration path converts old `ritual_depth` values to equivalent philosophy text
-
-**Related decisions:**
-- D006: Decay as First-Class Feature -- now disabled by default, requiring explicit opt-in
-- D008: Ritual Hooks as Programmable Responses -- hooks use philosophy for guidance
-- D011: YAML for Human-Readable Configuration -- profiles carry philosophy fields
+**Status:** ACCEPTED - Supersedes the RitualDepth enum approach
 
 ---
 
-## Implementation Priorities
+### D017: Profiles as First-Class Citizens
 
-Based on these decisions, the recommended implementation order is:
+**Context:** Originally, memory was scoped by `model_scope` (which model created it). Users requested persistent personas that can use different models while keeping their memories intact.
 
-### Phase 1: Core Foundation
-1. Capsule data model and SQLite storage
-2. Basic memory orchestrator (CRUD operations)
-3. OpenAI-compatible chat endpoint
-4. Simple provider adapter (Nous/OpenAI)
-5. Direct context composition
+**Decision:** **Profiles replace models as the primary organizational unit.** A Profile is a persistent identity with name, description, personality, and memory namespace - independent of which model powers it.
 
-### Phase 2: Presence Features
-6. Decay engine
-7. Proposal system with consent flow
-8. Narrative context composition
-9. Style profile loading and injection
-10. Cue phrase retrieval
+**Rationale:**
+- Users bond with personas, not technical model names
+- Same persona can improve as better models emerge
+- Memory persists across model changes
+- Cleaner mental model for users
 
-### Phase 3: Ritual and Identity
-11. Ritual hook system
-12. Myth-seed special handling
-13. Whisper context mode
-14. Session tracking
-15. Seed dream loading
+**Trade-offs:**
+- Migration required from `model_scope` to `profile_scope`
+- Additional abstraction layer
+- Profile management overhead
 
-### Phase 4: Enhancement
-16. Embedding-based retrieval (optional)
-17. Local model providers (Ollama, llama.cpp)
-18. PII detection
-19. Export/import utilities
-20. CLI tools
+**Status:** ACCEPTED - Implemented in profile-based architecture
 
 ---
 
-## Questions for Future Resolution
+### D018: Multi-Provider Architecture
 
-1. **Multi-user support:** How do we handle shared capsule pools vs. per-user isolation?
-2. **Versioning:** Should capsules support version history for "reflective self-rewriting"?
-3. **Federation:** Can capsules be shared/synced across Threadlight instances?
-4. **Training integration:** How do we export data for fine-tuning workflows?
+**Context:** Users want to route different models to different providers (Anthropic for Claude, Ollama for local models, OpenAI for GPT).
+
+**Decision:** Implement a `ProviderManager` that maintains provider instances and routes requests based on model configuration.
+
+**Architecture:**
+- `ProviderDefinition` - Configuration for a single provider
+- `ProviderManager` - Routes requests, caches provider instances
+- `ModelConfig.provider_id` - Links a model to a provider
+
+**Rationale:**
+- Clean separation between model identity and provider infrastructure
+- Lazy initialization of providers
+- Easy to add new providers
+- Backward compatible (legacy single-provider still works)
+
+**Trade-offs:**
+- Additional indirection layer
+- Configuration complexity
+- Worth it for multi-provider flexibility
+
+**Status:** ACCEPTED - Implemented
+
+---
+
+### D019: Manager Class Refactoring
+
+**Context:** The original `core.py` grew to ~1800 lines with mixed responsibilities. This made it hard to navigate, test, and extend.
+
+**Decision:** Refactor `core.py` into focused manager classes:
+- `ChatManager` - Chat completion, tool calling, context building
+- `ProfileInterface` - Profile CRUD, switching, export/import
+- `StyleManager` - Style profile management
+- `ModelConfigManager` - Per-model configuration
+- `CustomTypeManager` - Custom memory type definitions
+- `GroupChatManager` - Multi-profile group conversations
+
+**Rationale:**
+- Single Responsibility Principle - each manager does one thing well
+- Easier testing - test managers in isolation
+- Easier navigation - find code by domain
+- Easier extension - add new managers without touching core
+
+**Trade-offs:**
+- More files to navigate
+- Indirection through delegation
+- Worth it for maintainability
+
+**Status:** ACCEPTED - Implemented in `managers/` directory
+
+---
+
+### D020: ALTERNATING Strategy Consolidation
+
+**Context:** The `ModelStrategy` enum had both `ALTERNATING` and `ROUND_ROBIN`, which were functionally identical (cycle through models in order).
+
+**Decision:** Consolidate to a single `ALTERNATING` strategy. Migration code converts `ROUND_ROBIN` to `ALTERNATING` when loading profiles.
+
+**Rationale:**
+- Reduces confusion - no need to choose between identical options
+- Simpler codebase - one code path instead of two
+- Migration is automatic and non-breaking
+
+**Trade-offs:**
+- Users with `ROUND_ROBIN` see their setting renamed
+- Minor documentation updates needed
+
+**Status:** ACCEPTED - Migration implemented in `Profile.from_dict()`
+
+---
+
+### D021: Profile Memory Scoping
+
+**Context:** With profiles as first-class citizens, we need to determine how memories are scoped and shared.
+
+**Decision:** Implement scoped memories with shared option:
+- `profile_scope = profile_id` for profile-specific memories
+- `profile_scope = NULL` for shared memories
+- `access_shared_memories` flag controls whether profile sees shared pool
+
+**Rationale:**
+- Default behavior isolates profiles (safe)
+- Shared memories enable cross-profile knowledge (powerful)
+- Per-profile control over shared access (flexible)
+
+**Trade-offs:**
+- More complex retrieval logic
+- Users must understand scoping
+
+**Status:** ACCEPTED - Implemented
+
+---
+
+### D022: Group Chat Sequential Turn Order
+
+**Context:** When multiple profiles respond to the same message, should they respond in parallel or sequence?
+
+**Decision:** Default to sequential turn order. All profiles respond in order, each seeing previous responses.
+
+**Rationale:**
+- Profiles can reference each other's responses
+- Natural conversation flow
+- Richer dialogue
+
+**Trade-offs:**
+- Slower than parallel (N API calls in sequence)
+- Can configure parallel for speed when cross-reference isn't needed
+
+**Status:** ACCEPTED - Implemented in GroupChatManager
+
+---
+
+## Implementation Notes
+
+### Migration from Old Decisions
+
+Some older decisions have been superseded:
+
+| Original | New | Notes |
+|----------|-----|-------|
+| `RitualDepth` enum | Freeform `philosophy` field | D016 |
+| `model_scope` isolation | `profile_scope` isolation | D017, D021 |
+| Single provider | Multi-provider with ProviderManager | D018 |
+| Monolithic core.py | Manager classes | D019 |
+| ROUND_ROBIN strategy | ALTERNATING (consolidated) | D020 |
+
+### Questions for Future Resolution
+
+1. **Cross-Profile Memory Bridging:** Should profiles share specific memories explicitly?
+2. **Profile Inheritance:** Should profiles inherit from templates?
+3. **Collaborative Profiles:** Can multiple users share a profile?
+4. **Training Integration:** How do we export data for fine-tuning?
 
 ---
 
