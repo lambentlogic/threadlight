@@ -56,6 +56,7 @@ class WebChatRequest(BaseModel):
     message: str
     history: Optional[list[dict[str, str]]] = None
     stream: Optional[bool] = False
+    profile_id: Optional[str] = None  # Profile to activate for this chat
 
 
 class Choice(BaseModel):
@@ -515,6 +516,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     async def web_chat(request: WebChatRequest):
         """Web UI chat endpoint."""
         tl = get_threadlight()
+
+        # Activate the profile if specified so its model/provider is used
+        if hasattr(request, 'profile_id') and request.profile_id:
+            try:
+                current_profile_id = tl.active_profile.id if tl.active_profile else None
+                if request.profile_id != current_profile_id:
+                    tl.switch_profile(request.profile_id)
+            except (ValueError, AttributeError):
+                # Profile not found or other error - continue without profile
+                pass
 
         try:
             # Get memories that will be recalled for context
