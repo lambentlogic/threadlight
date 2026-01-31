@@ -184,7 +184,15 @@ class ProviderConfig:
     # When loaded from old config, this will be migrated to endpoints
     _api_base: Optional[str] = field(default=None, repr=False)
 
+    # Track whether API key was explicitly configured (vs auto-loaded from env)
+    # This is used to determine if there's legacy config worth migrating
+    _api_key_explicit: bool = field(default=False, repr=False)
+
     def __post_init__(self) -> None:
+        # Track if API key was explicitly set before loading from env
+        if self.api_key is not None:
+            self._api_key_explicit = True
+
         # Try to load API key from environment if not provided
         if self.api_key is None:
             self.api_key = os.getenv("NOUS_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -626,12 +634,17 @@ class ThreadlightConfig:
             if legacy_api_base and not endpoints:
                 endpoints = [Endpoint(url=legacy_api_base, name="Primary", priority=0)]
 
+            # Track if API key was explicitly set in config file
+            explicit_api_key = p.get("api_key")
             config.provider = ProviderConfig(
                 type=p.get("type", config.provider.type),
-                api_key=p.get("api_key", config.provider.api_key),
+                api_key=explicit_api_key if explicit_api_key else config.provider.api_key,
                 model=p.get("model", config.provider.model),
                 endpoints=endpoints if endpoints else config.provider.endpoints,
             )
+            # Mark as explicit if loaded from config file
+            if explicit_api_key:
+                config.provider._api_key_explicit = True
 
         if "storage" in data:
             s = data["storage"]

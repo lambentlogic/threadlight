@@ -126,6 +126,10 @@ function threadlightApp() {
             default_model: '',
         },
 
+        // Available API key environment variables (for selection)
+        availableApiKeyEnvVars: [],
+        loadingApiKeyEnvVars: false,
+
         // Model configuration state
         currentModelId: '',
         currentModelProviderId: '',  // Provider ID for current model (empty = default)
@@ -1843,6 +1847,22 @@ function threadlightApp() {
             }
         },
 
+        async loadApiKeyEnvVars() {
+            this.loadingApiKeyEnvVars = true;
+            try {
+                const response = await fetch('/api/environment/api-keys');
+                if (!response.ok) throw new Error('Failed to load API key env vars');
+                const data = await response.json();
+                this.availableApiKeyEnvVars = data.env_vars || [];
+                console.log('[loadApiKeyEnvVars] Found', this.availableApiKeyEnvVars.length, 'env vars');
+            } catch (error) {
+                console.error('Failed to load API key env vars:', error);
+                this.availableApiKeyEnvVars = [];
+            } finally {
+                this.loadingApiKeyEnvVars = false;
+            }
+        },
+
         async migrateToMultiProvider() {
             try {
                 const response = await fetch('/api/providers/migrate', {
@@ -1891,12 +1911,15 @@ function threadlightApp() {
             }
         },
 
-        editProvider(providerId) {
+        async editProvider(providerId) {
             const provider = this.namedProviders.find(p => p.id === providerId);
             if (!provider) {
                 this.showToast('Provider not found', 'error');
                 return;
             }
+
+            // Load available env vars for the dropdown
+            await this.loadApiKeyEnvVars();
 
             // Populate form with existing data
             this.providerForm = {
@@ -1961,13 +1984,17 @@ function threadlightApp() {
             };
             console.log('saveProvider payload:', payload);
 
-            // Handle API key - either direct value or env var
-            if (this.providerForm.api_key) {
-                payload.api_key = this.providerForm.api_key;
-            }
+            // Handle API key - env var takes precedence if set
             if (this.providerForm.api_key_env_var) {
                 payload.api_key_env_var = this.providerForm.api_key_env_var;
+                // Clear direct API key when using env var
+                payload.api_key = '';
+            } else if (this.providerForm.api_key) {
+                payload.api_key = this.providerForm.api_key;
+                // Clear env var when using direct key
+                payload.api_key_env_var = '';
             }
+            // If neither is set, leave both empty (valid for local providers)
 
             // Handle endpoints
             if (this.providerForm.api_base) {

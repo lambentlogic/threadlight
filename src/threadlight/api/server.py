@@ -1595,11 +1595,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             for ep in tl.config.provider.get_endpoints_by_priority()
         ]
 
+        # has_api_key should only be true for explicitly configured keys,
+        # not for keys auto-loaded from environment variables.
+        # This prevents the migration banner from showing on fresh databases.
+        has_explicit_api_key = getattr(tl.config.provider, '_api_key_explicit', False)
+
         return {
             "provider_type": effective_type,
             "api_base": api_base,  # Legacy single endpoint (primary)
             "endpoints": endpoints,  # New multiple endpoints list
-            "has_api_key": bool(tl.config.provider.api_key),
+            "has_api_key": has_explicit_api_key,
             "model": tl.config.provider.model,
             "timeout": tl.config.provider.timeout,
         }
@@ -1657,6 +1662,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         # Only update API key if provided (not empty string or None)
         if request.api_key:
             tl.config.provider.api_key = request.api_key
+            tl.config.provider._api_key_explicit = True  # Mark as explicitly configured
 
         # Update model if provided
         if request.model:
@@ -1677,12 +1683,15 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             for ep in tl.config.provider.get_endpoints_by_priority()
         ]
 
+        # has_api_key reflects explicit configuration
+        has_explicit_api_key = getattr(tl.config.provider, '_api_key_explicit', False)
+
         return {
             "status": "updated",
             "provider_type": request.provider_type,
             "api_base": tl.config.provider.api_base,
             "endpoints": endpoints,
-            "has_api_key": bool(tl.config.provider.api_key),
+            "has_api_key": has_explicit_api_key,
         }
 
     @app.post("/api/provider/test")
@@ -2075,6 +2084,85 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             }
 
     # ========================================================================
+    # Environment Configuration Endpoints
+    # ========================================================================
+
+    @app.get("/api/environment/api-keys")
+    async def list_api_key_env_vars():
+        """List available API key environment variables.
+
+        Scans the current environment for variables that look like API keys
+        (ending in _API_KEY, _KEY, or _SECRET). Returns just the variable names,
+        not the values, for security.
+
+        This allows users to select from available env vars when configuring
+        providers instead of typing keys directly.
+        """
+        import os
+
+        # Patterns that indicate API key environment variables
+        api_key_patterns = [
+            "_API_KEY",
+            "_KEY",
+            "_SECRET",
+            "_TOKEN",
+        ]
+
+        # Common known API key variable names to prioritize
+        common_vars = [
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "NOUS_API_KEY",
+            "COHERE_API_KEY",
+            "HUGGINGFACE_API_KEY",
+            "HF_TOKEN",
+            "MISTRAL_API_KEY",
+            "GROQ_API_KEY",
+            "TOGETHER_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "XAI_API_KEY",
+        ]
+
+        found_vars = []
+        seen = set()
+
+        # First add common vars that exist
+        for var in common_vars:
+            if var in os.environ and var not in seen:
+                found_vars.append({
+                    "name": var,
+                    "display": f"${var}",
+                    "has_value": True,
+                })
+                seen.add(var)
+
+        # Then scan for other matching env vars
+        for key in os.environ.keys():
+            if key in seen:
+                continue
+
+            # Check if it matches any API key pattern
+            for pattern in api_key_patterns:
+                if key.endswith(pattern) or pattern in key:
+                    # Exclude common non-API-key vars that might match
+                    exclude = ["SSH_", "GPG_", "DBUS_", "XDG_", "GNOME_"]
+                    if not any(key.startswith(ex) for ex in exclude):
+                        found_vars.append({
+                            "name": key,
+                            "display": f"${key}",
+                            "has_value": True,
+                        })
+                        seen.add(key)
+                        break
+
+        return {
+            "env_vars": found_vars,
+            "count": len(found_vars),
+        }
+
+    # ========================================================================
     # Multi-Provider Management Endpoints
     # ========================================================================
 
@@ -2104,11 +2192,13 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             })
 
         # Also include info about the legacy default provider for compatibility
+        # Only report has_api_key=true if explicitly configured (not from env vars)
+        has_explicit_api_key = getattr(tl.config.provider, '_api_key_explicit', False)
         legacy_provider = {
             "id": "_default",
             "name": "Default Provider (Legacy)",
             "type": tl.config.provider.type,
-            "has_api_key": bool(tl.config.provider.api_key),
+            "has_api_key": has_explicit_api_key,
             "endpoints": [ep.to_dict() for ep in tl.config.provider.endpoints],
             "default_model": tl.config.provider.model,
             "timeout": tl.config.provider.timeout,
@@ -2220,10 +2310,13 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             provider_def.name = request.name
         if request.type is not None:
             provider_def.type = request.type
+
+        # Handle API key updates - allow clearing by sending empty string
+        # This enables switching between direct key and env var modes
         if request.api_key is not None:
-            provider_def.api_key = request.api_key
+            provider_def.api_key = request.api_key if request.api_key else None
         if request.api_key_env_var is not None:
-            provider_def.api_key_env_var = request.api_key_env_var
+            provider_def.api_key_env_var = request.api_key_env_var if request.api_key_env_var else None
         if request.default_model is not None:
             provider_def.default_model = request.default_model
         if request.timeout is not None:

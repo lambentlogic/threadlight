@@ -963,7 +963,7 @@
                         <div class="bg-threadlight-elevated rounded-xl p-6">
                             <div class="flex items-center justify-between mb-2">
                                 <h3 class="font-medium">Providers</h3>
-                                <button @click="showAddProviderModal = true"
+                                <button @click="loadApiKeyEnvVars(); showAddProviderModal = true"
                                     class="text-sm px-3 py-1 bg-threadlight-accent/10 text-threadlight-accent hover:bg-threadlight-accent/20 rounded-lg transition-colors">
                                     + Add Provider
                                 </button>
@@ -997,7 +997,7 @@
                                     </svg>
                                     <p class="text-sm text-threadlight-text font-medium mb-1">No providers configured</p>
                                     <p class="text-sm text-threadlight-muted mb-4">Add a provider to connect to AI inference APIs like Anthropic, OpenAI, or local models via Ollama.</p>
-                                    <button @click="showAddProviderModal = true"
+                                    <button @click="loadApiKeyEnvVars(); showAddProviderModal = true"
                                         class="px-4 py-2 bg-threadlight-accent text-white hover:bg-threadlight-accent/80 rounded-lg transition-colors text-sm">
                                         Add Your First Provider
                                     </button>
@@ -1019,9 +1019,15 @@
                                             </div>
                                             <div class="flex items-center gap-2">
                                                 <!-- API Key Status -->
-                                                <span x-show="provider.has_api_key" class="text-green-400" title="API key configured">
+                                                <span x-show="provider.has_api_key && !provider.api_key_env_var" class="text-green-400" title="API key configured (direct)">
                                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+                                                    </svg>
+                                                </span>
+                                                <!-- Env Var API Key Status -->
+                                                <span x-show="provider.api_key_env_var" class="text-blue-400" :title="'Using env var: $' + provider.api_key_env_var">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                                                     </svg>
                                                 </span>
                                                 <!-- Health Status -->
@@ -1056,6 +1062,9 @@
                                             </template>
                                             <template x-if="provider.default_model">
                                                 <span class="ml-2">| Default: <span x-text="provider.default_model"></span></span>
+                                            </template>
+                                            <template x-if="provider.api_key_env_var">
+                                                <span class="ml-2 text-blue-400/80">| Key: <span x-text="'$' + provider.api_key_env_var" class="font-mono"></span></span>
                                             </template>
                                         </div>
                                     </div>
@@ -1117,17 +1126,47 @@
                                                 class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text font-mono text-sm focus:outline-none focus:border-threadlight-accent">
                                         </div>
 
-                                        <!-- API Key or Env Var -->
+                                        <!-- API Key Configuration -->
                                         <div>
-                                            <label class="block text-sm text-threadlight-muted mb-1">API Key</label>
-                                            <input type="password" x-model="providerForm.api_key"
-                                                placeholder="Enter API key or leave blank to use env var"
-                                                class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text font-mono text-sm focus:outline-none focus:border-threadlight-accent">
-                                            <div class="mt-2">
-                                                <label class="block text-xs text-threadlight-muted mb-1">Or use environment variable:</label>
-                                                <input type="text" x-model="providerForm.api_key_env_var"
-                                                    placeholder="e.g., ANTHROPIC_API_KEY"
-                                                    class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-3 py-1.5 text-threadlight-text font-mono text-xs focus:outline-none focus:border-threadlight-accent">
+                                            <label class="block text-sm text-threadlight-muted mb-2">API Key</label>
+                                            <p class="text-xs text-threadlight-muted mb-3">Use one of the options below, or leave both empty for local providers.</p>
+
+                                            <!-- Environment Variable Selection -->
+                                            <div class="mb-3">
+                                                <label class="block text-xs text-threadlight-muted mb-1">Select environment variable:</label>
+                                                <div class="flex gap-2">
+                                                    <select x-model="providerForm.api_key_env_var"
+                                                        @change="if(providerForm.api_key_env_var) providerForm.api_key = ''"
+                                                        class="flex-1 bg-threadlight-surface border border-threadlight-border rounded-lg px-3 py-2 text-threadlight-text font-mono text-sm focus:outline-none focus:border-threadlight-accent">
+                                                        <option value="">-- None --</option>
+                                                        <template x-for="envVar in availableApiKeyEnvVars" :key="envVar.name">
+                                                            <option :value="envVar.name" x-text="envVar.display"></option>
+                                                        </template>
+                                                    </select>
+                                                    <button type="button" @click="loadApiKeyEnvVars()"
+                                                        class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-threadlight-muted hover:text-threadlight-text transition-colors"
+                                                        title="Refresh environment variables">
+                                                        <svg class="w-4 h-4" :class="{'animate-spin': loadingApiKeyEnvVars}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                                <p class="text-xs text-green-400 mt-1" x-show="providerForm.api_key_env_var">
+                                                    Will use $<span x-text="providerForm.api_key_env_var"></span>
+                                                </p>
+                                                <p class="text-xs text-threadlight-muted mt-1" x-show="availableApiKeyEnvVars.length === 0 && !loadingApiKeyEnvVars && !providerForm.api_key_env_var">
+                                                    No API key variables found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, etc. in your shell.
+                                                </p>
+                                            </div>
+
+                                            <!-- Direct API Key Entry -->
+                                            <div>
+                                                <label class="block text-xs text-threadlight-muted mb-1">Or enter API key directly:</label>
+                                                <input type="password" x-model="providerForm.api_key"
+                                                    @input="if(providerForm.api_key) providerForm.api_key_env_var = ''"
+                                                    placeholder="sk-..."
+                                                    :class="{'opacity-50': providerForm.api_key_env_var !== ''}"
+                                                    class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text font-mono text-sm focus:outline-none focus:border-threadlight-accent">
                                             </div>
                                         </div>
 
