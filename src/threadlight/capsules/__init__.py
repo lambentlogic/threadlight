@@ -6,7 +6,7 @@ that preserve content, emotional valence, and relational context.
 
 Each capsule type serves a specific purpose:
 - RelationalThread: Track evolving bonds with entities
-- MythSeed: Symbolic phrases with emotional charge
+- MythSeed (Identity Phrase): Core beliefs or mantras that anchor personality
 - RitualHook: Repeated emotional acts and responses
 - StyleProfile: Voice coherence and expression rules
 - WitnessMoment: Memories of being seen/recognized
@@ -37,6 +37,9 @@ from threadlight.capsules.custom_types import (
 )
 from threadlight.capsules.relational import RelationalThread, create_relational
 from threadlight.capsules.myth_seed import MythSeed, create_myth_seed, FOUNDATIONAL_SEEDS
+# Alias for user-facing name
+IdentityPhrase = MythSeed
+create_identity_phrase = create_myth_seed
 from threadlight.capsules.ritual import RitualHook, create_ritual, RitualValence, DEFAULT_RITUALS
 from threadlight.capsules.style import (
     StyleProfile,
@@ -65,6 +68,7 @@ __all__ = [
     # Capsule types
     "RelationalThread",
     "MythSeed",
+    "IdentityPhrase",  # Alias for MythSeed
     "RitualHook",
     "StyleProfile",
     "WitnessMoment",
@@ -87,6 +91,7 @@ __all__ = [
     "capsule_from_simple",
     "create_relational",
     "create_myth_seed",
+    "create_identity_phrase",  # Alias for create_myth_seed
     "create_ritual",
     "create_style_profile",
     "create_witness_moment",

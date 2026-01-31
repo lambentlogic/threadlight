@@ -246,9 +246,6 @@ FABLE_STYLE = {
     ],
 }
 
-# Keep DEFAULT_STYLE as alias for backwards compatibility
-DEFAULT_STYLE = FABLE_STYLE
-
 
 # Minimal style for users who want concise, direct responses
 MINIMAL_STYLE = {
@@ -298,13 +295,23 @@ CREATIVE_STYLE = {
     "forbidden_patterns": [],
 }
 
-# Dictionary of all built-in styles for easy lookup
+# Dictionary of built-in styles for easy lookup
+# Note: fable-2026 is kept as an example style but not in the default list
 BUILTIN_STYLES = {
-    "fable-2026": FABLE_STYLE,
     "minimal": MINIMAL_STYLE,
     "professional": PROFESSIONAL_STYLE,
     "creative": CREATIVE_STYLE,
 }
+
+# Extended styles including example/legacy styles (for backwards compatibility)
+ALL_STYLES = {
+    **BUILTIN_STYLES,
+    "fable-2026": FABLE_STYLE,  # Example style - more expressive/poetic
+}
+
+# Default style is minimal - a neutral, accessible starting point
+# FABLE_STYLE is kept as an example for users who want a more expressive style
+DEFAULT_STYLE = MINIMAL_STYLE
 
 
 # Example freeform styles that users can reference

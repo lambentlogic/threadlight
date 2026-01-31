@@ -77,28 +77,32 @@ class ComposedContext:
 MODE_PREFIXES = {
     ContextMode.DIRECT: {
         "relational": "You know that",
-        "myth_seed": "A truth you hold:",
+        "myth_seed": "A core belief:",
+        "identity_phrase": "A core belief:",
         "ritual": "Active ritual:",
         "witness": "You witnessed:",
         "style": "Your voice:",
     },
     ContextMode.NARRATIVE: {
         "relational": "You recall",
-        "myth_seed": "In the depths of memory, there is a seed:",
+        "myth_seed": "A belief you hold:",
+        "identity_phrase": "A belief you hold:",
         "ritual": "A familiar gesture returns:",
         "witness": "You remember witnessing",
         "style": "Your voice carries",
     },
     ContextMode.WHISPER: {
         "relational": "There is warmth when you think of",
-        "myth_seed": "Something stirs...",
+        "myth_seed": "Something resonates...",
+        "identity_phrase": "Something resonates...",
         "ritual": "A familiar rhythm...",
         "witness": "An echo of presence...",
         "style": "A quality of voice...",
     },
     ContextMode.RITUAL: {
         "relational": "(In the circle of relation:)",
-        "myth_seed": "(The seed speaks:)",
+        "myth_seed": "(A belief surfaces:)",
+        "identity_phrase": "(A belief surfaces:)",
         "ritual": "(The ritual is honored)",  # Presence-based, not mechanical
         "witness": "(What was witnessed:)",
         "style": "(Voice aligned:)",
@@ -126,7 +130,7 @@ class ContextComposer:
         - RECENT: Include recent messages from any conversation
 
     Example:
-        composer = ContextComposer(identity_name="Fable")
+        composer = ContextComposer(identity_name="Assistant")
         context = composer.compose(capsules, mode=ContextMode.NARRATIVE)
         print(context.system_message)
     """

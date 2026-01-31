@@ -19,7 +19,8 @@ class CapsuleType(str, Enum):
     """Types of memory capsules."""
 
     RELATIONAL = "relational"
-    MYTH_SEED = "myth_seed"
+    MYTH_SEED = "myth_seed"  # Internal name (backwards compat), UI shows "Identity Phrase"
+    IDENTITY_PHRASE = "myth_seed"  # Alias pointing to same value for forwards compat
     RITUAL = "ritual"
     STYLE = "style"
     WITNESS = "witness"

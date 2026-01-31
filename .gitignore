@@ -85,9 +85,15 @@ log/
 
 # === Database files ===
 *.db
+*.db-shm
+*.db-wal
+*.db.backup-*
 *.sqlite
 *.sqlite3
 threadlight.db
+threadlight.db-shm
+threadlight.db-wal
+threadlight.db.backup-*
 memories/
 
 # === Build artifacts ===

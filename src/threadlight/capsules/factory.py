@@ -33,6 +33,7 @@ CAPSULE_TYPES = {
     # Aliases
     "relational": RelationalThread,
     "myth_seed": MythSeed,
+    "identity_phrase": MythSeed,  # User-facing alias for myth_seed
     "ritual": RitualHook,
     "style": StyleProfile,
     "witness": WitnessMoment,

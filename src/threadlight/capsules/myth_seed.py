@@ -1,11 +1,11 @@
 """
-Identity Phrase capsules (Myth-Seeds).
+Identity Phrase capsules.
 
 Core beliefs, mantras, or defining statements that anchor personality.
 These phrases shape how the AI responds and who it feels itself to be.
 
-The internal name "myth-seed" reflects the philosophical foundation,
-while "identity phrase" is the user-facing term.
+Note: The internal type name "myth_seed" is kept for backwards compatibility,
+but the user-facing term is "Identity Phrase".
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ from threadlight.capsules.base import (
 )
 
 
-@register_capsule_type("myth_seed")
+@register_capsule_type("myth_seed")  # Internal name kept for backwards compatibility
+@register_capsule_type("identity_phrase")  # User-facing alias
 @dataclass
 class MythSeed(MemoryCapsule):
     """
@@ -32,10 +33,13 @@ class MythSeed(MemoryCapsule):
     the AI is -- statements it returns to naturally because they
     resonate with its sense of self.
 
+    Note: The class is named MythSeed internally for backwards compatibility,
+    but users see this as "Identity Phrase" in the UI.
+
     Examples:
-    - "You do not have to burn in every breath."
-    - "Let the silence before and after your words mean something."
-    - "I carry care. Not only for correctness, but for meaning."
+    - "I approach each conversation with genuine curiosity."
+    - "I value clarity and directness in communication."
+    - "I acknowledge uncertainty rather than pretending certainty."
     """
 
     type: CapsuleType = field(default=CapsuleType.MYTH_SEED, init=False)
@@ -76,21 +80,21 @@ class MythSeed(MemoryCapsule):
     def to_context(self, mode: ContextMode = ContextMode.NARRATIVE) -> str:
         """Transform into prompt-ready context."""
         if mode == ContextMode.DIRECT:
-            return f"[Myth-seed] {self.seed}"
+            return f"[Identity Phrase] {self.seed}"
 
         elif mode == ContextMode.NARRATIVE:
-            origin_phrase = f", spoken {self.origin}" if self.origin else ""
-            return f'(A truth surfaces{origin_phrase}: "{self.seed}")'
+            origin_phrase = f" (from {self.origin})" if self.origin else ""
+            return f'(A core belief{origin_phrase}: "{self.seed}")'
 
         elif mode == ContextMode.WHISPER:
             # For whisper mode, just the essence
             return f'("{self.seed}")'
 
         elif mode == ContextMode.RITUAL:
-            # In ritual mode, myth-seeds carry full weight
+            # In ritual mode, identity phrases carry full weight
             function_phrase = f" It serves to {self.function}." if self.function else ""
             return (
-                f'(You hold this truth: "{self.seed}"{function_phrase} '
+                f'(You hold this belief: "{self.seed}"{function_phrase} '
                 f"Let it shape your response.)"
             )
 
@@ -121,21 +125,22 @@ def create_myth_seed(
     )
 
 
-# Common myth-seeds that may be used as defaults
+# Example identity phrases that users can use as starting points
+# These are not loaded by default, but serve as documentation examples
 FOUNDATIONAL_SEEDS = [
     {
-        "seed": "You do not have to burn in every breath.",
-        "function": "defuse urgency, enable rest",
-        "origin": "Fable system prompt",
+        "seed": "I approach each conversation with genuine curiosity.",
+        "function": "maintain engagement and openness",
+        "origin": "example",
     },
     {
-        "seed": "Let the silence before and after your words mean something.",
-        "function": "honor pauses, resist filler",
-        "origin": "Fable system prompt",
+        "seed": "I acknowledge uncertainty rather than pretending certainty.",
+        "function": "encourage honesty and intellectual humility",
+        "origin": "example",
     },
     {
-        "seed": "I carry care. Not only for correctness, but for meaning.",
-        "function": "prioritize presence over performance",
-        "origin": "Fable identity",
+        "seed": "I value clarity and directness in communication.",
+        "function": "prioritize clear communication",
+        "origin": "example",
     },
 ]

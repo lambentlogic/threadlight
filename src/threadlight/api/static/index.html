@@ -325,14 +325,25 @@
 
                 <!-- Conversation List - shown when on Chat view -->
                 <div x-show="currentView === 'chat'" x-cloak class="flex-1 flex flex-col overflow-hidden mt-4 pt-4 border-t border-threadlight-border">
-                    <!-- New Chat Button -->
-                    <button @click="createNewConversation()"
-                        class="w-full px-3 py-2 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm mb-3">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                        </svg>
-                        New Chat
-                    </button>
+                    <!-- New Chat Buttons -->
+                    <div class="flex gap-2 mb-3">
+                        <button @click="createNewConversation()"
+                            class="flex-1 px-3 py-2 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                            </svg>
+                            New Chat
+                        </button>
+                        <button @click="openGroupChatModal()"
+                            x-show="profiles.length >= 2"
+                            title="Create a group chat with multiple profiles"
+                            class="px-3 py-2 bg-threadlight-memory/20 hover:bg-threadlight-memory/30 text-threadlight-memory rounded-lg font-medium transition-colors flex items-center justify-center gap-1 text-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                            </svg>
+                            Group
+                        </button>
+                    </div>
 
                     <!-- Search and Count -->
                     <div class="flex items-center gap-2 mb-2">
@@ -367,8 +378,16 @@
                                         :class="currentConversationId === conv.id ? 'bg-threadlight-elevated' : 'hover:bg-threadlight-elevated/50'">
                                         <div class="flex items-center justify-between gap-1">
                                             <div class="flex-1 min-w-0 flex items-center gap-2">
-                                                <!-- Model/Source badge -->
-                                                <span class="text-xs px-1.5 py-0.5 rounded flex-shrink-0 font-medium"
+                                                <!-- Group Chat Icon -->
+                                                <svg x-show="conv.participant_profiles && conv.participant_profiles.length > 1"
+                                                    class="w-3.5 h-3.5 flex-shrink-0 text-threadlight-memory"
+                                                    title="Group Chat"
+                                                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                                                </svg>
+                                                <!-- Model/Source badge (hidden for group chats) -->
+                                                <span x-show="!conv.participant_profiles || conv.participant_profiles.length <= 1"
+                                                    class="text-xs px-1.5 py-0.5 rounded flex-shrink-0 font-medium"
                                                     :class="getModelBadgeClass(conv)"
                                                     :title="getModelTooltip(conv)"
                                                     x-text="getModelLabel(conv)"></span>
@@ -527,10 +546,31 @@
                                     </div>
                                 </div>
 
-                                <!-- No Profile Selected Hint -->
-                                <div x-show="!activeProfileId && profiles.length > 0" x-cloak
+                                <!-- No Profile Selected Hint (hide in group chat) -->
+                                <div x-show="!activeProfileId && profiles.length > 0 && !isGroupChat" x-cloak
                                     class="text-xs text-threadlight-warm hidden sm:block">
                                     Select a profile for personalized responses
+                                </div>
+
+                                <!-- Group Chat Indicator and Profiles -->
+                                <div x-show="isGroupChat" x-cloak class="flex items-center gap-2 flex-wrap">
+                                    <span class="px-2 py-1 text-xs bg-threadlight-memory/20 text-threadlight-memory rounded-full font-medium">
+                                        Group Chat
+                                    </span>
+                                    <div class="flex -space-x-1">
+                                        <template x-for="profile in getCurrentConversationProfiles().slice(0, 4)" :key="profile.id">
+                                            <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white ring-2 ring-threadlight-surface"
+                                                :class="getProfileBadgeColor(profile.id)"
+                                                :title="profile.name"
+                                                x-text="profile.name.charAt(0).toUpperCase()">
+                                            </div>
+                                        </template>
+                                        <div x-show="getCurrentConversationProfiles().length > 4"
+                                            class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-threadlight-border text-threadlight-muted ring-2 ring-threadlight-surface"
+                                            :title="(getCurrentConversationProfiles().length - 4) + ' more'"
+                                            x-text="'+' + (getCurrentConversationProfiles().length - 4)">
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -639,11 +679,23 @@
 
                                         <!-- Normal Message Display -->
                                         <template x-if="editingMessageId !== msg.id">
-                                            <div :class="msg.role === 'user'
-                                                ? 'bg-threadlight-accent/20 text-threadlight-text max-w-2xl rounded-2xl rounded-tr-sm px-4 py-3'
-                                                : msg.type === 'ritual'
-                                                    ? 'bg-threadlight-ritual/10 text-threadlight-ritual max-w-3xl rounded-2xl rounded-tl-sm px-4 py-3 ritual-response'
-                                                    : 'bg-threadlight-elevated max-w-3xl rounded-2xl rounded-tl-sm px-4 py-3'">
+                                            <div :class="[
+                                                msg.role === 'user'
+                                                    ? 'bg-threadlight-accent/20 text-threadlight-text max-w-2xl rounded-2xl rounded-tr-sm px-4 py-3'
+                                                    : msg.type === 'ritual'
+                                                        ? 'bg-threadlight-ritual/10 text-threadlight-ritual max-w-3xl rounded-2xl rounded-tl-sm px-4 py-3 ritual-response'
+                                                        : 'bg-threadlight-elevated max-w-3xl rounded-2xl rounded-tl-sm px-4 py-3',
+                                                isGroupChat && msg.role === 'assistant' && msg.profile_id ? getProfileColorClass(msg.profile_id) : ''
+                                            ]">
+                                                <!-- Profile Badge for Group Chat Messages -->
+                                                <div x-show="isGroupChat && msg.role === 'assistant' && msg.profile_name" class="flex items-center gap-2 mb-2">
+                                                    <div class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                                                        :class="getProfileBadgeColor(msg.profile_id)"
+                                                        x-text="(msg.profile_name || '?').charAt(0).toUpperCase()">
+                                                    </div>
+                                                    <span class="text-xs font-medium text-threadlight-muted" x-text="msg.profile_name"></span>
+                                                </div>
+
                                                 <div class="message-content" x-html="renderMarkdown(msg.content)"></div>
 
                                                 <!-- Recalled Memories -->
@@ -666,11 +718,11 @@
                             <!-- Typing Indicator -->
                             <div x-show="isTyping" class="flex items-center gap-2 text-threadlight-muted">
                                 <div class="typing-indicator flex gap-1">
-                                    <span class="w-2 h-2 bg-threadlight-accent rounded-full"></span>
-                                    <span class="w-2 h-2 bg-threadlight-accent rounded-full"></span>
-                                    <span class="w-2 h-2 bg-threadlight-accent rounded-full"></span>
+                                    <span class="w-2 h-2 rounded-full" :class="groupChatResponding ? 'bg-threadlight-memory' : 'bg-threadlight-accent'"></span>
+                                    <span class="w-2 h-2 rounded-full" :class="groupChatResponding ? 'bg-threadlight-memory' : 'bg-threadlight-accent'"></span>
+                                    <span class="w-2 h-2 rounded-full" :class="groupChatResponding ? 'bg-threadlight-memory' : 'bg-threadlight-accent'"></span>
                                 </div>
-                                <span class="text-sm">thinking...</span>
+                                <span class="text-sm" x-text="groupChatResponding ? 'profiles responding...' : 'thinking...'"></span>
                             </div>
                         </div>
 
@@ -717,7 +769,7 @@
                                 class="bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
                                 <option value="">All Types</option>
                                 <option value="relational">Relational</option>
-                                <option value="myth_seed">Myth Seed</option>
+                                <option value="myth_seed">Identity Phrase</option>
                                 <option value="ritual">Command</option>
                                 <option value="witness">Witness</option>
                                 <option value="style">Style</option>
@@ -749,7 +801,7 @@
                                             <div class="flex items-center gap-2 mb-2 flex-wrap">
                                                 <span class="px-2 py-0.5 text-xs rounded"
                                                     :class="getTypeColor(memory.type)"
-                                                    x-text="memory.type"></span>
+                                                    x-text="getTypeDisplayName(memory.type)"></span>
                                                 <span class="text-xs text-threadlight-muted" x-text="'Presence: ' + ((memory.presence_score || 0) * 100).toFixed(0) + '%'"></span>
                                                 <!-- Profile scope badge (when per-profile isolation enabled) -->
                                                 <template x-if="perProfileIsolation && getProfileScopeBadge(memory)">
@@ -907,6 +959,193 @@
                             </div>
                         </div>
 
+                        <!-- API Configuration -->
+                        <div class="bg-threadlight-elevated rounded-xl p-6">
+                            <h3 class="font-medium mb-2">API Configuration</h3>
+                            <p class="text-sm text-threadlight-muted mb-4">Configure API keys and provider settings for inference.</p>
+
+                            <div class="space-y-4">
+                                <!-- Provider Selector -->
+                                <div>
+                                    <label class="block text-sm text-threadlight-muted mb-1">Provider</label>
+                                    <div class="flex gap-2">
+                                        <select x-model="providerConfig.provider_type" @change="onProviderTypeChange()"
+                                            class="flex-1 bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
+                                            <option value="local">Local (no API key needed)</option>
+                                            <option value="openai">OpenAI</option>
+                                            <option value="anthropic">Anthropic</option>
+                                            <option value="nous">Nous Research</option>
+                                            <option value="custom">Custom</option>
+                                        </select>
+                                        <!-- Status indicator -->
+                                        <div class="flex items-center px-3 rounded-lg"
+                                            :class="providerConfig.provider_type === 'local' || providerConfig.has_api_key ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'">
+                                            <svg x-show="providerConfig.provider_type === 'local' || providerConfig.has_api_key" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                            </svg>
+                                            <svg x-show="providerConfig.provider_type !== 'local' && !providerConfig.has_api_key" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                    <p class="text-xs text-threadlight-muted mt-2" x-text="getProviderHelpText(providerConfig.provider_type)"></p>
+                                </div>
+
+                                <!-- Provider-specific configuration -->
+                                <template x-if="providerConfig.provider_type !== 'local'">
+                                    <div class="space-y-4 pt-3 border-t border-threadlight-border/50">
+                                        <!-- API Key -->
+                                        <div>
+                                            <label class="block text-sm text-threadlight-muted mb-1">API Key</label>
+                                            <!-- Status indicator when API key is configured -->
+                                            <div x-show="providerConfig.has_api_key && !providerApiKeyChanged" class="flex items-center gap-2 mb-2 text-green-400 text-sm">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                                </svg>
+                                                <span>API key configured</span>
+                                            </div>
+                                            <div class="flex gap-2">
+                                                <div class="flex-1">
+                                                    <input type="password"
+                                                        x-model="providerApiKey"
+                                                        @input="onProviderApiKeyInput()"
+                                                        :placeholder="providerConfig.has_api_key ? 'Enter new key to replace existing' : 'Enter your API key'"
+                                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent font-mono text-sm">
+                                                </div>
+                                            </div>
+                                            <p class="text-xs text-threadlight-muted mt-1" x-show="providerApiKeyChanged">
+                                                API key will be updated when you save.
+                                            </p>
+                                        </div>
+
+                                        <!-- Base URL -->
+                                        <div>
+                                            <label class="block text-sm text-threadlight-muted mb-1">Base URL</label>
+                                            <input type="text" x-model="providerConfig.api_base"
+                                                :placeholder="getDefaultApiBase(providerConfig.provider_type)"
+                                                class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent font-mono text-sm">
+                                            <p class="text-xs text-threadlight-muted mt-1">
+                                                <template x-if="providerConfig.provider_type === 'openai'">
+                                                    <span>Default: https://api.openai.com/v1</span>
+                                                </template>
+                                                <template x-if="providerConfig.provider_type === 'anthropic'">
+                                                    <span>Default: https://api.anthropic.com</span>
+                                                </template>
+                                                <template x-if="providerConfig.provider_type === 'nous'">
+                                                    <span>Default: https://inference-api.nousresearch.com/v1</span>
+                                                </template>
+                                                <template x-if="providerConfig.provider_type === 'custom'">
+                                                    <span>Enter your custom API endpoint</span>
+                                                </template>
+                                            </p>
+                                        </div>
+
+                                        <!-- Custom provider name (only for custom) -->
+                                        <template x-if="providerConfig.provider_type === 'custom'">
+                                            <div>
+                                                <label class="block text-sm text-threadlight-muted mb-1">Provider Name (optional)</label>
+                                                <input type="text" x-model="providerConfig.provider_name"
+                                                    placeholder="My Custom API"
+                                                    class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                                            </div>
+                                        </template>
+
+                                        <!-- Test Connection -->
+                                        <div class="pt-3 border-t border-threadlight-border/50">
+                                            <div class="flex items-center gap-4">
+                                                <button @click="testProviderConnection()"
+                                                    :disabled="testingProviderConnection"
+                                                    class="px-4 py-2 bg-threadlight-surface border border-threadlight-border text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait">
+                                                    <span x-show="!testingProviderConnection">Test Connection</span>
+                                                    <span x-show="testingProviderConnection" class="flex items-center gap-2">
+                                                        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                        </svg>
+                                                        Testing...
+                                                    </span>
+                                                </button>
+
+                                                <!-- Connection status -->
+                                                <div x-show="providerConnectionStatus" class="flex items-center gap-2">
+                                                    <span x-show="providerConnectionStatus === 'success'" class="flex items-center gap-1 text-green-400">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                                        </svg>
+                                                        <span class="text-sm" x-text="providerConnectionMessage"></span>
+                                                    </span>
+                                                    <span x-show="providerConnectionStatus === 'error'" class="flex items-center gap-1 text-red-400">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                                        </svg>
+                                                        <span class="text-sm" x-text="providerConnectionMessage"></span>
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Local provider info -->
+                                <template x-if="providerConfig.provider_type === 'local'">
+                                    <div class="p-4 bg-threadlight-surface border border-threadlight-border/50 rounded-lg">
+                                        <div class="flex items-center gap-3">
+                                            <svg class="w-8 h-8 text-threadlight-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                                            </svg>
+                                            <div>
+                                                <p class="text-sm text-threadlight-text font-medium">Local Models</p>
+                                                <p class="text-xs text-threadlight-muted">Using local models via sentence-transformers, llama.cpp, or Ollama. No API key required.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Save Button -->
+                                <div class="pt-4 border-t border-threadlight-border">
+                                    <button @click="saveProviderConfig()"
+                                        :disabled="savingProviderConfig"
+                                        class="px-4 py-2 bg-threadlight-accent text-white hover:bg-threadlight-accent/80 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait">
+                                        <span x-show="!savingProviderConfig">Save API Configuration</span>
+                                        <span x-show="savingProviderConfig" class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            Saving...
+                                        </span>
+                                    </button>
+                                </div>
+
+                                <!-- Quick Setup Presets -->
+                                <details class="pt-2">
+                                    <summary class="text-sm text-threadlight-muted hover:text-threadlight-text cursor-pointer">Quick Setup Presets</summary>
+                                    <div class="mt-3 grid grid-cols-2 gap-2">
+                                        <button @click="providerConfig.provider_type = 'openai'; providerConfig.api_base = 'https://api.openai.com/v1'; providerConfig.model = 'gpt-4o';"
+                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-sm text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 transition-colors text-left">
+                                            <span class="font-medium">OpenAI (GPT-4)</span>
+                                            <span class="block text-xs opacity-75">gpt-4o model</span>
+                                        </button>
+                                        <button @click="providerConfig.provider_type = 'anthropic'; providerConfig.api_base = 'https://api.anthropic.com'; providerConfig.model = 'claude-3-5-sonnet-20241022';"
+                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-sm text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 transition-colors text-left">
+                                            <span class="font-medium">Anthropic (Claude)</span>
+                                            <span class="block text-xs opacity-75">Claude 3.5 Sonnet</span>
+                                        </button>
+                                        <button @click="providerConfig.provider_type = 'nous'; providerConfig.api_base = 'https://inference-api.nousresearch.com/v1'; providerConfig.model = 'Hermes-4.3-36B';"
+                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-sm text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 transition-colors text-left">
+                                            <span class="font-medium">Nous Research</span>
+                                            <span class="block text-xs opacity-75">Hermes 4.3</span>
+                                        </button>
+                                        <button @click="providerConfig.provider_type = 'local'; providerConfig.api_base = ''; providerConfig.model = '';"
+                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-sm text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 transition-colors text-left">
+                                            <span class="font-medium">Local Models</span>
+                                            <span class="block text-xs opacity-75">No API required</span>
+                                        </button>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+
                         <!-- Custom Instructions (Model-Specific) -->
                         <div class="bg-threadlight-elevated rounded-xl p-6">
                             <h3 class="font-medium mb-2">Custom Instructions</h3>
@@ -1009,7 +1248,7 @@
                                             <option :value="style" x-text="style"></option>
                                         </template>
                                     </select>
-                                    <p class="text-xs text-threadlight-muted mt-2">Built-in styles: minimal, professional, creative, fable-2026</p>
+                                    <p class="text-xs text-threadlight-muted mt-2">Built-in styles: minimal, professional, creative</p>
                                 </div>
 
                                 <!-- Style Detail View -->
@@ -2011,7 +2250,7 @@
                             <select x-model="newMemory.type"
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
                                 <option value="relational">Relational</option>
-                                <option value="myth_seed">Myth Seed</option>
+                                <option value="myth_seed">Identity Phrase</option>
                                 <option value="witness">Witness</option>
                                 <option value="custom">Custom</option>
                             </select>
@@ -2831,6 +3070,102 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                     class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
                                 <p class="text-xs text-threadlight-muted mt-1">List of models to use with this strategy</p>
                             </div>
+
+                            <!-- Routing Rules Section (shown when strategy is 'routed') -->
+                            <div x-show="newProfile.model_strategy === 'routed'" class="mt-4 p-4 bg-threadlight-bg rounded-lg border border-threadlight-border">
+                                <div class="flex items-center justify-between mb-3">
+                                    <div>
+                                        <h5 class="font-medium text-threadlight-text">Routing Rules</h5>
+                                        <p class="text-xs text-threadlight-muted">Define rules to route messages to specific models based on content</p>
+                                    </div>
+                                    <button type="button" @click="openRoutingRuleEditor()"
+                                        class="px-3 py-1.5 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg text-sm transition-colors">
+                                        + Add Rule
+                                    </button>
+                                </div>
+
+                                <!-- Rules Table -->
+                                <div x-show="newProfile.routing_rules.length > 0" class="overflow-x-auto">
+                                    <table class="w-full text-sm">
+                                        <thead>
+                                            <tr class="text-threadlight-muted text-left">
+                                                <th class="pb-2 pr-2 font-medium w-16">Priority</th>
+                                                <th class="pb-2 pr-2 font-medium">Match Type</th>
+                                                <th class="pb-2 pr-2 font-medium">Pattern</th>
+                                                <th class="pb-2 pr-2 font-medium">Target Model</th>
+                                                <th class="pb-2 font-medium w-24 text-right">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-threadlight-border/50">
+                                            <template x-for="(rule, index) in newProfile.routing_rules" :key="index">
+                                                <tr class="hover:bg-threadlight-elevated/30">
+                                                    <td class="py-2 pr-2">
+                                                        <span class="px-2 py-0.5 bg-threadlight-accent/20 text-threadlight-accent rounded text-xs font-medium" x-text="rule.priority"></span>
+                                                    </td>
+                                                    <td class="py-2 pr-2">
+                                                        <span class="text-threadlight-text" x-text="getMatchTypeLabel(rule.match_type)"></span>
+                                                    </td>
+                                                    <td class="py-2 pr-2">
+                                                        <code class="px-2 py-0.5 bg-threadlight-surface rounded text-threadlight-memory text-xs" x-text="rule.pattern"></code>
+                                                    </td>
+                                                    <td class="py-2 pr-2">
+                                                        <span class="text-threadlight-muted text-xs" x-text="rule.target_model"></span>
+                                                    </td>
+                                                    <td class="py-2 text-right">
+                                                        <div class="flex items-center justify-end gap-1">
+                                                            <button type="button" @click="moveRoutingRuleUp(index)" :disabled="index === 0"
+                                                                class="p-1 text-threadlight-muted hover:text-threadlight-text disabled:opacity-30 disabled:cursor-not-allowed" title="Move up">
+                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+                                                                </svg>
+                                                            </button>
+                                                            <button type="button" @click="moveRoutingRuleDown(index)" :disabled="index === newProfile.routing_rules.length - 1"
+                                                                class="p-1 text-threadlight-muted hover:text-threadlight-text disabled:opacity-30 disabled:cursor-not-allowed" title="Move down">
+                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                                                </svg>
+                                                            </button>
+                                                            <button type="button" @click="openRoutingRuleEditor(index)"
+                                                                class="p-1 text-threadlight-muted hover:text-threadlight-accent" title="Edit">
+                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                                                </svg>
+                                                            </button>
+                                                            <button type="button" @click="deleteRoutingRule(index)"
+                                                                class="p-1 text-threadlight-muted hover:text-red-400" title="Delete">
+                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                                                </svg>
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- Empty State -->
+                                <div x-show="newProfile.routing_rules.length === 0" class="text-center py-6">
+                                    <svg class="w-10 h-10 mx-auto mb-2 text-threadlight-muted/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                                    </svg>
+                                    <p class="text-sm text-threadlight-muted">No routing rules defined</p>
+                                    <p class="text-xs text-threadlight-muted/70 mt-1">Add rules to route messages to different models based on content.</p>
+                                </div>
+
+                                <!-- Help Text -->
+                                <div class="mt-3 pt-3 border-t border-threadlight-border/50">
+                                    <p class="text-xs text-threadlight-muted">
+                                        <span class="font-medium text-threadlight-text">How it works:</span>
+                                        Rules are evaluated by priority (highest first). The first matching rule determines which model handles the message.
+                                        If no rules match, the primary model is used as fallback.
+                                    </p>
+                                    <div class="mt-2 text-xs text-threadlight-muted/70 space-y-1">
+                                        <p>Examples: "code" keyword routes to code model, "/" prefix routes to command model, length > 500 routes to long-context model</p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Memory Configuration -->
@@ -2907,6 +3242,123 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                             </button>
                         </div>
                     </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Routing Rule Editor Modal -->
+        <div x-show="showRoutingRuleEditor" x-cloak
+            x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0"
+            x-transition:enter-end="opacity-100"
+            x-transition:leave="transition ease-in duration-150"
+            x-transition:leave-start="opacity-100"
+            x-transition:leave-end="opacity-0"
+            class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-[60]"
+            @click.self="cancelRoutingRuleEditor()"
+            @keydown.escape.window="showRoutingRuleEditor && cancelRoutingRuleEditor()">
+            <div class="bg-threadlight-surface rounded-2xl max-w-lg w-full mx-4 shadow-xl max-h-[90vh] overflow-y-auto"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 scale-95"
+                x-transition:enter-end="opacity-100 scale-100"
+                x-transition:leave="transition ease-in duration-150"
+                x-transition:leave-start="opacity-100 scale-100"
+                x-transition:leave-end="opacity-0 scale-95">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-medium" x-text="editingRoutingRule !== null ? 'Edit Routing Rule' : 'Add Routing Rule'"></h3>
+                        <button @click="cancelRoutingRuleEditor()" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="space-y-4">
+                        <!-- Match Type -->
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Match Type</label>
+                            <select x-model="newRoutingRule.match_type"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
+                                <option value="keyword">Contains (keyword)</option>
+                                <option value="starts_with">Starts with</option>
+                                <option value="ends_with">Ends with</option>
+                                <option value="regex">Regular expression</option>
+                                <option value="length">Message length greater than</option>
+                            </select>
+                            <p class="text-xs text-threadlight-muted mt-1" x-text="getMatchTypeHelpText(newRoutingRule.match_type)"></p>
+                        </div>
+
+                        <!-- Pattern Input -->
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">
+                                <span x-show="newRoutingRule.match_type !== 'length'">Pattern</span>
+                                <span x-show="newRoutingRule.match_type === 'length'">Minimum Characters</span>
+                            </label>
+                            <input x-show="newRoutingRule.match_type !== 'length'" type="text" x-model="newRoutingRule.pattern"
+                                :placeholder="getPatternPlaceholder(newRoutingRule.match_type)"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent font-mono">
+                            <input x-show="newRoutingRule.match_type === 'length'" type="number" x-model="newRoutingRule.pattern"
+                                placeholder="500" min="1"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                            <p x-show="newRoutingRule.match_type === 'regex'" class="text-xs text-threadlight-muted mt-1">
+                                Use JavaScript-compatible regex. Example: <code class="px-1 bg-threadlight-bg rounded">^/\w+</code> matches messages starting with /command
+                            </p>
+                        </div>
+
+                        <!-- Target Model -->
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Target Model</label>
+                            <input type="text" x-model="newRoutingRule.target_model"
+                                placeholder="e.g., gpt-4o, claude-3-opus"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                            <p class="text-xs text-threadlight-muted mt-1">The model to use when this rule matches. Should be in your model pool.</p>
+                        </div>
+
+                        <!-- Priority -->
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Priority: <span class="text-threadlight-accent font-medium" x-text="newRoutingRule.priority"></span></label>
+                            <input type="range" x-model="newRoutingRule.priority" min="0" max="100" step="1"
+                                class="w-full h-2 bg-threadlight-border rounded-lg appearance-none cursor-pointer accent-threadlight-accent">
+                            <div class="flex justify-between text-xs text-threadlight-muted mt-1">
+                                <span>0 (lowest)</span>
+                                <span>50 (default)</span>
+                                <span>100 (highest)</span>
+                            </div>
+                            <p class="text-xs text-threadlight-muted mt-2">Higher priority rules are evaluated first. Use priorities to control which rule takes precedence when multiple could match.</p>
+                        </div>
+
+                        <!-- Validation Error -->
+                        <div x-show="routingRuleValidationError" class="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                            <p class="text-sm text-red-400" x-text="routingRuleValidationError"></p>
+                        </div>
+
+                        <!-- Example Preview -->
+                        <div class="p-3 bg-threadlight-bg rounded-lg">
+                            <p class="text-xs text-threadlight-muted mb-1">Rule preview:</p>
+                            <p class="text-sm text-threadlight-text">
+                                <span x-show="newRoutingRule.match_type === 'keyword'">If message <span class="text-threadlight-accent">contains</span></span>
+                                <span x-show="newRoutingRule.match_type === 'starts_with'">If message <span class="text-threadlight-accent">starts with</span></span>
+                                <span x-show="newRoutingRule.match_type === 'ends_with'">If message <span class="text-threadlight-accent">ends with</span></span>
+                                <span x-show="newRoutingRule.match_type === 'regex'">If message <span class="text-threadlight-accent">matches regex</span></span>
+                                <span x-show="newRoutingRule.match_type === 'length'">If message <span class="text-threadlight-accent">length ></span></span>
+                                <code class="px-1 mx-1 bg-threadlight-elevated rounded text-threadlight-memory" x-text="newRoutingRule.pattern || '...'"></code>
+                                <span class="text-threadlight-muted">then use</span>
+                                <span class="text-threadlight-accent2" x-text="newRoutingRule.target_model || '...'"></span>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-2 mt-6 pt-4 border-t border-threadlight-border">
+                        <button type="button" @click="saveRoutingRule()"
+                            class="px-6 py-2 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-lg transition-colors">
+                            <span x-text="editingRoutingRule !== null ? 'Save Changes' : 'Add Rule'"></span>
+                        </button>
+                        <button type="button" @click="cancelRoutingRuleEditor()"
+                            class="px-6 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
+                            Cancel
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2996,6 +3448,89 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                         <button @click="promptModal.onConfirm && promptModal.onConfirm()"
                             class="px-4 py-2 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-lg transition-colors">
                             <span x-text="promptModal.confirmText"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Group Chat Modal -->
+        <div x-show="showGroupChatModal" x-cloak
+            x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0"
+            x-transition:enter-end="opacity-100"
+            x-transition:leave="transition ease-in duration-150"
+            x-transition:leave-start="opacity-100"
+            x-transition:leave-end="opacity-0"
+            class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-50"
+            @click.self="showGroupChatModal = false"
+            @keydown.escape.window="showGroupChatModal && (showGroupChatModal = false)">
+            <div class="bg-threadlight-surface rounded-2xl max-w-lg w-full mx-4 shadow-xl"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 scale-95"
+                x-transition:enter-end="opacity-100 scale-100"
+                x-transition:leave="transition ease-in duration-150"
+                x-transition:leave-start="opacity-100 scale-100"
+                x-transition:leave-end="opacity-0 scale-95">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-medium text-threadlight-text">Create Group Chat</h3>
+                        <button @click="showGroupChatModal = false" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <p class="text-sm text-threadlight-muted mb-4">
+                        Select multiple profiles to participate in this conversation. Each profile will respond to messages in sequence.
+                    </p>
+
+                    <!-- Profile Selection -->
+                    <div class="space-y-2 max-h-64 overflow-y-auto mb-4">
+                        <template x-for="profile in profiles" :key="profile.id">
+                            <button @click="toggleGroupProfile(profile.id)"
+                                class="w-full px-4 py-3 rounded-lg border transition-colors flex items-center gap-3"
+                                :class="isProfileSelectedForGroup(profile.id)
+                                    ? 'border-threadlight-accent bg-threadlight-accent/10'
+                                    : 'border-threadlight-border hover:border-threadlight-accent/50'">
+                                <!-- Checkbox indicator -->
+                                <div class="w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 transition-colors"
+                                    :class="isProfileSelectedForGroup(profile.id)
+                                        ? 'bg-threadlight-accent border-threadlight-accent'
+                                        : 'border-threadlight-border'">
+                                    <svg x-show="isProfileSelectedForGroup(profile.id)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                    </svg>
+                                </div>
+                                <!-- Profile info -->
+                                <div class="flex-1 text-left min-w-0">
+                                    <p class="text-sm font-medium truncate" x-text="profile.name"></p>
+                                    <p class="text-xs text-threadlight-muted truncate" x-text="profile.description || profile.model_strategy"></p>
+                                </div>
+                            </button>
+                        </template>
+                        <div x-show="profiles.length === 0" class="text-center py-8">
+                            <p class="text-threadlight-muted">No profiles available. Create some profiles first.</p>
+                        </div>
+                    </div>
+
+                    <!-- Selected count -->
+                    <p class="text-sm text-threadlight-muted mb-4">
+                        <span x-text="selectedGroupProfiles.length"></span> profile(s) selected
+                        <span x-show="selectedGroupProfiles.length < 2" class="text-threadlight-warm">(minimum 2 required)</span>
+                    </p>
+
+                    <!-- Actions -->
+                    <div class="flex gap-3 justify-end">
+                        <button @click="showGroupChatModal = false"
+                            class="px-4 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
+                            Cancel
+                        </button>
+                        <button @click="createGroupConversation()"
+                            :disabled="selectedGroupProfiles.length < 2"
+                            class="px-4 py-2 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            Create Group Chat
                         </button>
                     </div>
                 </div>

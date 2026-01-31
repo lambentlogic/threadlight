@@ -144,14 +144,18 @@ class ToolExecutor:
                 error="content is required",
             )
 
-        # Validate memory type
-        valid_types = ["relational", "myth_seed", "witness"]
+        # Validate memory type (accept identity_phrase as alias for myth_seed)
+        valid_types = ["relational", "myth_seed", "identity_phrase", "witness"]
         if memory_type not in valid_types:
             return ToolResult(
                 tool_name=ToolName.CREATE_MEMORY.value,
                 success=False,
                 error=f"Invalid memory_type. Must be one of: {valid_types}",
             )
+
+        # Normalize identity_phrase to myth_seed (internal name)
+        if memory_type == "identity_phrase":
+            memory_type = "myth_seed"
 
         if self.require_consent:
             # Create a proposal instead of an active memory

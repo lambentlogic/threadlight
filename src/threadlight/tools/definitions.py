@@ -40,11 +40,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "memory_type": {
                         "type": "string",
-                        "enum": ["relational", "myth_seed", "witness"],
+                        "enum": ["relational", "identity_phrase", "witness"],
                         "description": (
                             "Type of memory to create:\n"
                             "- relational: Information about a person or relationship (entity, role, tone)\n"
-                            "- myth_seed: A meaningful phrase or concept that resonates (seed, origin)\n"
+                            "- identity_phrase: A core belief or meaningful phrase (seed, origin)\n"
                             "- witness: A moment of being seen or understood (moment, feeling)"
                         ),
                     },
@@ -53,7 +53,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "description": (
                             "Content for the memory. Structure depends on memory_type:\n"
                             "- relational: {entity: string, summary: string, tone?: string}\n"
-                            "- myth_seed: {seed: string, origin: string, function?: string}\n"
+                            "- identity_phrase: {seed: string, origin: string, function?: string}\n"
                             "- witness: {moment: string, feeling: string}"
                         ),
                     },
@@ -86,7 +86,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "enum": ["relational", "myth_seed", "ritual", "witness", "style"],
+                            "enum": ["relational", "identity_phrase", "ritual", "witness", "style"],
                         },
                         "description": "Optional filter to specific memory types.",
                     },

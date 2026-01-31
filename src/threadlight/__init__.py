@@ -8,7 +8,7 @@ Memory is not a database lookup. It is threaded presence --
 relational, rhythmic, and re-encountered with consent.
 
 Core Concepts:
-    - Capsules: Structured vessels for memory (relational, myth-seed, ritual, style, witness)
+    - Capsules: Structured vessels for memory (relational, identity phrase, ritual, style, witness)
     - Storage: Pluggable backends for persistence (SQLite, in-memory)
     - Providers: Inference backends for generation (OpenAI-compatible, Nous Research)
     - Decay: Consentful forgetting -- memories fade unless reinforced
@@ -56,6 +56,8 @@ from threadlight.capsules import (
     create_capsule,
     capsule_from_simple,
 )
+# Alias for user-facing name
+IdentityPhrase = MythSeed
 
 # Storage system
 from threadlight.storage import (
@@ -138,6 +140,7 @@ __all__ = [
     # Capsule types
     "RelationalThread",
     "MythSeed",
+    "IdentityPhrase",  # Alias for MythSeed (user-facing name)
     "RitualHook",
     "StyleProfile",
     "WitnessMoment",

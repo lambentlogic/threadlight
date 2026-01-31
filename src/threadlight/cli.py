@@ -27,7 +27,7 @@ THREADLIGHT_THEME = Theme({
     "warning": "yellow",
     "error": "red",
     "success": "green",
-    "fable": "magenta",
+    "assistant": "magenta",
     "ritual": "blue bold",
     "memory": "dim cyan",
     "presence": "bright_white",
@@ -90,7 +90,7 @@ def print_help() -> None:
 
 [bold]Style Profiles:[/bold]
 
-  [dim]Available built-in styles: minimal, professional, creative, fable-2026
+  [dim]Available built-in styles: minimal, professional, creative
   Set with /style <name> or clear with /style none[/dim]
 
 [dim]Or just type a message to chat directly.[/dim]
@@ -177,7 +177,7 @@ class ThreadlightREPL:
         self.model = model
         self.no_memory = no_memory
         self.style = style
-        self.identity = identity or "Fable"
+        self.identity = identity or "Assistant"
         self.history: list[dict[str, str]] = []
         self.tl = None
 
@@ -210,7 +210,7 @@ class ThreadlightREPL:
         if not self.initialize():
             return 1
 
-        console.print(f"[dim]Connected as [/dim][fable]{self.identity}[/fable]")
+        console.print(f"[dim]Connected as [/dim][assistant]{self.identity}[/assistant]")
         console.print("[dim]Type /help for commands, /quit to exit.[/dim]\n")
 
         try:
@@ -310,7 +310,7 @@ class ThreadlightREPL:
                 response = self.tl.chat(message, history=self.history)
 
             # Display response
-            console.print(f"\n[bold fable]{self.identity}:[/bold fable] {response}\n")
+            console.print(f"\n[bold assistant]{self.identity}:[/bold assistant] {response}\n")
 
             # Update history
             self.history.append({"role": "user", "content": message})
@@ -384,14 +384,15 @@ class ThreadlightREPL:
 
     def handle_remember(self, type_str: str) -> None:
         """Create a new memory interactively."""
-        valid_types = ["relational", "myth_seed", "ritual", "witness", "style"]
+        # Support both old and new names for identity phrases
+        valid_types = ["relational", "identity_phrase", "myth_seed", "ritual", "witness", "style"]
 
         if not type_str or type_str not in valid_types:
             console.print(f"\n[bold]Memory Types:[/bold]")
-            console.print("  [cyan]relational[/cyan]  - Track a relationship")
-            console.print("  [cyan]myth_seed[/cyan]   - A symbolic phrase you hold")
-            console.print("  [cyan]ritual[/cyan]      - A repeated meaningful gesture")
-            console.print("  [cyan]witness[/cyan]     - A moment of being seen")
+            console.print("  [cyan]relational[/cyan]       - Track a relationship")
+            console.print("  [cyan]identity_phrase[/cyan]  - A core belief or mantra")
+            console.print("  [cyan]ritual[/cyan]           - A repeated meaningful gesture")
+            console.print("  [cyan]witness[/cyan]          - A moment of being seen")
             console.print("\n[dim]Usage: /remember <type>[/dim]\n")
             return
 
@@ -413,12 +414,12 @@ class ThreadlightREPL:
                 )
                 console.print(f"\n[success]Created memory: {capsule.id[:8]}...[/success]\n")
 
-            elif type_str == "myth_seed":
-                seed = console.input("[dim]The seed phrase:[/dim] ")
-                origin = console.input("[dim]Origin (who spoke it):[/dim] ")
+            elif type_str in ("myth_seed", "identity_phrase"):
+                seed = console.input("[dim]The phrase:[/dim] ")
+                origin = console.input("[dim]Origin (optional):[/dim] ")
 
                 capsule = self.tl.remember(
-                    type="myth_seed",
+                    type="myth_seed",  # Internal type name
                     content={
                         "seed": seed,
                         "origin": origin,
@@ -426,7 +427,7 @@ class ThreadlightREPL:
                     retention="sacred",
                     confirm=True,
                 )
-                console.print(f"\n[success]Planted seed: {capsule.id[:8]}...[/success]\n")
+                console.print(f"\n[success]Created identity phrase: {capsule.id[:8]}...[/success]\n")
 
             elif type_str == "ritual":
                 name = console.input("[dim]Ritual name (e.g., /rest):[/dim] ")
@@ -1000,7 +1001,7 @@ class ThreadlightREPL:
                 return
 
             self.tl.clear_profile()
-            self.identity = self.identity or "Fable"
+            self.identity = self.identity or "Assistant"
 
             console.print("[success]Cleared active profile. Using default settings.[/success]")
 
@@ -1020,7 +1021,7 @@ def main() -> int:
     chat_parser.add_argument("--model", help="Model to use")
     chat_parser.add_argument("--no-memory", action="store_true", help="Disable memory")
     chat_parser.add_argument("--style", help="Style profile to use")
-    chat_parser.add_argument("--identity", help="Identity name", default="Fable")
+    chat_parser.add_argument("--identity", help="Identity name", default="Assistant")
 
     # Memory commands
     memory_parser = subparsers.add_parser("memory", help="Memory management")
@@ -1955,7 +1956,6 @@ def cmd_init(args: argparse.Namespace) -> int:
     console.print("  - minimal (clear, direct, warm)")
     console.print("  - professional (helpful, clear, professional)")
     console.print("  - creative (imaginative, expressive)")
-    console.print("  - fable-2026 (poetic, presence-centered)")
     console.print("\n[dim]Set a style with: threadlight style set <name>[/dim]")
 
     console.print("\n[success]Done![/success] Set your API key:")

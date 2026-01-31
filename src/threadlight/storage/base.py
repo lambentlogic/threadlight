@@ -87,6 +87,8 @@ class Conversation:
     model_scope: Optional[str] = None  # Model ID for per-model isolation (NULL = shared)
     profile_scope: Optional[str] = None  # Profile ID for profile-based scoping (NULL = shared)
     model: Optional[str] = None  # Display model name (e.g., "gpt-4o", "Claude Opus", "Hermes-4.3")
+    # Group chat support: list of profile IDs participating in this conversation
+    participant_profiles: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize conversation to dictionary."""
@@ -103,7 +105,12 @@ class Conversation:
             "model_scope": self.model_scope,
             "profile_scope": self.profile_scope,
             "model": self.model,
+            "participant_profiles": self.participant_profiles,
         }
+
+    def is_group_chat(self) -> bool:
+        """Check if this is a group chat with multiple profiles."""
+        return len(self.participant_profiles) > 1
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Conversation":
@@ -134,6 +141,7 @@ class Conversation:
             model_scope=data.get("model_scope"),
             profile_scope=data.get("profile_scope"),
             model=data.get("model"),
+            participant_profiles=data.get("participant_profiles", []),
         )
 
 

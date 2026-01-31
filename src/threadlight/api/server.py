@@ -166,12 +166,19 @@ class ModelSwitchRequest(BaseModel):
 class ConversationCreateRequest(BaseModel):
     name: str = "New Chat"
     model: Optional[str] = None  # Model name for display (e.g., "gpt-4o", "Claude Opus")
+    participant_profiles: Optional[list[str]] = None  # For group chat - list of profile IDs
 
 
 class ConversationUpdateRequest(BaseModel):
     name: Optional[str] = None
     model: Optional[str] = None  # Model name for display
     archived: Optional[bool] = None
+    participant_profiles: Optional[list[str]] = None  # Update group chat participants
+
+
+class GroupChatRequest(BaseModel):
+    message: str
+    profile_ids: Optional[list[str]] = None  # Override which profiles respond (uses conversation's if not provided)
 
 
 class MessageUpdateRequest(BaseModel):
@@ -269,6 +276,17 @@ class MemoryTypeUpdateRequest(BaseModel):
     fields: Optional[list[FieldDefinitionRequest]] = None
     display_template: Optional[str] = None
     icon: Optional[str] = None
+
+
+class ProviderConfigRequest(BaseModel):
+    """Request model for API provider configuration."""
+    provider_type: str  # "openai", "anthropic", "nous", "local", "custom"
+    api_base: str = ""
+    api_key: Optional[str] = None  # Only sent if changed (not placeholder)
+    model: Optional[str] = None
+    headers: Optional[dict[str, str]] = None  # For custom providers
+    provider_name: Optional[str] = None  # Display name for custom providers
+    anthropic_version: Optional[str] = None  # For Anthropic: API version header
 
 
 # ============================================================================
@@ -1456,6 +1474,213 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
 
     # ========================================================================
+    # Provider Configuration Endpoints
+    # ========================================================================
+
+    @app.get("/api/provider/config")
+    async def get_provider_config():
+        """Get current API provider configuration.
+
+        Note: API key is not returned for security. A placeholder indicates if one is configured.
+        """
+        tl = get_threadlight()
+
+        # Determine provider type from api_base
+        api_base = tl.config.provider.api_base
+        provider_type = tl.config.provider.type
+
+        # Infer provider type from URL if not explicitly set
+        if "openai.com" in api_base:
+            inferred_type = "openai"
+        elif "anthropic.com" in api_base:
+            inferred_type = "anthropic"
+        elif "nousresearch.com" in api_base:
+            inferred_type = "nous"
+        elif api_base == "" or "localhost" in api_base or "127.0.0.1" in api_base:
+            inferred_type = "local"
+        else:
+            inferred_type = "custom"
+
+        # Use explicit type if set, otherwise inferred
+        effective_type = provider_type if provider_type != "openai" else inferred_type
+
+        return {
+            "provider_type": effective_type,
+            "api_base": api_base,
+            "has_api_key": bool(tl.config.provider.api_key),
+            "model": tl.config.provider.model,
+            "timeout": tl.config.provider.timeout,
+        }
+
+    @app.put("/api/provider/config")
+    async def update_provider_config(request: ProviderConfigRequest):
+        """Update API provider configuration.
+
+        The API key is only updated if provided (not empty/placeholder).
+        This allows updating other settings without clearing the key.
+        """
+        tl = get_threadlight()
+
+        # Update provider type
+        tl.config.provider.type = request.provider_type
+
+        # Update API base URL
+        if request.api_base:
+            tl.config.provider.api_base = request.api_base
+        else:
+            # Set default based on provider type
+            defaults = {
+                "openai": "https://api.openai.com/v1",
+                "anthropic": "https://api.anthropic.com",
+                "nous": "https://inference-api.nousresearch.com/v1",
+                "local": "",
+                "custom": "",
+            }
+            tl.config.provider.api_base = defaults.get(request.provider_type, "")
+
+        # Only update API key if provided (not empty string or None)
+        if request.api_key:
+            tl.config.provider.api_key = request.api_key
+
+        # Update model if provided
+        if request.model:
+            tl.config.provider.model = request.model
+
+        # Save configuration
+        tl.config.mark_changed()
+        tl.save_config()
+
+        return {
+            "status": "updated",
+            "provider_type": request.provider_type,
+            "api_base": tl.config.provider.api_base,
+            "has_api_key": bool(tl.config.provider.api_key),
+        }
+
+    @app.post("/api/provider/test")
+    async def test_provider_connection(request: ProviderConfigRequest):
+        """Test API provider connection.
+
+        Makes a lightweight API call to verify the configuration works.
+        Uses the provided configuration for testing without saving it.
+        """
+        import httpx
+
+        # Determine the API key to use
+        tl = get_threadlight()
+        api_key = request.api_key if request.api_key else tl.config.provider.api_key
+
+        # Set up base URL
+        api_base = request.api_base
+        if not api_base:
+            defaults = {
+                "openai": "https://api.openai.com/v1",
+                "anthropic": "https://api.anthropic.com",
+                "nous": "https://inference-api.nousresearch.com/v1",
+                "local": "",
+                "custom": "",
+            }
+            api_base = defaults.get(request.provider_type, "")
+
+        if request.provider_type == "local":
+            return {
+                "status": "success",
+                "message": "Local provider does not require connection testing",
+            }
+
+        if not api_key and request.provider_type != "local":
+            return {
+                "status": "error",
+                "message": "API key is required for this provider",
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                if request.provider_type == "anthropic":
+                    # Anthropic uses a different endpoint structure
+                    headers = {
+                        "x-api-key": api_key,
+                        "anthropic-version": request.anthropic_version or "2023-06-01",
+                        "Content-Type": "application/json",
+                    }
+                    # Make a minimal request to test the connection
+                    response = await client.post(
+                        f"{api_base}/v1/messages",
+                        headers=headers,
+                        json={
+                            "model": request.model or "claude-3-haiku-20240307",
+                            "max_tokens": 1,
+                            "messages": [{"role": "user", "content": "test"}],
+                        },
+                    )
+                    # Anthropic returns 200 on success, or error codes with details
+                    if response.status_code == 200:
+                        return {"status": "success", "message": "Connection successful"}
+                    elif response.status_code == 401:
+                        return {"status": "error", "message": "Invalid API key"}
+                    elif response.status_code == 400:
+                        # Bad request but connection works
+                        return {"status": "success", "message": "Connection successful (API accessible)"}
+                    else:
+                        error_data = response.json()
+                        error_msg = error_data.get("error", {}).get("message", response.text)
+                        return {"status": "error", "message": f"Error: {error_msg}"}
+
+                else:
+                    # OpenAI-compatible endpoints (OpenAI, Nous, custom)
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    }
+                    if request.headers:
+                        headers.update(request.headers)
+
+                    # Try to list models (lightweight endpoint)
+                    response = await client.get(
+                        f"{api_base}/models",
+                        headers=headers,
+                    )
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        model_count = len(data.get("data", []))
+                        return {
+                            "status": "success",
+                            "message": f"Connection successful ({model_count} models available)",
+                        }
+                    elif response.status_code == 401:
+                        return {"status": "error", "message": "Invalid API key"}
+                    elif response.status_code == 403:
+                        return {"status": "error", "message": "Access forbidden - check API key permissions"}
+                    elif response.status_code == 404:
+                        # Some providers don't have /models endpoint
+                        # Try a minimal chat completion instead
+                        chat_response = await client.post(
+                            f"{api_base}/chat/completions",
+                            headers=headers,
+                            json={
+                                "model": request.model or "gpt-3.5-turbo",
+                                "messages": [{"role": "user", "content": "test"}],
+                                "max_tokens": 1,
+                            },
+                        )
+                        if chat_response.status_code == 200:
+                            return {"status": "success", "message": "Connection successful"}
+                        elif chat_response.status_code == 401:
+                            return {"status": "error", "message": "Invalid API key"}
+                        else:
+                            return {"status": "error", "message": f"Error: {chat_response.text[:200]}"}
+                    else:
+                        return {"status": "error", "message": f"Error: {response.text[:200]}"}
+
+        except httpx.ConnectError:
+            return {"status": "error", "message": "Could not connect to server"}
+        except httpx.TimeoutException:
+            return {"status": "error", "message": "Connection timed out"}
+        except Exception as e:
+            return {"status": "error", "message": f"Error: {str(e)}"}
+
+    # ========================================================================
     # Import Endpoints
     # ========================================================================
 
@@ -2068,11 +2293,28 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     @app.post("/api/conversations")
     async def create_conversation_api(request: ConversationCreateRequest):
-        """Create a new conversation."""
+        """Create a new conversation, optionally as a group chat with multiple profiles."""
         tl = get_threadlight()
         from threadlight.storage.base import Conversation
         from datetime import datetime
 
+        # Check if this is a group chat request
+        if request.participant_profiles and len(request.participant_profiles) > 1:
+            # Use the core method for group chat creation
+            try:
+                conversation = tl.create_group_conversation(
+                    name=request.name,
+                    profile_ids=request.participant_profiles,
+                )
+                # Update model name if provided
+                if request.model:
+                    conversation.model = request.model
+                    tl.storage.update_conversation(conversation)
+                return conversation.to_dict()
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+        # Regular single-profile conversation
         # Determine model name: use provided, or active profile, or current model config
         model_name = request.model
         if not model_name:
@@ -2080,6 +2322,11 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 model_name = tl.active_profile.name or tl.active_profile.primary_model
             else:
                 model_name = tl.config.provider.model
+
+        # Handle single participant_profile
+        participant_profiles = []
+        if request.participant_profiles:
+            participant_profiles = request.participant_profiles
 
         conversation = Conversation(
             id=str(uuid.uuid4()),
@@ -2089,6 +2336,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             updated_at=datetime.utcnow(),
             message_count=0,
             model=model_name,
+            participant_profiles=participant_profiles,
         )
 
         tl.storage.save_conversation(conversation)
@@ -2108,7 +2356,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     @app.put("/api/conversations/{conversation_id}")
     async def update_conversation_api(conversation_id: str, request: ConversationUpdateRequest):
-        """Update a conversation (rename, archive, etc.)."""
+        """Update a conversation (rename, archive, update participants, etc.)."""
         tl = get_threadlight()
 
         conversation = tl.storage.get_conversation(conversation_id)
@@ -2121,6 +2369,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             conversation.archived = request.archived
         if request.model is not None:
             conversation.model = request.model
+        if request.participant_profiles is not None:
+            conversation.participant_profiles = request.participant_profiles
 
         tl.storage.update_conversation(conversation)
 
@@ -2217,6 +2467,108 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         tl.storage.update_conversation(conversation)
 
         return message.to_dict()
+
+    # ========================================================================
+    # Group Chat Endpoints
+    # ========================================================================
+
+    @app.post("/api/conversations/{conversation_id}/group-chat")
+    async def group_chat_api(conversation_id: str, request: GroupChatRequest):
+        """
+        Send a message to a group chat and get responses from all participating profiles.
+
+        Each profile responds in turn, seeing the previous profiles' responses
+        tagged in their context.
+
+        Returns:
+            List of responses with profile info and content
+        """
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        # Check if this is a group chat
+        profile_ids = request.profile_ids or conversation.participant_profiles
+        if not profile_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="No profiles specified. Either provide profile_ids or use a conversation with participant_profiles."
+            )
+
+        try:
+            responses = tl.group_chat(
+                message=request.message,
+                conversation_id=conversation_id,
+                profile_ids=profile_ids,
+            )
+            return {
+                "conversation_id": conversation_id,
+                "message": request.message,
+                "responses": responses,
+                "is_group_chat": len(profile_ids) > 1,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/conversations/{conversation_id}/add-profile")
+    async def add_profile_to_conversation_api(conversation_id: str, profile_id: str):
+        """Add a profile to a conversation's participants."""
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        profile = tl.get_profile(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail=f"Profile not found: {profile_id}")
+
+        if profile_id in conversation.participant_profiles:
+            return {
+                "status": "already_present",
+                "conversation_id": conversation_id,
+                "profile_id": profile_id,
+                "participant_profiles": conversation.participant_profiles,
+            }
+
+        conversation.participant_profiles.append(profile_id)
+        tl.storage.update_conversation(conversation)
+
+        return {
+            "status": "added",
+            "conversation_id": conversation_id,
+            "profile_id": profile_id,
+            "participant_profiles": conversation.participant_profiles,
+        }
+
+    @app.post("/api/conversations/{conversation_id}/remove-profile")
+    async def remove_profile_from_conversation_api(conversation_id: str, profile_id: str):
+        """Remove a profile from a conversation's participants."""
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        if profile_id not in conversation.participant_profiles:
+            return {
+                "status": "not_present",
+                "conversation_id": conversation_id,
+                "profile_id": profile_id,
+                "participant_profiles": conversation.participant_profiles,
+            }
+
+        conversation.participant_profiles.remove(profile_id)
+        tl.storage.update_conversation(conversation)
+
+        return {
+            "status": "removed",
+            "conversation_id": conversation_id,
+            "profile_id": profile_id,
+            "participant_profiles": conversation.participant_profiles,
+        }
 
     # ========================================================================
     # Message Management Endpoints

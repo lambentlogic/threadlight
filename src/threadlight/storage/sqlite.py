@@ -104,7 +104,8 @@ class SQLiteStorage(StorageBackend):
                 archived INTEGER DEFAULT 0,
                 model_scope TEXT,
                 profile_scope TEXT,
-                model TEXT
+                model TEXT,
+                participant_profiles TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_conversations_source ON conversations(source);
@@ -242,6 +243,11 @@ class SQLiteStorage(StorageBackend):
         # Add model column for display (tracks the model/AI name used in conversation)
         if "model" not in conv_columns:
             self.conn.execute("ALTER TABLE conversations ADD COLUMN model TEXT")
+            self.conn.commit()
+
+        # Add participant_profiles column for group chat support
+        if "participant_profiles" not in conv_columns:
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN participant_profiles TEXT")
             self.conn.commit()
 
         # Phase 2: Add profile_id and model_used columns to messages table
@@ -754,8 +760,8 @@ class SQLiteStorage(StorageBackend):
 
         conn.execute("""
             INSERT OR REPLACE INTO conversations
-            (id, name, summary, created_at, updated_at, source, message_count, metadata, archived, model_scope, profile_scope, model)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, name, summary, created_at, updated_at, source, message_count, metadata, archived, model_scope, profile_scope, model, participant_profiles)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             conversation.id,
             conversation.name,
@@ -769,6 +775,7 @@ class SQLiteStorage(StorageBackend):
             getattr(conversation, 'model_scope', None),
             getattr(conversation, 'profile_scope', None),
             getattr(conversation, 'model', None),
+            json.dumps(getattr(conversation, 'participant_profiles', [])),
         ))
         conn.commit()
 
@@ -841,7 +848,8 @@ class SQLiteStorage(StorageBackend):
                 archived = ?,
                 model_scope = ?,
                 profile_scope = ?,
-                model = ?
+                model = ?,
+                participant_profiles = ?
             WHERE id = ?
         """, (
             conversation.name,
@@ -854,6 +862,7 @@ class SQLiteStorage(StorageBackend):
             getattr(conversation, 'model_scope', None),
             getattr(conversation, 'profile_scope', None),
             getattr(conversation, 'model', None),
+            json.dumps(getattr(conversation, 'participant_profiles', [])),
             conversation.id,
         ))
         conn.commit()
@@ -1144,6 +1153,15 @@ class SQLiteStorage(StorageBackend):
         except (IndexError, KeyError):
             pass
 
+        # Handle participant_profiles field (may not exist in older databases)
+        participant_profiles = []
+        try:
+            participant_profiles_raw = row["participant_profiles"]
+            if participant_profiles_raw:
+                participant_profiles = json.loads(participant_profiles_raw)
+        except (IndexError, KeyError):
+            pass
+
         return Conversation(
             id=row["id"],
             name=row["name"] or "",
@@ -1157,6 +1175,7 @@ class SQLiteStorage(StorageBackend):
             model_scope=model_scope,
             profile_scope=profile_scope,
             model=model,
+            participant_profiles=participant_profiles,
         )
 
     def _row_to_message(self, row: sqlite3.Row) -> Message:

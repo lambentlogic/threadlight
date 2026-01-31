@@ -24,6 +24,12 @@ function threadlightApp() {
         openConversationMenu: null,
         showConversationPanel: false,  // For mobile slide-in panel
 
+        // Group chat state
+        isGroupChat: false,  // Current conversation is a group chat
+        selectedGroupProfiles: [],  // Profile IDs for new group chat
+        showGroupChatModal: false,  // Modal for creating group chat
+        groupChatResponding: false,  // Currently getting group responses
+
         // Message editing state
         editingMessageId: null,
         editedMessageContent: '',
@@ -80,6 +86,21 @@ function threadlightApp() {
             identity: { name: '', system_prompt: '' },
             memory: { decay_enabled: true, per_profile_isolation: false, default_shared: false },
         },
+
+        // Provider configuration state
+        providerConfig: {
+            provider_type: 'nous',
+            api_base: '',
+            has_api_key: false,
+            model: '',
+        },
+        providerApiKey: '',  // Separate field for API key input
+        providerApiKeyChanged: false,  // Track if key was modified
+        showProviderApiKey: false,  // Toggle visibility
+        testingProviderConnection: false,
+        providerConnectionStatus: null,  // 'success', 'error', or null
+        providerConnectionMessage: '',
+        savingProviderConfig: false,
 
         // Model configuration state
         currentModelId: '',
@@ -178,7 +199,19 @@ function threadlightApp() {
             tags_str: '',  // For comma-separated input
             philosophy: '',  // Freeform philosophy description
             approach_to_rituals: '',  // Freeform approach to rituals
-                    },
+            routing_rules: [],  // For content-routed strategy
+        },
+
+        // Routing rule editor state
+        showRoutingRuleEditor: false,
+        editingRoutingRule: null,  // Index of rule being edited, or null for new
+        newRoutingRule: {
+            match_type: 'keyword',
+            pattern: '',
+            target_model: '',
+            priority: 50,
+        },
+        routingRuleValidationError: '',
 
         // Toast notifications
         toasts: [],
@@ -237,6 +270,7 @@ function threadlightApp() {
             await this.loadMemoryTypes();
             await this.loadModelScopeConfig();
             await this.loadProfiles();
+            await this.loadProviderConfig();
 
             // Connect WebSocket
             this.connectWebSocket();
@@ -345,6 +379,12 @@ function threadlightApp() {
                 return;
             }
 
+            // If this is a group chat, use the group chat endpoint
+            if (this.isGroupChat && this.currentConversationId) {
+                await this.sendGroupMessage();
+                return;
+            }
+
             // Add user message to display
             this.messages.push({
                 role: 'user',
@@ -446,6 +486,8 @@ function threadlightApp() {
             this.messages = [];
             this.chatHistory = [];
             this.currentConversationId = null;
+            this.isGroupChat = false;
+            this.groupChatResponding = false;
             if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: 'clear_history' }));
             }
@@ -498,17 +540,78 @@ function threadlightApp() {
                 if (!response.ok) throw new Error('Failed to create conversation');
 
                 const data = await response.json();
-                this.currentConversationId = data.conversation_id;
+                this.currentConversationId = data.id || data.conversation_id;
                 this.messages = [];
                 this.chatHistory = [];
+                this.isGroupChat = false;
                 await this.loadConversations();
             } catch (error) {
                 this.showToast('Failed to create conversation: ' + error.message, 'error');
             }
         },
 
+        async createGroupConversation() {
+            if (this.selectedGroupProfiles.length < 2) {
+                this.showToast('Group chat requires at least 2 profiles', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/conversations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'Group Chat',
+                        participant_profiles: this.selectedGroupProfiles,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Failed to create group conversation');
+                }
+
+                const data = await response.json();
+                this.currentConversationId = data.id;
+                this.messages = [];
+                this.chatHistory = [];
+                this.isGroupChat = true;
+                this.showGroupChatModal = false;
+                this.selectedGroupProfiles = [];
+                await this.loadConversations();
+                this.showToast('Group chat created');
+            } catch (error) {
+                this.showToast('Failed to create group chat: ' + error.message, 'error');
+            }
+        },
+
+        openGroupChatModal() {
+            this.selectedGroupProfiles = [];
+            this.showGroupChatModal = true;
+        },
+
+        toggleGroupProfile(profileId) {
+            const idx = this.selectedGroupProfiles.indexOf(profileId);
+            if (idx === -1) {
+                this.selectedGroupProfiles.push(profileId);
+            } else {
+                this.selectedGroupProfiles.splice(idx, 1);
+            }
+        },
+
+        isProfileSelectedForGroup(profileId) {
+            return this.selectedGroupProfiles.includes(profileId);
+        },
+
         async loadConversation(conversationId) {
             try {
+                // First get conversation details to check if it's a group chat
+                const convResponse = await fetch(`/api/conversations/${conversationId}`);
+                if (convResponse.ok) {
+                    const convData = await convResponse.json();
+                    this.isGroupChat = convData.participant_profiles && convData.participant_profiles.length > 1;
+                }
+
                 const response = await fetch(`/api/conversations/${conversationId}/messages`);
                 if (!response.ok) throw new Error('Failed to load conversation');
 
@@ -519,6 +622,8 @@ function threadlightApp() {
                     role: msg.role,
                     content: msg.content,
                     timestamp: msg.timestamp,
+                    profile_id: msg.profile_id,
+                    profile_name: this.getProfileNameById(msg.profile_id),
                     memories: [],
                 }));
 
@@ -532,6 +637,113 @@ function threadlightApp() {
             } catch (error) {
                 this.showToast('Failed to load conversation: ' + error.message, 'error');
             }
+        },
+
+        getProfileNameById(profileId) {
+            if (!profileId) return null;
+            const profile = this.profiles.find(p => p.id === profileId);
+            return profile ? profile.name : profileId;
+        },
+
+        getProfileColorClass(profileId) {
+            // Assign colors based on profile position
+            if (!profileId) return '';
+            const idx = this.profiles.findIndex(p => p.id === profileId);
+            const colors = [
+                'border-l-4 border-threadlight-accent',
+                'border-l-4 border-threadlight-memory',
+                'border-l-4 border-threadlight-ritual',
+                'border-l-4 border-threadlight-warm',
+                'border-l-4 border-green-400',
+            ];
+            return colors[idx % colors.length];
+        },
+
+        getCurrentConversationProfiles() {
+            const conv = this.conversations.find(c => c.id === this.currentConversationId);
+            if (!conv || !conv.participant_profiles) return [];
+            return conv.participant_profiles.map(pid => this.profiles.find(p => p.id === pid)).filter(p => p);
+        },
+
+        // Send message to group chat - gets responses from all profiles
+        async sendGroupMessage() {
+            const message = this.inputMessage.trim();
+            if (!message || !this.currentConversationId || !this.isGroupChat) return;
+
+            // Add user message to display
+            this.messages.push({
+                role: 'user',
+                content: message,
+            });
+            this.inputMessage = '';
+            this.scrollToBottom();
+
+            this.groupChatResponding = true;
+            this.isTyping = true;
+
+            try {
+                const response = await fetch(`/api/conversations/${this.currentConversationId}/group-chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Failed to send group message');
+                }
+
+                const data = await response.json();
+
+                // Add each profile's response
+                for (const resp of data.responses) {
+                    this.messages.push({
+                        role: 'assistant',
+                        content: resp.content,
+                        profile_id: resp.profile_id,
+                        profile_name: this.getProfileNameById(resp.profile_id),
+                        memories: resp.memories_recalled || [],
+                    });
+                    this.scrollToBottom();
+                }
+
+                // Update history
+                this.chatHistory.push({ role: 'user', content: message });
+                for (const resp of data.responses) {
+                    this.chatHistory.push({ role: 'assistant', content: resp.content });
+                }
+
+                // Keep history manageable
+                if (this.chatHistory.length > 40) {
+                    this.chatHistory = this.chatHistory.slice(-40);
+                }
+
+            } catch (error) {
+                this.showToast('Failed to send group message: ' + error.message, 'error');
+            } finally {
+                this.groupChatResponding = false;
+                this.isTyping = false;
+                this.scrollToBottom();
+            }
+        },
+
+        // Get profile badge color for display
+        getProfileBadgeColor(profileId) {
+            if (!profileId) return 'bg-gray-500';
+            const idx = this.profiles.findIndex(p => p.id === profileId);
+            const colors = [
+                'bg-threadlight-accent',
+                'bg-threadlight-memory',
+                'bg-threadlight-ritual',
+                'bg-threadlight-warm',
+                'bg-green-500',
+                'bg-blue-500',
+                'bg-pink-500',
+                'bg-orange-500',
+            ];
+            return colors[idx % colors.length];
         },
 
         async renameConversation(conversationId, newName) {
@@ -1304,12 +1516,27 @@ function threadlightApp() {
             const colors = {
                 relational: 'bg-blue-500/20 text-blue-400',
                 myth_seed: 'bg-purple-500/20 text-purple-400',
+                identity_phrase: 'bg-purple-500/20 text-purple-400',
                 ritual: 'bg-indigo-500/20 text-indigo-400',
                 witness: 'bg-pink-500/20 text-pink-400',
                 style: 'bg-green-500/20 text-green-400',
                 custom: 'bg-gray-500/20 text-gray-400',
             };
             return colors[type] || colors.custom;
+        },
+
+        // Get display name for memory types (maps internal names to user-friendly labels)
+        getTypeDisplayName(type) {
+            const displayNames = {
+                relational: 'Relational',
+                myth_seed: 'Identity Phrase',
+                identity_phrase: 'Identity Phrase',
+                ritual: 'Command',
+                witness: 'Witness',
+                style: 'Style',
+                custom: 'Custom',
+            };
+            return displayNames[type] || type;
         },
 
         // Ritual functions
@@ -1487,6 +1714,141 @@ function threadlightApp() {
         async toggleDecay() {
             const newValue = !(this.config.memory?.decay_enabled ?? true);
             await this.updateConfig({ enable_decay: newValue });
+        },
+
+        // Provider configuration functions
+        async loadProviderConfig() {
+            try {
+                const response = await fetch('/api/provider/config');
+                if (!response.ok) throw new Error('Failed to load provider config');
+                const data = await response.json();
+                this.providerConfig = data;
+                // Reset API key state when loading
+                // Don't show a fake placeholder - just leave empty and show status via has_api_key
+                this.providerApiKey = '';
+                this.providerApiKeyChanged = false;
+                this.showProviderApiKey = false;
+                this.providerConnectionStatus = null;
+                this.providerConnectionMessage = '';
+            } catch (error) {
+                console.error('Failed to load provider config:', error);
+            }
+        },
+
+        onProviderApiKeyInput() {
+            // Mark the key as changed when user types anything
+            this.providerApiKeyChanged = true;
+        },
+
+        getDefaultApiBase(providerType) {
+            const defaults = {
+                'openai': 'https://api.openai.com/v1',
+                'anthropic': 'https://api.anthropic.com',
+                'nous': 'https://inference-api.nousresearch.com/v1',
+                'local': '',
+                'custom': '',
+            };
+            return defaults[providerType] || '';
+        },
+
+        onProviderTypeChange() {
+            // Update default API base when provider type changes
+            this.providerConfig.api_base = this.getDefaultApiBase(this.providerConfig.provider_type);
+            // Clear connection status
+            this.providerConnectionStatus = null;
+            this.providerConnectionMessage = '';
+        },
+
+        async testProviderConnection() {
+            this.testingProviderConnection = true;
+            this.providerConnectionStatus = null;
+            this.providerConnectionMessage = '';
+
+            try {
+                const payload = {
+                    provider_type: this.providerConfig.provider_type,
+                    api_base: this.providerConfig.api_base,
+                    model: this.providerConfig.model,
+                };
+
+                // Only include API key if it was changed and has a value
+                if (this.providerApiKeyChanged && this.providerApiKey) {
+                    payload.api_key = this.providerApiKey;
+                }
+
+                const response = await fetch('/api/provider/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                const data = await response.json();
+                this.providerConnectionStatus = data.status;
+                this.providerConnectionMessage = data.message;
+            } catch (error) {
+                this.providerConnectionStatus = 'error';
+                this.providerConnectionMessage = 'Connection test failed: ' + error.message;
+            } finally {
+                this.testingProviderConnection = false;
+            }
+        },
+
+        async saveProviderConfig() {
+            this.savingProviderConfig = true;
+
+            try {
+                const payload = {
+                    provider_type: this.providerConfig.provider_type,
+                    api_base: this.providerConfig.api_base,
+                    model: this.providerConfig.model,
+                };
+
+                // Only include API key if it was changed and has a value
+                if (this.providerApiKeyChanged && this.providerApiKey) {
+                    payload.api_key = this.providerApiKey;
+                }
+
+                const response = await fetch('/api/provider/config', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to save provider config');
+                }
+
+                // Reload config to get updated state
+                await this.loadProviderConfig();
+                this.showToast('API configuration saved');
+            } catch (error) {
+                this.showToast('Failed to save API config: ' + error.message, 'error');
+            } finally {
+                this.savingProviderConfig = false;
+            }
+        },
+
+        getProviderStatusIcon(providerType) {
+            // Check if the provider is configured (has API key or is local)
+            if (providerType === 'local') {
+                return 'check';
+            }
+            if (this.providerConfig.provider_type === providerType && this.providerConfig.has_api_key) {
+                return 'check';
+            }
+            return 'warning';
+        },
+
+        getProviderHelpText(providerType) {
+            const helpTexts = {
+                'openai': 'Get your API key from platform.openai.com/api-keys',
+                'anthropic': 'Get your API key from console.anthropic.com/settings/keys',
+                'nous': 'Get your API key from nous.dev/api-keys or use Hermes inference API',
+                'local': 'Using local models via sentence-transformers or llama.cpp',
+                'custom': 'Configure a custom OpenAI-compatible API endpoint',
+            };
+            return helpTexts[providerType] || '';
         },
 
         // Per-profile memory isolation functions
@@ -1945,7 +2307,7 @@ function threadlightApp() {
         },
 
         isBuiltinStyle(styleId) {
-            const builtinStyles = ['minimal', 'professional', 'creative', 'fable-2026'];
+            const builtinStyles = ['minimal', 'professional', 'creative'];
             return builtinStyles.includes(styleId);
         },
 
@@ -2520,7 +2882,8 @@ function threadlightApp() {
                     tags_str: (profile.tags || []).join(', '),
                     philosophy: profile.philosophy || '',
                     approach_to_rituals: profile.approach_to_rituals || '',
-                                    };
+                    routing_rules: profile.routing_rules || [],
+                };
             } else {
                 // Create mode
                 this.editingProfileMode = false;
@@ -2540,7 +2903,8 @@ function threadlightApp() {
                     tags_str: '',
                     philosophy: '',
                     approach_to_rituals: '',
-                                    };
+                    routing_rules: [],
+                };
             }
             this.showProfileEditor = true;
         },
@@ -2573,7 +2937,8 @@ function threadlightApp() {
                 tags: tags.length > 0 ? tags : null,
                 philosophy: this.newProfile.philosophy || '',
                 approach_to_rituals: this.newProfile.approach_to_rituals || '',
-                            };
+                routing_rules: this.newProfile.routing_rules.length > 0 ? this.newProfile.routing_rules : null,
+            };
 
             console.log('[saveProfile] Saving profile:', profileData.name);
             console.log('[saveProfile] Description being sent:', profileData.description);
@@ -2706,6 +3071,172 @@ function threadlightApp() {
 
         getActiveProfile() {
             return this.profiles.find(p => p.id === this.activeProfileId) || null;
+        },
+
+        // ============================================
+        // Routing Rules Functions
+        // ============================================
+
+        openRoutingRuleEditor(ruleIndex = null) {
+            if (ruleIndex !== null && this.newProfile.routing_rules[ruleIndex]) {
+                // Edit existing rule
+                this.editingRoutingRule = ruleIndex;
+                const rule = this.newProfile.routing_rules[ruleIndex];
+                this.newRoutingRule = {
+                    match_type: rule.match_type || 'keyword',
+                    pattern: rule.pattern || '',
+                    target_model: rule.target_model || '',
+                    priority: rule.priority ?? 50,
+                };
+            } else {
+                // Create new rule
+                this.editingRoutingRule = null;
+                this.newRoutingRule = {
+                    match_type: 'keyword',
+                    pattern: '',
+                    target_model: this.newProfile.model_pool_str
+                        ? this.newProfile.model_pool_str.split(',')[0]?.trim() || ''
+                        : this.newProfile.primary_model || '',
+                    priority: 50,
+                };
+            }
+            this.routingRuleValidationError = '';
+            this.showRoutingRuleEditor = true;
+        },
+
+        cancelRoutingRuleEditor() {
+            this.showRoutingRuleEditor = false;
+            this.editingRoutingRule = null;
+            this.routingRuleValidationError = '';
+        },
+
+        validateRoutingRule() {
+            const rule = this.newRoutingRule;
+
+            // Pattern is required
+            if (!rule.pattern.trim()) {
+                this.routingRuleValidationError = 'Pattern is required';
+                return false;
+            }
+
+            // Target model is required
+            if (!rule.target_model.trim()) {
+                this.routingRuleValidationError = 'Target model is required';
+                return false;
+            }
+
+            // Validate regex pattern
+            if (rule.match_type === 'regex') {
+                try {
+                    new RegExp(rule.pattern);
+                } catch (e) {
+                    this.routingRuleValidationError = 'Invalid regex pattern: ' + e.message;
+                    return false;
+                }
+            }
+
+            // Validate length pattern (must be a positive number)
+            if (rule.match_type === 'length') {
+                const length = parseInt(rule.pattern, 10);
+                if (isNaN(length) || length <= 0) {
+                    this.routingRuleValidationError = 'Length must be a positive number';
+                    return false;
+                }
+            }
+
+            // Priority must be a number between 0 and 100
+            if (rule.priority < 0 || rule.priority > 100) {
+                this.routingRuleValidationError = 'Priority must be between 0 and 100';
+                return false;
+            }
+
+            this.routingRuleValidationError = '';
+            return true;
+        },
+
+        saveRoutingRule() {
+            if (!this.validateRoutingRule()) {
+                return;
+            }
+
+            const rule = {
+                match_type: this.newRoutingRule.match_type,
+                pattern: this.newRoutingRule.pattern.trim(),
+                target_model: this.newRoutingRule.target_model.trim(),
+                priority: parseInt(this.newRoutingRule.priority, 10) || 50,
+            };
+
+            if (this.editingRoutingRule !== null) {
+                // Update existing rule
+                this.newProfile.routing_rules[this.editingRoutingRule] = rule;
+            } else {
+                // Add new rule
+                this.newProfile.routing_rules.push(rule);
+            }
+
+            // Sort rules by priority (descending)
+            this.newProfile.routing_rules.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+            this.cancelRoutingRuleEditor();
+        },
+
+        deleteRoutingRule(index) {
+            this.newProfile.routing_rules.splice(index, 1);
+        },
+
+        moveRoutingRuleUp(index) {
+            if (index <= 0) return;
+            const rules = this.newProfile.routing_rules;
+            // Swap priorities instead of array positions (since array is sorted by priority)
+            const currentPriority = rules[index].priority || 0;
+            const abovePriority = rules[index - 1].priority || 0;
+            rules[index].priority = abovePriority + 1;
+            // Re-sort
+            this.newProfile.routing_rules.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+        },
+
+        moveRoutingRuleDown(index) {
+            const rules = this.newProfile.routing_rules;
+            if (index >= rules.length - 1) return;
+            // Swap priorities instead of array positions
+            const currentPriority = rules[index].priority || 0;
+            const belowPriority = rules[index + 1].priority || 0;
+            rules[index].priority = belowPriority - 1;
+            // Re-sort
+            this.newProfile.routing_rules.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+        },
+
+        getMatchTypeLabel(matchType) {
+            const labels = {
+                'keyword': 'Contains',
+                'regex': 'Regex',
+                'length': 'Length >',
+                'starts_with': 'Starts with',
+                'ends_with': 'Ends with',
+            };
+            return labels[matchType] || matchType;
+        },
+
+        getMatchTypeHelpText(matchType) {
+            const help = {
+                'keyword': 'Message contains this word or phrase (case-insensitive)',
+                'regex': 'Message matches this regular expression pattern',
+                'length': 'Message has more than this many characters',
+                'starts_with': 'Message begins with this text',
+                'ends_with': 'Message ends with this text',
+            };
+            return help[matchType] || '';
+        },
+
+        getPatternPlaceholder(matchType) {
+            const placeholders = {
+                'keyword': 'e.g., code, help, explain',
+                'regex': 'e.g., ^/[a-z]+, \\bcode\\b',
+                'length': 'e.g., 500',
+                'starts_with': 'e.g., /, Hey, Can you',
+                'ends_with': 'e.g., ?, please, thanks',
+            };
+            return placeholders[matchType] || '';
         },
 
         // Utility functions
