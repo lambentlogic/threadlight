@@ -331,6 +331,14 @@ class SQLiteStorage(StorageBackend):
             self.conn.execute("ALTER TABLE profiles ADD COLUMN approach_to_rituals TEXT DEFAULT ''")
             self.conn.commit()
 
+        # Add system_prompt_sections and use_freeform_prompt columns to profiles table
+        if "system_prompt_sections" not in profile_columns:
+            self.conn.execute("ALTER TABLE profiles ADD COLUMN system_prompt_sections TEXT")
+            self.conn.commit()
+        if "use_freeform_prompt" not in profile_columns:
+            self.conn.execute("ALTER TABLE profiles ADD COLUMN use_freeform_prompt INTEGER DEFAULT 0")
+            self.conn.commit()
+
         # Add builtin_type_customizations table if it doesn't exist
         cursor = self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='builtin_type_customizations'"
@@ -2150,13 +2158,19 @@ class SQLiteStorage(StorageBackend):
         if profile.alloyed_config:
             alloyed_config_json = json.dumps(profile.alloyed_config.to_dict())
 
+        # Serialize system_prompt_sections to JSON
+        system_prompt_sections_json = None
+        if profile.system_prompt_sections:
+            system_prompt_sections_json = json.dumps(profile.system_prompt_sections)
+
         conn.execute("""
             INSERT OR REPLACE INTO profiles
             (id, name, description, avatar, color, primary_model, alloyed_config,
              temperature, max_tokens, top_p, system_prompt, style_profile_id,
              memory_scope, access_shared_memories, philosophy, approach_to_rituals,
+             system_prompt_sections, use_freeform_prompt,
              created_at, updated_at, last_used_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             profile.id,
             profile.name,
@@ -2174,6 +2188,8 @@ class SQLiteStorage(StorageBackend):
             1 if profile.access_shared_memories else 0,
             getattr(profile, 'philosophy', ''),
             getattr(profile, 'approach_to_rituals', ''),
+            system_prompt_sections_json,
+            1 if profile.use_freeform_prompt else 0,
             profile.created_at.isoformat() if isinstance(profile.created_at, datetime) else profile.created_at,
             profile.updated_at.isoformat() if isinstance(profile.updated_at, datetime) else profile.updated_at,
             profile.last_used_at.isoformat() if profile.last_used_at else None,
@@ -2203,6 +2219,11 @@ class SQLiteStorage(StorageBackend):
         if profile.alloyed_config:
             alloyed_config_json = json.dumps(profile.alloyed_config.to_dict())
 
+        # Serialize system_prompt_sections to JSON
+        system_prompt_sections_json = None
+        if profile.system_prompt_sections:
+            system_prompt_sections_json = json.dumps(profile.system_prompt_sections)
+
         conn.execute("""
             UPDATE profiles SET
                 name = ?,
@@ -2220,6 +2241,8 @@ class SQLiteStorage(StorageBackend):
                 access_shared_memories = ?,
                 philosophy = ?,
                 approach_to_rituals = ?,
+                system_prompt_sections = ?,
+                use_freeform_prompt = ?,
                 updated_at = ?,
                 last_used_at = ?
             WHERE id = ?
@@ -2239,6 +2262,8 @@ class SQLiteStorage(StorageBackend):
             1 if profile.access_shared_memories else 0,
             getattr(profile, 'philosophy', ''),
             getattr(profile, 'approach_to_rituals', ''),
+            system_prompt_sections_json,
+            1 if profile.use_freeform_prompt else 0,
             profile.updated_at.isoformat() if isinstance(profile.updated_at, datetime) else profile.updated_at,
             profile.last_used_at.isoformat() if profile.last_used_at else None,
             profile.id,
@@ -2300,6 +2325,21 @@ class SQLiteStorage(StorageBackend):
         except (IndexError, KeyError):
             pass
 
+        # Handle system_prompt_sections field which may not exist in older databases
+        system_prompt_sections = []
+        try:
+            if row["system_prompt_sections"]:
+                system_prompt_sections = json.loads(row["system_prompt_sections"])
+        except (IndexError, KeyError):
+            pass
+
+        # Handle use_freeform_prompt field which may not exist in older databases
+        use_freeform_prompt = False
+        try:
+            use_freeform_prompt = bool(row["use_freeform_prompt"])
+        except (IndexError, KeyError):
+            pass
+
         return Profile(
             id=row["id"],
             name=row["name"],
@@ -2313,6 +2353,8 @@ class SQLiteStorage(StorageBackend):
             top_p=row["top_p"],
             system_prompt=row["system_prompt"] or "",
             style_profile_id=row["style_profile_id"],
+            system_prompt_sections=system_prompt_sections,
+            use_freeform_prompt=use_freeform_prompt,
             memory_scope=row["memory_scope"],
             access_shared_memories=bool(row["access_shared_memories"]),
             philosophy=philosophy,

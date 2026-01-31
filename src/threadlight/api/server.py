@@ -3378,7 +3378,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         model_name = request.model
         if not model_name:
             if tl.active_profile:
-                model_name = tl.active_profile.name or tl.active_profile.primary_model
+                model_name = tl.active_profile.primary_model
             else:
                 model_name = tl.config.provider.model
 
