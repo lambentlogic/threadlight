@@ -54,6 +54,7 @@ from threadlight.tools.definitions import get_tool_definitions, ToolName
 from threadlight.tools.executor import ToolExecutor, ToolResult
 from threadlight.profiles import Profile, ProfileManager, AlloyedProfileEngine, ModelStrategy
 from threadlight.managers.group_chat import GroupChatManager
+from threadlight.managers.profiles import ProfileInterface
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,7 @@ class Threadlight:
         self._load_custom_types()
         self._init_profiles()
         self._init_group_chat()
+        self._init_profile_interface()
 
         logger.info(f"Threadlight initialized with provider={self.config.provider.type}")
 
@@ -264,7 +266,12 @@ class Threadlight:
         """Initialize group chat manager."""
         self._group_chat = GroupChatManager(self)
 
+    def _init_profile_interface(self) -> None:
+        """Initialize profile interface manager."""
+        self._profile_interface = ProfileInterface(self)
+
     # === Profile Interface ===
+    # Delegated to ProfileInterface for implementation
 
     def switch_profile(self, profile_id: str) -> Profile:
         """
@@ -285,66 +292,19 @@ class Threadlight:
         Raises:
             ValueError: If profile not found
         """
-        profile = self.profile_manager.switch_to(profile_id)
-        self._apply_profile(profile)
-        return profile
+        return self._profile_interface.switch(profile_id)
 
     def _apply_profile(self, profile: Profile) -> None:
-        """
-        Apply a profile's settings to the current Threadlight instance.
-
-        Args:
-            profile: The profile to apply
-        """
-        self.active_profile = profile
-
-        # Initialize alloyed engine for model selection
-        self._alloyed_engine = AlloyedProfileEngine(profile, self.storage)
-
-        # Apply model configuration
-        self.provider.model = profile.primary_model
-        self.config.provider.model = profile.primary_model
-
-        # Apply identity settings
-        if profile.system_prompt:
-            self.config.identity.system_prompt = profile.system_prompt
-            self.composer = ContextComposer(
-                identity_name=profile.name or self.config.identity.name,
-                base_system_prompt=profile.system_prompt,
-            )
-        elif profile.name:
-            self.composer = ContextComposer(
-                identity_name=profile.name,
-                base_system_prompt=self.config.identity.system_prompt,
-            )
-
-        # Apply style profile if specified
-        if profile.style_profile_id:
-            self._load_style_profile(profile.style_profile_id)
-
-        # Update memory orchestrator's scope (profile takes precedence)
-        self.memory.current_profile = profile.memory_scope or profile.id
-        self.memory.current_model = profile.primary_model
-
-        logger.info(f"Switched to profile: {profile.name} ({profile.id[:8]}...)")
+        """Apply a profile's settings to the current Threadlight instance."""
+        return self._profile_interface.apply(profile)
 
     def clear_profile(self) -> None:
         """Clear the active profile and revert to default settings."""
-        self.active_profile = None
-        self._alloyed_engine = None
-
-        # Restore default settings from config
-        self.provider.model = self.config.provider.model
-        self.composer = ContextComposer(
-            identity_name=self.config.identity.name,
-            base_system_prompt=self.config.identity.system_prompt,
-        )
-        self.memory.current_profile = None
-        self.memory.current_model = self.config.provider.model
+        return self._profile_interface.clear()
 
     def get_active_profile(self) -> Optional[Profile]:
         """Get the currently active profile, if any."""
-        return self.active_profile
+        return self._profile_interface.get_active()
 
     def create_profile(
         self,
@@ -382,7 +342,7 @@ class Threadlight:
             color: Optional hex color for UI
             temperature: Inference temperature
             profile_id: Optional custom ID (generated if not provided)
-            model_strategy: Strategy for model selection (SINGLE, ALTERNATING, etc.)
+            model_strategy: Strategy for model selection
             model_pool: List of models for multi-model strategies
             model_weights: Weight per model for WEIGHTED strategy
             routing_rules: Rules for ROUTED strategy
@@ -391,42 +351,31 @@ class Threadlight:
             max_tokens: Maximum tokens for responses
             top_p: Top-p sampling parameter
             tags: Optional tags for categorization
-            philosophy: Freeform description of the profile's philosophy/approach
+            philosophy: Freeform description of the profile's philosophy
             approach_to_rituals: Freeform description of how rituals are handled
 
         Returns:
             The created Profile
         """
-        return self.profile_manager.create(
-            name=name,
-            description=description,
-            primary_model=primary_model or self.config.provider.model,
-            system_prompt=system_prompt,
-            style_profile_id=style_profile_id,
-            avatar=avatar,
-            color=color,
-            temperature=temperature,
-            profile_id=profile_id,
-            model_strategy=model_strategy or ModelStrategy.SINGLE,
-            model_pool=model_pool,
-            model_weights=model_weights,
-            routing_rules=routing_rules,
-            memory_scope=memory_scope,
-            access_shared_memories=access_shared_memories,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            tags=tags,
-            philosophy=philosophy,
+        return self._profile_interface.create(
+            name=name, description=description, primary_model=primary_model,
+            system_prompt=system_prompt, style_profile_id=style_profile_id,
+            avatar=avatar, color=color, temperature=temperature,
+            profile_id=profile_id, model_strategy=model_strategy,
+            model_pool=model_pool, model_weights=model_weights,
+            routing_rules=routing_rules, memory_scope=memory_scope,
+            access_shared_memories=access_shared_memories, max_tokens=max_tokens,
+            top_p=top_p, tags=tags, philosophy=philosophy,
             approach_to_rituals=approach_to_rituals,
         )
 
     def list_profiles(self) -> list[Profile]:
         """List all profiles."""
-        return self.profile_manager.list()
+        return self._profile_interface.list()
 
     def get_profile(self, profile_id: str) -> Optional[Profile]:
         """Get a profile by ID."""
-        return self.profile_manager.get(profile_id)
+        return self._profile_interface.get(profile_id)
 
     def update_profile(self, profile_id: str, **kwargs) -> Optional[Profile]:
         """
@@ -439,53 +388,11 @@ class Threadlight:
         Returns:
             The updated Profile, or None if not found
         """
-        profile = self.profile_manager.get(profile_id)
-        if not profile:
-            return None
-
-        # Update fields from kwargs
-        for key, value in kwargs.items():
-            if key == 'model_strategy' and value is not None:
-                # Update alloyed_config strategy
-                if profile.alloyed_config:
-                    if isinstance(value, str):
-                        profile.alloyed_config.strategy = ModelStrategy(value)
-                    else:
-                        profile.alloyed_config.strategy = value
-            elif key == 'model_pool' and value is not None:
-                if profile.alloyed_config:
-                    profile.alloyed_config.model_pool = value
-            elif key == 'model_weights' and value is not None:
-                if profile.alloyed_config:
-                    profile.alloyed_config.weights = value
-            elif key == 'routing_rules' and value is not None:
-                if profile.alloyed_config:
-                    from threadlight.profiles.profile import RoutingRule
-                    parsed_rules = []
-                    for rule in value:
-                        if isinstance(rule, dict):
-                            parsed_rules.append(RoutingRule.from_dict(rule))
-                        else:
-                            parsed_rules.append(rule)
-                    profile.alloyed_config.routing_rules = parsed_rules
-            elif hasattr(profile, key):
-                setattr(profile, key, value)
-
-        self.profile_manager.update(profile)
-
-        # If this is the active profile, re-apply settings
-        if self.active_profile and self.active_profile.id == profile.id:
-            self._apply_profile(profile)
-
-        return profile
+        return self._profile_interface.update(profile_id, **kwargs)
 
     def delete_profile(self, profile_id: str) -> bool:
         """Delete a profile."""
-        # Clear active profile if it's being deleted
-        if self.active_profile and self.active_profile.id == profile_id:
-            self.clear_profile()
-
-        return self.profile_manager.delete(profile_id)
+        return self._profile_interface.delete(profile_id)
 
     def export_profile(
         self,
@@ -504,7 +411,7 @@ class Threadlight:
         Returns:
             Dictionary containing profile data and optional extras
         """
-        return self.profile_manager.export_profile(
+        return self._profile_interface.export(
             profile_id,
             include_memories=include_memories,
             include_conversations=include_conversations,
@@ -520,24 +427,11 @@ class Threadlight:
         Returns:
             The imported Profile
         """
-        return self.profile_manager.import_profile(export_data)
+        return self._profile_interface.import_profile(export_data)
 
     def _get_model_for_message(self, message: str) -> str:
-        """
-        Get the model to use for a message, considering profile settings.
-
-        If an alloyed profile is active, uses the AlloyedProfileEngine
-        to select the appropriate model based on the profile's strategy.
-
-        Args:
-            message: The user's message
-
-        Returns:
-            Model identifier to use
-        """
-        if self._alloyed_engine:
-            return self._alloyed_engine.select_model(message)
-        return self.config.provider.model
+        """Get the model to use for a message, considering profile settings."""
+        return self._profile_interface.get_model_for_message(message)
 
     # === Chat Interface ===
 
