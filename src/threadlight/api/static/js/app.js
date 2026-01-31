@@ -91,6 +91,7 @@ function threadlightApp() {
         providerConfig: {
             provider_type: 'nous',
             api_base: '',
+            endpoints: [],  // List of {url, name, priority, purpose, is_healthy, last_checked}
             has_api_key: false,
             model: '',
         },
@@ -101,6 +102,14 @@ function threadlightApp() {
         providerConnectionStatus: null,  // 'success', 'error', or null
         providerConnectionMessage: '',
         savingProviderConfig: false,
+        testingEndpointIndex: null,  // Index of endpoint being tested
+
+        // Provider models state (fetched from API)
+        providerModels: [],  // List of available models from provider
+        providerModelsLoading: false,
+        providerModelsError: null,
+        providerModelsLastFetched: null,  // Timestamp for cache invalidation
+        providerModelsCacheDuration: 5 * 60 * 1000,  // Cache for 5 minutes
 
         // Model configuration state
         currentModelId: '',
@@ -1723,6 +1732,24 @@ function threadlightApp() {
                 if (!response.ok) throw new Error('Failed to load provider config');
                 const data = await response.json();
                 this.providerConfig = data;
+
+                // Ensure endpoints array exists (backward compatibility)
+                if (!this.providerConfig.endpoints || !Array.isArray(this.providerConfig.endpoints)) {
+                    // Create from legacy api_base if present
+                    if (this.providerConfig.api_base) {
+                        this.providerConfig.endpoints = [{
+                            url: this.providerConfig.api_base,
+                            name: 'Primary',
+                            priority: 0,
+                            purpose: '',
+                            is_healthy: null,
+                            last_checked: null,
+                        }];
+                    } else {
+                        this.providerConfig.endpoints = [];
+                    }
+                }
+
                 // Reset API key state when loading
                 // Don't show a fake placeholder - just leave empty and show status via has_api_key
                 this.providerApiKey = '';
@@ -1730,6 +1757,7 @@ function threadlightApp() {
                 this.showProviderApiKey = false;
                 this.providerConnectionStatus = null;
                 this.providerConnectionMessage = '';
+                this.testingEndpointIndex = null;
             } catch (error) {
                 console.error('Failed to load provider config:', error);
             }
@@ -1753,10 +1781,29 @@ function threadlightApp() {
 
         onProviderTypeChange() {
             // Update default API base when provider type changes
-            this.providerConfig.api_base = this.getDefaultApiBase(this.providerConfig.provider_type);
+            const defaultUrl = this.getDefaultApiBase(this.providerConfig.provider_type);
+            this.providerConfig.api_base = defaultUrl;
+
+            // Also update endpoints - reset to single default endpoint
+            if (defaultUrl) {
+                this.providerConfig.endpoints = [{
+                    url: defaultUrl,
+                    name: 'Primary',
+                    priority: 0,
+                    purpose: '',
+                    is_healthy: null,
+                    last_checked: null,
+                }];
+            } else {
+                this.providerConfig.endpoints = [];
+            }
+
             // Clear connection status
             this.providerConnectionStatus = null;
             this.providerConnectionMessage = '';
+            this.testingEndpointIndex = null;
+            // Clear cached models since provider changed
+            this.clearProviderModelsCache();
         },
 
         async testProviderConnection() {
@@ -1799,9 +1846,21 @@ function threadlightApp() {
             try {
                 const payload = {
                     provider_type: this.providerConfig.provider_type,
-                    api_base: this.providerConfig.api_base,
                     model: this.providerConfig.model,
                 };
+
+                // Send endpoints if we have any configured
+                if (this.providerConfig.endpoints && this.providerConfig.endpoints.length > 0) {
+                    payload.endpoints = this.providerConfig.endpoints.map((ep, idx) => ({
+                        url: ep.url,
+                        name: ep.name || `Endpoint ${idx + 1}`,
+                        priority: ep.priority ?? idx,
+                        purpose: ep.purpose || '',
+                    }));
+                } else {
+                    // Fallback to legacy api_base
+                    payload.api_base = this.providerConfig.api_base;
+                }
 
                 // Only include API key if it was changed and has a value
                 if (this.providerApiKeyChanged && this.providerApiKey) {
@@ -1821,6 +1880,8 @@ function threadlightApp() {
 
                 // Reload config to get updated state
                 await this.loadProviderConfig();
+                // Clear cached models since config may have changed
+                this.clearProviderModelsCache();
                 this.showToast('API configuration saved');
             } catch (error) {
                 this.showToast('Failed to save API config: ' + error.message, 'error');
@@ -1849,6 +1910,180 @@ function threadlightApp() {
                 'custom': 'Configure a custom OpenAI-compatible API endpoint',
             };
             return helpTexts[providerType] || '';
+        },
+
+        // Endpoint management functions
+        addEndpoint() {
+            const newPriority = this.providerConfig.endpoints.length;
+            this.providerConfig.endpoints.push({
+                url: '',
+                name: newPriority === 0 ? 'Primary' : `Fallback ${newPriority}`,
+                priority: newPriority,
+                purpose: newPriority === 0 ? 'main' : 'fallback',
+                is_healthy: null,
+                last_checked: null,
+            });
+        },
+
+        removeEndpoint(index) {
+            if (this.providerConfig.endpoints.length <= 1) {
+                this.showToast('At least one endpoint is required', 'error');
+                return;
+            }
+            this.providerConfig.endpoints.splice(index, 1);
+            // Re-assign priorities
+            this.providerConfig.endpoints.forEach((ep, idx) => {
+                ep.priority = idx;
+            });
+            // Update api_base to match primary endpoint
+            if (this.providerConfig.endpoints.length > 0) {
+                this.providerConfig.api_base = this.providerConfig.endpoints[0].url;
+            }
+        },
+
+        moveEndpointUp(index) {
+            if (index <= 0) return;
+            const endpoints = this.providerConfig.endpoints;
+            [endpoints[index], endpoints[index - 1]] = [endpoints[index - 1], endpoints[index]];
+            // Update priorities
+            endpoints.forEach((ep, idx) => {
+                ep.priority = idx;
+            });
+            // Update api_base to match primary endpoint
+            this.providerConfig.api_base = endpoints[0].url;
+        },
+
+        moveEndpointDown(index) {
+            const endpoints = this.providerConfig.endpoints;
+            if (index >= endpoints.length - 1) return;
+            [endpoints[index], endpoints[index + 1]] = [endpoints[index + 1], endpoints[index]];
+            // Update priorities
+            endpoints.forEach((ep, idx) => {
+                ep.priority = idx;
+            });
+            // Update api_base to match primary endpoint
+            this.providerConfig.api_base = endpoints[0].url;
+        },
+
+        onEndpointUrlChange(index) {
+            // Update api_base if this is the primary endpoint
+            if (index === 0) {
+                this.providerConfig.api_base = this.providerConfig.endpoints[0].url;
+            }
+            // Clear health status when URL changes
+            this.providerConfig.endpoints[index].is_healthy = null;
+            this.providerConfig.endpoints[index].last_checked = null;
+        },
+
+        async testEndpoint(index) {
+            const endpoint = this.providerConfig.endpoints[index];
+            if (!endpoint.url) {
+                this.showToast('Endpoint URL is required', 'error');
+                return;
+            }
+
+            this.testingEndpointIndex = index;
+
+            try {
+                const response = await fetch(`/api/provider/endpoints/test?endpoint_url=${encodeURIComponent(endpoint.url)}&provider_type=${encodeURIComponent(this.providerConfig.provider_type)}`, {
+                    method: 'POST',
+                });
+
+                const data = await response.json();
+
+                // Update endpoint health status
+                endpoint.is_healthy = data.status === 'success';
+                endpoint.last_checked = new Date().toISOString();
+
+                if (data.status === 'success') {
+                    this.showToast(`Endpoint "${endpoint.name || 'Unnamed'}" is healthy`);
+                } else {
+                    this.showToast(`Endpoint test failed: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                endpoint.is_healthy = false;
+                endpoint.last_checked = new Date().toISOString();
+                this.showToast('Endpoint test failed: ' + error.message, 'error');
+            } finally {
+                this.testingEndpointIndex = null;
+            }
+        },
+
+        async testAllEndpoints() {
+            for (let i = 0; i < this.providerConfig.endpoints.length; i++) {
+                await this.testEndpoint(i);
+            }
+        },
+
+        getEndpointHealthIcon(endpoint) {
+            if (endpoint.is_healthy === null) return 'unknown';
+            return endpoint.is_healthy ? 'healthy' : 'unhealthy';
+        },
+
+        getEndpointHealthClass(endpoint) {
+            if (endpoint.is_healthy === null) return 'text-threadlight-muted';
+            return endpoint.is_healthy ? 'text-green-400' : 'text-red-400';
+        },
+
+        // Provider models functions
+        async loadProviderModels(forceRefresh = false) {
+            // Check cache validity
+            const now = Date.now();
+            const cacheValid = this.providerModelsLastFetched &&
+                (now - this.providerModelsLastFetched) < this.providerModelsCacheDuration;
+
+            if (!forceRefresh && cacheValid && this.providerModels.length > 0) {
+                console.log('[loadProviderModels] Using cached models');
+                return;
+            }
+
+            this.providerModelsLoading = true;
+            this.providerModelsError = null;
+
+            try {
+                const response = await fetch('/api/provider/models');
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    this.providerModels = data.models || [];
+                    this.providerModelsLastFetched = now;
+                    console.log('[loadProviderModels] Loaded', this.providerModels.length, 'models');
+                } else {
+                    this.providerModelsError = data.message || 'Failed to load models';
+                    console.warn('[loadProviderModels] Error:', this.providerModelsError);
+                    // Keep any existing cached models on error
+                }
+            } catch (error) {
+                this.providerModelsError = 'Network error: ' + error.message;
+                console.error('[loadProviderModels] Exception:', error);
+            } finally {
+                this.providerModelsLoading = false;
+            }
+        },
+
+        async refreshProviderModels() {
+            // Force refresh, bypassing cache
+            await this.loadProviderModels(true);
+            if (!this.providerModelsError) {
+                this.showToast(`Loaded ${this.providerModels.length} models`);
+            }
+        },
+
+        clearProviderModelsCache() {
+            this.providerModels = [];
+            this.providerModelsLastFetched = null;
+            this.providerModelsError = null;
+        },
+
+        // Check if the model dropdown should be shown vs text input
+        shouldShowModelDropdown() {
+            return this.providerModels.length > 0 || this.providerModelsLoading;
+        },
+
+        // Get a display name for a model
+        getModelDisplayName(modelId) {
+            const model = this.providerModels.find(m => m.id === modelId);
+            return model?.name || modelId;
         },
 
         // Per-profile memory isolation functions
@@ -2863,6 +3098,9 @@ function threadlightApp() {
         },
 
         openProfileEditor(profile = null) {
+            // Load provider models when opening the editor
+            this.loadProviderModels();
+
             if (profile) {
                 // Edit mode
                 this.editingProfileMode = true;
@@ -2883,6 +3121,7 @@ function threadlightApp() {
                     philosophy: profile.philosophy || '',
                     approach_to_rituals: profile.approach_to_rituals || '',
                     routing_rules: profile.routing_rules || [],
+                    useManualModelInput: false,  // Start with dropdown if models available
                 };
             } else {
                 // Create mode
@@ -2904,6 +3143,7 @@ function threadlightApp() {
                     philosophy: '',
                     approach_to_rituals: '',
                     routing_rules: [],
+                    useManualModelInput: false,  // Start with dropdown if models available
                 };
             }
             this.showProfileEditor = true;
@@ -3237,6 +3477,128 @@ function threadlightApp() {
                 'ends_with': 'e.g., ?, please, thanks',
             };
             return placeholders[matchType] || '';
+        },
+
+        // Model Strategy metadata and helpers
+        getStrategyInfo(strategy) {
+            const strategies = {
+                'single': {
+                    name: 'Single Model',
+                    category: 'basic',
+                    description: 'Use one model for all requests. Simple and predictable.',
+                    when_to_use: 'Best for: Most use cases, consistent behavior, debugging',
+                    requires: 'Primary model only',
+                    example: 'All messages go to GPT-4o',
+                },
+                'alternating': {
+                    name: 'Alternating',
+                    category: 'basic',
+                    description: 'Cycle through models in order. Each request goes to the next model in the pool.',
+                    when_to_use: 'Best for: Distributing load, comparing model outputs over time',
+                    requires: 'Model pool (order matters)',
+                    example: 'Request 1 → GPT-4o, Request 2 → Claude, Request 3 → GPT-4o, ...',
+                },
+                'round_robin': {
+                    name: 'Round Robin',
+                    category: 'basic',
+                    description: 'Similar to alternating - cycles through models sequentially with conversation context.',
+                    when_to_use: 'Best for: Load balancing across equivalent models',
+                    requires: 'Model pool (order matters)',
+                    example: 'Distributes requests evenly across all pool models',
+                },
+                'weighted': {
+                    name: 'Weighted Random',
+                    category: 'advanced',
+                    description: 'Randomly select models with configurable probability weights.',
+                    when_to_use: 'Best for: Gradual migration, A/B testing, cost optimization',
+                    requires: 'Model pool with weights (format: model:weight)',
+                    example: 'gpt-4o:70, claude-3-opus:30 → 70% GPT-4o, 30% Claude',
+                },
+                'dynamic': {
+                    name: 'Ratio-Based',
+                    category: 'advanced',
+                    description: 'Select models based on defined ratios. Deterministic distribution over time.',
+                    when_to_use: 'Best for: Precise cost control, guaranteed distribution percentages',
+                    requires: 'Model pool with ratios (format: model:ratio)',
+                    example: '3:1 ratio ensures exactly 75%/25% split over requests',
+                },
+                'routed': {
+                    name: 'Content Routed',
+                    category: 'advanced',
+                    description: 'Route to different models based on message content using pattern matching rules.',
+                    when_to_use: 'Best for: Specialized models for different tasks (code, creative, analysis)',
+                    requires: 'Routing rules with patterns and target models',
+                    example: 'Code questions → GPT-4o, Creative writing → Claude',
+                },
+            };
+            return strategies[strategy] || strategies['single'];
+        },
+
+        getStrategyDescription(strategy) {
+            return this.getStrategyInfo(strategy).description;
+        },
+
+        getStrategyWhenToUse(strategy) {
+            return this.getStrategyInfo(strategy).when_to_use;
+        },
+
+        getStrategyRequires(strategy) {
+            return this.getStrategyInfo(strategy).requires;
+        },
+
+        getStrategyExample(strategy) {
+            return this.getStrategyInfo(strategy).example;
+        },
+
+        isBasicStrategy(strategy) {
+            return ['single', 'alternating', 'round_robin'].includes(strategy);
+        },
+
+        isAdvancedStrategy(strategy) {
+            return ['weighted', 'dynamic', 'routed'].includes(strategy);
+        },
+
+        strategyNeedsModelPool(strategy) {
+            return strategy !== 'single';
+        },
+
+        strategyNeedsWeights(strategy) {
+            return strategy === 'weighted';
+        },
+
+        strategyNeedsRatios(strategy) {
+            return strategy === 'dynamic';
+        },
+
+        strategyNeedsRoutingRules(strategy) {
+            return strategy === 'routed';
+        },
+
+        strategyPoolOrderMatters(strategy) {
+            return ['alternating', 'round_robin'].includes(strategy);
+        },
+
+        getModelPoolPlaceholder(strategy) {
+            if (this.strategyNeedsWeights(strategy)) {
+                return 'gpt-4o:70, claude-3-opus:30 (model:weight pairs)';
+            }
+            if (this.strategyNeedsRatios(strategy)) {
+                return 'gpt-4o:3, claude-3-opus:1 (model:ratio pairs)';
+            }
+            return 'gpt-4o, claude-3-opus, gemini-pro';
+        },
+
+        getModelPoolHelpText(strategy) {
+            if (this.strategyNeedsWeights(strategy)) {
+                return 'Enter models with weights (0-100). Weights determine selection probability. Example: gpt-4o:70, claude:30 means 70% chance for GPT-4o.';
+            }
+            if (this.strategyNeedsRatios(strategy)) {
+                return 'Enter models with ratios. Ratios determine distribution over time. Example: gpt-4o:3, claude:1 means 3 out of every 4 requests go to GPT-4o.';
+            }
+            if (this.strategyPoolOrderMatters(strategy)) {
+                return 'Models are used in order. Drag to reorder or list them in your preferred sequence.';
+            }
+            return 'List of models available for this strategy to use.';
         },
 
         // Utility functions

@@ -278,15 +278,25 @@ class MemoryTypeUpdateRequest(BaseModel):
     icon: Optional[str] = None
 
 
+class EndpointRequest(BaseModel):
+    """Request model for a single API endpoint."""
+    url: str
+    name: str = ""
+    priority: int = 0
+    purpose: str = ""
+
+
 class ProviderConfigRequest(BaseModel):
     """Request model for API provider configuration."""
     provider_type: str  # "openai", "anthropic", "nous", "local", "custom"
-    api_base: str = ""
+    api_base: str = ""  # Legacy single endpoint (for backward compatibility)
     api_key: Optional[str] = None  # Only sent if changed (not placeholder)
     model: Optional[str] = None
     headers: Optional[dict[str, str]] = None  # For custom providers
     provider_name: Optional[str] = None  # Display name for custom providers
     anthropic_version: Optional[str] = None  # For Anthropic: API version header
+    # Multiple endpoints support (new)
+    endpoints: Optional[list[EndpointRequest]] = None  # List of endpoints
 
 
 # ============================================================================
@@ -607,6 +617,35 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     await websocket.send_json({
                         "type": "history_cleared",
                     })
+
+                elif data.get("type") == "group_chat":
+                    # Group chat message - stream responses from multiple profiles
+                    message = data.get("message", "")
+                    conversation_id = data.get("conversation_id")
+                    profile_ids = data.get("profile_ids")  # Optional override
+
+                    if not conversation_id:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "conversation_id required for group chat",
+                        })
+                        continue
+
+                    try:
+                        # Stream group chat responses
+                        for event in tl.stream_group_chat(
+                            message=message,
+                            conversation_id=conversation_id,
+                            profile_ids=profile_ids,
+                        ):
+                            # Forward all events to websocket
+                            await websocket.send_json(event)
+
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": f"Group chat failed: {e}",
+                        })
 
         except WebSocketDisconnect:
             pass
@@ -1482,6 +1521,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         """Get current API provider configuration.
 
         Note: API key is not returned for security. A placeholder indicates if one is configured.
+
+        Returns endpoints in both new (list) and legacy (single api_base) formats for compatibility.
         """
         tl = get_threadlight()
 
@@ -1504,9 +1545,23 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         # Use explicit type if set, otherwise inferred
         effective_type = provider_type if provider_type != "openai" else inferred_type
 
+        # Format endpoints for response
+        endpoints = [
+            {
+                "url": ep.url,
+                "name": ep.name,
+                "priority": ep.priority,
+                "purpose": ep.purpose,
+                "is_healthy": ep.is_healthy,
+                "last_checked": ep.last_checked,
+            }
+            for ep in tl.config.provider.get_endpoints_by_priority()
+        ]
+
         return {
             "provider_type": effective_type,
-            "api_base": api_base,
+            "api_base": api_base,  # Legacy single endpoint (primary)
+            "endpoints": endpoints,  # New multiple endpoints list
             "has_api_key": bool(tl.config.provider.api_key),
             "model": tl.config.provider.model,
             "timeout": tl.config.provider.timeout,
@@ -1518,14 +1573,36 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         The API key is only updated if provided (not empty/placeholder).
         This allows updating other settings without clearing the key.
+
+        Supports both legacy single api_base and new endpoints list format.
+        If endpoints list is provided, it takes precedence over api_base.
         """
+        from threadlight.config import Endpoint
+
         tl = get_threadlight()
 
         # Update provider type
         tl.config.provider.type = request.provider_type
 
-        # Update API base URL
-        if request.api_base:
+        # Handle endpoints (new format takes precedence)
+        if request.endpoints:
+            # Validate endpoints
+            for ep in request.endpoints:
+                if not ep.url and request.provider_type != "local":
+                    raise HTTPException(status_code=400, detail="Endpoint URL cannot be empty")
+
+            # Replace endpoints with new list
+            tl.config.provider.endpoints = [
+                Endpoint(
+                    url=ep.url,
+                    name=ep.name or f"Endpoint {i+1}",
+                    priority=ep.priority,
+                    purpose=ep.purpose,
+                )
+                for i, ep in enumerate(request.endpoints)
+            ]
+        elif request.api_base:
+            # Legacy single endpoint - update primary or create
             tl.config.provider.api_base = request.api_base
         else:
             # Set default based on provider type
@@ -1536,7 +1613,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 "local": "",
                 "custom": "",
             }
-            tl.config.provider.api_base = defaults.get(request.provider_type, "")
+            default_url = defaults.get(request.provider_type, "")
+            if default_url:
+                tl.config.provider.api_base = default_url
 
         # Only update API key if provided (not empty string or None)
         if request.api_key:
@@ -1550,10 +1629,22 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         tl.config.mark_changed()
         tl.save_config()
 
+        # Format endpoints for response
+        endpoints = [
+            {
+                "url": ep.url,
+                "name": ep.name,
+                "priority": ep.priority,
+                "purpose": ep.purpose,
+            }
+            for ep in tl.config.provider.get_endpoints_by_priority()
+        ]
+
         return {
             "status": "updated",
             "provider_type": request.provider_type,
             "api_base": tl.config.provider.api_base,
+            "endpoints": endpoints,
             "has_api_key": bool(tl.config.provider.api_key),
         }
 
@@ -1679,6 +1770,272 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             return {"status": "error", "message": "Connection timed out"}
         except Exception as e:
             return {"status": "error", "message": f"Error: {str(e)}"}
+
+    @app.post("/api/provider/endpoints/test")
+    async def test_endpoint(endpoint_url: str = "", provider_type: str = ""):
+        """Test a specific endpoint URL and update its health status.
+
+        This can be used to verify individual endpoints in a multi-endpoint setup.
+        """
+        import httpx
+        from datetime import datetime, timezone
+
+        tl = get_threadlight()
+        api_key = tl.config.provider.api_key
+        effective_provider_type = provider_type or tl.config.provider.type
+
+        if not endpoint_url:
+            return {"status": "error", "message": "Endpoint URL is required"}
+
+        if effective_provider_type == "local" and not endpoint_url:
+            # Update health status
+            tl.config.provider.update_endpoint_health(endpoint_url, True)
+            return {
+                "status": "success",
+                "message": "Local provider does not require connection testing",
+                "url": endpoint_url,
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                headers = {"Content-Type": "application/json"}
+
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+
+                # Try to list models (lightweight endpoint)
+                response = await client.get(f"{endpoint_url}/models", headers=headers)
+
+                if response.status_code == 200:
+                    # Update health status
+                    tl.config.provider.update_endpoint_health(endpoint_url, True)
+                    return {
+                        "status": "success",
+                        "message": "Endpoint is healthy",
+                        "url": endpoint_url,
+                    }
+                elif response.status_code == 401:
+                    tl.config.provider.update_endpoint_health(endpoint_url, False)
+                    return {
+                        "status": "error",
+                        "message": "Invalid API key for this endpoint",
+                        "url": endpoint_url,
+                    }
+                elif response.status_code == 404:
+                    # Models endpoint not available, try chat completion
+                    chat_response = await client.post(
+                        f"{endpoint_url}/chat/completions",
+                        headers=headers,
+                        json={
+                            "model": tl.config.provider.model or "gpt-3.5-turbo",
+                            "messages": [{"role": "user", "content": "test"}],
+                            "max_tokens": 1,
+                        },
+                    )
+                    if chat_response.status_code in (200, 400):  # 400 might be bad model name but connection works
+                        tl.config.provider.update_endpoint_health(endpoint_url, True)
+                        return {
+                            "status": "success",
+                            "message": "Endpoint is healthy",
+                            "url": endpoint_url,
+                        }
+                    else:
+                        tl.config.provider.update_endpoint_health(endpoint_url, False)
+                        return {
+                            "status": "error",
+                            "message": f"Endpoint returned error: {chat_response.status_code}",
+                            "url": endpoint_url,
+                        }
+                else:
+                    tl.config.provider.update_endpoint_health(endpoint_url, False)
+                    return {
+                        "status": "error",
+                        "message": f"Endpoint returned error: {response.status_code}",
+                        "url": endpoint_url,
+                    }
+
+        except httpx.ConnectError:
+            tl.config.provider.update_endpoint_health(endpoint_url, False)
+            return {"status": "error", "message": "Could not connect to endpoint", "url": endpoint_url}
+        except httpx.TimeoutException:
+            tl.config.provider.update_endpoint_health(endpoint_url, False)
+            return {"status": "error", "message": "Connection timed out", "url": endpoint_url}
+        except Exception as e:
+            tl.config.provider.update_endpoint_health(endpoint_url, False)
+            return {"status": "error", "message": f"Error: {str(e)}", "url": endpoint_url}
+
+    @app.get("/api/provider/models")
+    async def get_provider_models():
+        """Fetch available models from the configured API provider.
+
+        Queries the provider's /v1/models endpoint (OpenAI-compatible) and returns
+        a list of available models. Handles different provider types and API formats.
+
+        Returns:
+            - models: List of model objects with id, name, and metadata
+            - status: "success" or "error"
+            - message: Error message if status is "error"
+            - cached: Whether the response is from cache (for future caching support)
+        """
+        import httpx
+
+        tl = get_threadlight()
+        provider_type = tl.config.provider.type
+        api_base = tl.config.provider.api_base
+        api_key = tl.config.provider.api_key
+
+        # Handle providers that don't support model listing
+        if provider_type == "local" and not api_base:
+            return {
+                "status": "error",
+                "message": "Local provider requires an API base URL (e.g., http://localhost:11434/v1 for Ollama)",
+                "models": [],
+                "cached": False,
+            }
+
+        if not api_base:
+            return {
+                "status": "error",
+                "message": "No API base URL configured. Please configure the provider first.",
+                "models": [],
+                "cached": False,
+            }
+
+        # For non-local providers, API key is typically required
+        if not api_key and provider_type not in ("local", "custom"):
+            return {
+                "status": "error",
+                "message": "API key required but not configured",
+                "models": [],
+                "cached": False,
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                if provider_type == "anthropic":
+                    # Anthropic doesn't have a public models endpoint
+                    # Return a static list of known Anthropic models
+                    return {
+                        "status": "success",
+                        "models": [
+                            {"id": "claude-opus-4-20250514", "name": "Claude Opus 4", "provider": "anthropic"},
+                            {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "provider": "anthropic"},
+                            {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "provider": "anthropic"},
+                            {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "provider": "anthropic"},
+                            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "provider": "anthropic"},
+                            {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "provider": "anthropic"},
+                            {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "provider": "anthropic"},
+                        ],
+                        "message": "Anthropic models (static list - API does not expose model listing)",
+                        "cached": False,
+                    }
+
+                # OpenAI-compatible endpoints (OpenAI, Nous, Ollama, custom)
+                headers = {
+                    "Content-Type": "application/json",
+                }
+
+                # Add authorization header if we have an API key
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+
+                # Build the models endpoint URL
+                # Handle both /v1 and non-/v1 base URLs
+                models_url = api_base.rstrip("/")
+                if not models_url.endswith("/v1"):
+                    models_url = f"{models_url}/models"
+                else:
+                    models_url = f"{models_url}/models"
+
+                response = await client.get(models_url, headers=headers)
+
+                if response.status_code == 401:
+                    return {
+                        "status": "error",
+                        "message": "Invalid API key",
+                        "models": [],
+                        "cached": False,
+                    }
+                elif response.status_code == 403:
+                    return {
+                        "status": "error",
+                        "message": "Access forbidden - check API key permissions",
+                        "models": [],
+                        "cached": False,
+                    }
+                elif response.status_code == 404:
+                    return {
+                        "status": "error",
+                        "message": "Models endpoint not found. This provider may not support model listing.",
+                        "models": [],
+                        "cached": False,
+                    }
+                elif response.status_code != 200:
+                    return {
+                        "status": "error",
+                        "message": f"API error: {response.status_code} - {response.text[:200]}",
+                        "models": [],
+                        "cached": False,
+                    }
+
+                data = response.json()
+
+                # Parse the response - OpenAI format has {"data": [...models...]}
+                raw_models = data.get("data", data.get("models", []))
+
+                # Normalize model format
+                models = []
+                for model in raw_models:
+                    if isinstance(model, str):
+                        # Some providers return just model IDs as strings
+                        models.append({
+                            "id": model,
+                            "name": model,
+                            "provider": provider_type,
+                        })
+                    elif isinstance(model, dict):
+                        model_id = model.get("id") or model.get("name") or model.get("model")
+                        if model_id:
+                            models.append({
+                                "id": model_id,
+                                "name": model.get("name") or model_id,
+                                "provider": provider_type,
+                                "owned_by": model.get("owned_by"),
+                                "created": model.get("created"),
+                            })
+
+                # Sort models alphabetically by name
+                models.sort(key=lambda m: m.get("name", m.get("id", "")).lower())
+
+                return {
+                    "status": "success",
+                    "models": models,
+                    "message": f"Found {len(models)} models",
+                    "cached": False,
+                }
+
+        except httpx.ConnectError:
+            return {
+                "status": "error",
+                "message": "Could not connect to provider API",
+                "models": [],
+                "cached": False,
+            }
+        except httpx.TimeoutException:
+            return {
+                "status": "error",
+                "message": "Connection timed out",
+                "models": [],
+                "cached": False,
+            }
+        except Exception as e:
+            logger.error(f"Error fetching models: {e}")
+            return {
+                "status": "error",
+                "message": f"Error: {str(e)}",
+                "models": [],
+                "cached": False,
+            }
 
     # ========================================================================
     # Import Endpoints
@@ -2511,6 +2868,54 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/conversations/{conversation_id}/group-chat/stream")
+    async def group_chat_stream_api(conversation_id: str, request: GroupChatRequest):
+        """
+        Stream responses from a group chat via Server-Sent Events (SSE).
+
+        Each profile responds in turn, streaming their response. Events include:
+        - profile_start: A profile is beginning to respond
+        - chunk: A piece of text from the current profile
+        - profile_complete: A profile finished responding
+        - error: An error occurred
+        - complete: All profiles have responded
+
+        This is an alternative to the WebSocket endpoint for clients that prefer SSE.
+        """
+        tl = get_threadlight()
+
+        conversation = tl.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        profile_ids = request.profile_ids or conversation.participant_profiles
+        if not profile_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="No profiles specified. Either provide profile_ids or use a conversation with participant_profiles."
+            )
+
+        async def generate():
+            try:
+                for event in tl.stream_group_chat(
+                    message=request.message,
+                    conversation_id=conversation_id,
+                    profile_ids=profile_ids,
+                ):
+                    yield f"data: {json.dumps(event)}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            }
+        )
 
     @app.post("/api/conversations/{conversation_id}/add-profile")
     async def add_profile_to_conversation_api(conversation_id: str, profile_id: str):

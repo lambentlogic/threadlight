@@ -18,20 +18,179 @@ from dotenv import load_dotenv
 
 
 @dataclass
+class Endpoint:
+    """A single API endpoint configuration."""
+
+    url: str
+    name: str = ""  # Display name (e.g., "Primary", "Backup")
+    priority: int = 0  # Lower = higher priority (0 is primary)
+    purpose: str = ""  # Purpose description (e.g., "main", "fallback", "fast")
+    is_healthy: Optional[bool] = None  # Last known health status
+    last_checked: Optional[str] = None  # ISO timestamp of last health check
+
+    def to_dict(self) -> dict[str, Any]:
+        """Export endpoint as dictionary."""
+        return {
+            "url": self.url,
+            "name": self.name,
+            "priority": self.priority,
+            "purpose": self.purpose,
+            "is_healthy": self.is_healthy,
+            "last_checked": self.last_checked,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Endpoint":
+        """Create Endpoint from dictionary."""
+        return cls(
+            url=data.get("url", ""),
+            name=data.get("name", ""),
+            priority=data.get("priority", 0),
+            purpose=data.get("purpose", ""),
+            is_healthy=data.get("is_healthy"),
+            last_checked=data.get("last_checked"),
+        )
+
+
+@dataclass
 class ProviderConfig:
     """Configuration for inference providers."""
 
     type: str = "openai"
-    api_base: str = "https://inference-api.nousresearch.com/v1"
     api_key: Optional[str] = None
     model: str = "Hermes-4.3-36B"
     timeout: float = 60.0
     max_retries: int = 3
 
+    # Multiple endpoints support
+    endpoints: list[Endpoint] = field(default_factory=list)
+
+    # Deprecated: single api_base (kept for backward compatibility)
+    # When loaded from old config, this will be migrated to endpoints
+    _api_base: Optional[str] = field(default=None, repr=False)
+
     def __post_init__(self) -> None:
         # Try to load API key from environment if not provided
         if self.api_key is None:
             self.api_key = os.getenv("NOUS_API_KEY") or os.getenv("OPENAI_API_KEY")
+
+        # Migrate legacy api_base to endpoints if needed
+        if self._api_base and not self.endpoints:
+            self.endpoints = [Endpoint(url=self._api_base, name="Primary", priority=0)]
+            self._api_base = None
+
+        # Ensure at least one default endpoint
+        if not self.endpoints:
+            self.endpoints = [
+                Endpoint(
+                    url="https://inference-api.nousresearch.com/v1",
+                    name="Primary",
+                    priority=0,
+                )
+            ]
+
+    @property
+    def api_base(self) -> str:
+        """Get the primary API base URL (highest priority endpoint).
+
+        This property maintains backward compatibility with code that expects
+        a single api_base value.
+        """
+        if not self.endpoints:
+            return ""
+        # Return the endpoint with lowest priority number (highest priority)
+        sorted_endpoints = sorted(self.endpoints, key=lambda e: e.priority)
+        return sorted_endpoints[0].url
+
+    @api_base.setter
+    def api_base(self, value: str) -> None:
+        """Set the primary API base URL.
+
+        This setter maintains backward compatibility. It updates the primary
+        endpoint or creates one if no endpoints exist.
+        """
+        if not self.endpoints:
+            self.endpoints = [Endpoint(url=value, name="Primary", priority=0)]
+        else:
+            # Find and update the primary endpoint (lowest priority number)
+            sorted_endpoints = sorted(self.endpoints, key=lambda e: e.priority)
+            sorted_endpoints[0].url = value
+
+    def get_endpoints_by_priority(self) -> list[Endpoint]:
+        """Get all endpoints sorted by priority (lowest number first)."""
+        return sorted(self.endpoints, key=lambda e: e.priority)
+
+    def get_healthy_endpoints(self) -> list[Endpoint]:
+        """Get only healthy endpoints, sorted by priority."""
+        return [
+            e for e in self.get_endpoints_by_priority()
+            if e.is_healthy is None or e.is_healthy
+        ]
+
+    def add_endpoint(
+        self,
+        url: str,
+        name: str = "",
+        priority: Optional[int] = None,
+        purpose: str = "",
+    ) -> Endpoint:
+        """Add a new endpoint.
+
+        Args:
+            url: The endpoint URL
+            name: Display name for the endpoint
+            priority: Priority (lower = higher priority). Auto-assigns if not provided.
+            purpose: Purpose description
+
+        Returns:
+            The created Endpoint
+        """
+        if priority is None:
+            # Auto-assign priority as one higher than current max
+            priority = max((e.priority for e in self.endpoints), default=-1) + 1
+
+        endpoint = Endpoint(url=url, name=name, priority=priority, purpose=purpose)
+        self.endpoints.append(endpoint)
+        return endpoint
+
+    def remove_endpoint(self, url: str) -> bool:
+        """Remove an endpoint by URL.
+
+        Args:
+            url: The URL of the endpoint to remove
+
+        Returns:
+            True if removed, False if not found
+        """
+        for i, e in enumerate(self.endpoints):
+            if e.url == url:
+                self.endpoints.pop(i)
+                return True
+        return False
+
+    def update_endpoint_health(
+        self,
+        url: str,
+        is_healthy: bool,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Update the health status of an endpoint.
+
+        Args:
+            url: The endpoint URL
+            is_healthy: Whether the endpoint is healthy
+            timestamp: ISO timestamp (auto-generated if not provided)
+        """
+        from datetime import datetime, timezone
+
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc).isoformat()
+
+        for e in self.endpoints:
+            if e.url == url:
+                e.is_healthy = is_healthy
+                e.last_checked = timestamp
+                break
 
 
 @dataclass
@@ -314,11 +473,22 @@ class ThreadlightConfig:
 
         if "provider" in data:
             p = data["provider"]
+            # Parse endpoints if present (new format)
+            endpoints = []
+            if "endpoints" in p:
+                for ep_data in p["endpoints"]:
+                    endpoints.append(Endpoint.from_dict(ep_data))
+
+            # Handle legacy api_base (old format) - migrate to endpoints
+            legacy_api_base = p.get("api_base")
+            if legacy_api_base and not endpoints:
+                endpoints = [Endpoint(url=legacy_api_base, name="Primary", priority=0)]
+
             config.provider = ProviderConfig(
                 type=p.get("type", config.provider.type),
-                api_base=p.get("api_base", config.provider.api_base),
                 api_key=p.get("api_key", config.provider.api_key),
                 model=p.get("model", config.provider.model),
+                endpoints=endpoints if endpoints else config.provider.endpoints,
             )
 
         if "storage" in data:
@@ -425,8 +595,11 @@ class ThreadlightConfig:
         result = {
             "provider": {
                 "type": self.provider.type,
-                "api_base": self.provider.api_base,
                 "model": self.provider.model,
+                # Store endpoints in new format
+                "endpoints": [ep.to_dict() for ep in self.provider.endpoints],
+                # Also keep api_base for backward compatibility with older readers
+                "api_base": self.provider.api_base,
                 # Note: api_key intentionally omitted for security
             },
             "storage": {

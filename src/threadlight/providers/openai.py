@@ -5,10 +5,13 @@ Works with:
 - OpenAI API
 - Nous Research (Hermes)
 - Local models with OpenAI-compatible endpoints (Ollama, llama.cpp, vLLM)
+
+Supports multiple endpoints with automatic fallback on failure.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Iterator, Optional
 
 import httpx
@@ -21,10 +24,17 @@ from threadlight.providers.base import (
     register_provider,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @register_provider("openai")
 class OpenAIProvider(BaseProvider):
-    """Provider for OpenAI-compatible APIs."""
+    """Provider for OpenAI-compatible APIs.
+
+    Supports multiple endpoints with automatic fallback on failure.
+    When multiple endpoints are configured, requests will be attempted
+    in priority order until one succeeds.
+    """
 
     def __init__(
         self,
@@ -32,9 +42,20 @@ class OpenAIProvider(BaseProvider):
         api_key: Optional[str] = None,
         model: Optional[str] = "Hermes-4.3-36B",
         timeout: float = 60.0,
+        endpoints: Optional[list[dict[str, Any]]] = None,
         **kwargs: Any
     ):
         super().__init__(api_base, api_key, model, timeout, **kwargs)
+
+        # Multiple endpoints support
+        # Each endpoint dict should have: url, name (optional), priority (optional)
+        self.endpoints = endpoints or []
+        if not self.endpoints and api_base:
+            # Use single api_base as the only endpoint for backward compatibility
+            self.endpoints = [{"url": api_base, "name": "Primary", "priority": 0}]
+
+        # Sort endpoints by priority (lower number = higher priority)
+        self.endpoints.sort(key=lambda e: e.get("priority", 0))
 
         # Default headers
         self.headers = {
@@ -42,6 +63,74 @@ class OpenAIProvider(BaseProvider):
         }
         if self.api_key:
             self.headers["Authorization"] = f"Bearer {self.api_key}"
+
+    def _get_endpoint_urls(self) -> list[str]:
+        """Get list of endpoint URLs in priority order."""
+        if self.endpoints:
+            return [ep.get("url", "").rstrip("/") for ep in self.endpoints if ep.get("url")]
+        return [self.api_base] if self.api_base else []
+
+    def _try_request(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[dict[str, Any]] = None,
+        stream: bool = False,
+    ) -> tuple[httpx.Response, str]:
+        """Try request across multiple endpoints with fallback.
+
+        Args:
+            method: HTTP method ("GET" or "POST")
+            path: API path (e.g., "/chat/completions")
+            payload: JSON payload for POST requests
+            stream: Whether to use streaming
+
+        Returns:
+            Tuple of (response, endpoint_url_used)
+
+        Raises:
+            httpx.HTTPStatusError: If all endpoints fail
+        """
+        endpoints = self._get_endpoint_urls()
+        last_error = None
+        last_endpoint = ""
+
+        for endpoint_url in endpoints:
+            url = f"{endpoint_url}{path}"
+            last_endpoint = endpoint_url
+
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    if method.upper() == "GET":
+                        response = client.get(url, headers=self.headers)
+                    else:
+                        if stream:
+                            # For streaming, return early so caller can handle
+                            return (
+                                client.stream("POST", url, json=payload, headers=self.headers),
+                                endpoint_url,
+                            )
+                        response = client.post(url, json=payload, headers=self.headers)
+
+                    response.raise_for_status()
+                    logger.debug(f"Request succeeded on endpoint: {endpoint_url}")
+                    return (response, endpoint_url)
+
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+                last_error = e
+                logger.warning(f"Endpoint {endpoint_url} failed: {e}. Trying next endpoint...")
+                continue
+
+        # All endpoints failed
+        if last_error:
+            logger.error(f"All endpoints failed. Last error from {last_endpoint}: {last_error}")
+            raise last_error
+
+        raise httpx.HTTPStatusError(
+            "No endpoints available",
+            request=httpx.Request("POST", ""),
+            response=httpx.Response(503),
+        )
 
     def complete(
         self,
@@ -53,6 +142,8 @@ class OpenAIProvider(BaseProvider):
         """
         Generate a completion using the OpenAI chat API.
 
+        Automatically tries fallback endpoints if the primary fails.
+
         Args:
             messages: List of conversation messages
             tools: Optional list of tool definitions in OpenAI format
@@ -62,8 +153,6 @@ class OpenAIProvider(BaseProvider):
         Returns:
             ProviderResponse with content and/or tool_calls
         """
-        url = f"{self.api_base}/chat/completions"
-
         payload: dict[str, Any] = {
             "model": kwargs.get("model", self.model),
             "messages": [m.to_dict() for m in messages],
@@ -89,11 +178,45 @@ class OpenAIProvider(BaseProvider):
         if "frequency_penalty" in kwargs:
             payload["frequency_penalty"] = kwargs["frequency_penalty"]
 
-        # Make request
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            data = response.json()
+        # Try request with fallback across endpoints
+        endpoints = self._get_endpoint_urls()
+        last_error = None
+        used_endpoint = ""
+
+        for endpoint_url in endpoints:
+            url = f"{endpoint_url}/chat/completions"
+            used_endpoint = endpoint_url
+
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.post(url, json=payload, headers=self.headers)
+                    response.raise_for_status()
+                    data = response.json()
+
+                logger.debug(f"Completion succeeded on endpoint: {endpoint_url}")
+                break
+
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_error = e
+                logger.warning(f"Endpoint {endpoint_url} failed (connection error): {e}. Trying next...")
+                continue
+            except httpx.HTTPStatusError as e:
+                # Don't retry on authentication errors (401, 403)
+                if e.response.status_code in (401, 403):
+                    raise
+                last_error = e
+                logger.warning(f"Endpoint {endpoint_url} failed (HTTP {e.response.status_code}): {e}. Trying next...")
+                continue
+        else:
+            # All endpoints failed
+            if last_error:
+                logger.error(f"All {len(endpoints)} endpoints failed. Last error: {last_error}")
+                raise last_error
+            raise httpx.HTTPStatusError(
+                "No endpoints available",
+                request=httpx.Request("POST", ""),
+                response=httpx.Response(503),
+            )
 
         # Parse response
         choice = data["choices"][0]
@@ -110,7 +233,7 @@ class OpenAIProvider(BaseProvider):
                     arguments=tc["function"]["arguments"],
                 ))
 
-        return ProviderResponse(
+        response_obj = ProviderResponse(
             content=message.get("content") or "",
             finish_reason=choice.get("finish_reason", "stop"),
             model=data.get("model", self.model),
@@ -121,13 +244,22 @@ class OpenAIProvider(BaseProvider):
             raw=data,
         )
 
+        # Add endpoint info to raw data for debugging
+        if response_obj.raw:
+            response_obj.raw["_endpoint_used"] = used_endpoint
+
+        return response_obj
+
     def stream(
         self,
         messages: list[ProviderMessage],
         **kwargs: Any
     ) -> Iterator[str]:
-        """Stream a completion token by token."""
-        url = f"{self.api_base}/chat/completions"
+        """Stream a completion token by token.
+
+        Automatically tries fallback endpoints if the primary fails.
+        """
+        import json
 
         payload = {
             "model": kwargs.get("model", self.model),
@@ -141,45 +273,96 @@ class OpenAIProvider(BaseProvider):
         if "max_tokens" in kwargs:
             payload["max_tokens"] = kwargs["max_tokens"]
 
-        with httpx.Client(timeout=self.timeout) as client:
-            with client.stream(
-                "POST",
-                url,
-                json=payload,
-                headers=self.headers
-            ) as response:
-                response.raise_for_status()
+        # Try endpoints with fallback
+        endpoints = self._get_endpoint_urls()
+        last_error = None
 
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
+        for endpoint_url in endpoints:
+            url = f"{endpoint_url}/chat/completions"
 
-                        import json
-                        try:
-                            data = json.loads(data_str)
-                            choices = data.get("choices", [])
-                            if choices:
-                                delta = choices[0].get("delta", {})
-                                content = delta.get("content", "")
-                                if content:
-                                    yield content
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    with client.stream(
+                        "POST",
+                        url,
+                        json=payload,
+                        headers=self.headers
+                    ) as response:
+                        response.raise_for_status()
+                        logger.debug(f"Stream started on endpoint: {endpoint_url}")
+
+                        for line in response.iter_lines():
+                            if not line:
+                                continue
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str.strip() == "[DONE]":
+                                    break
+
+                                try:
+                                    data = json.loads(data_str)
+                                    choices = data.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {})
+                                        content = delta.get("content", "")
+                                        if content:
+                                            yield content
+                                except (json.JSONDecodeError, KeyError, IndexError):
+                                    continue
+
+                        # Stream completed successfully
+                        return
+
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_error = e
+                logger.warning(f"Stream endpoint {endpoint_url} failed: {e}. Trying next...")
+                continue
+            except httpx.HTTPStatusError as e:
+                # Don't retry on authentication errors
+                if e.response.status_code in (401, 403):
+                    raise
+                last_error = e
+                logger.warning(f"Stream endpoint {endpoint_url} failed (HTTP {e.response.status_code}). Trying next...")
+                continue
+
+        # All endpoints failed
+        if last_error:
+            logger.error(f"All stream endpoints failed. Last error: {last_error}")
+            raise last_error
 
     def list_models(self) -> list[str]:
-        """List available models."""
-        url = f"{self.api_base}/models"
+        """List available models.
 
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.get(url, headers=self.headers)
-            response.raise_for_status()
-            data = response.json()
+        Tries endpoints in priority order until one succeeds.
+        """
+        endpoints = self._get_endpoint_urls()
+        last_error = None
 
-        return [m["id"] for m in data.get("data", [])]
+        for endpoint_url in endpoints:
+            url = f"{endpoint_url}/models"
+
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.get(url, headers=self.headers)
+                    response.raise_for_status()
+                    data = response.json()
+
+                logger.debug(f"Models listed from endpoint: {endpoint_url}")
+                return [m["id"] for m in data.get("data", [])]
+
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_error = e
+                logger.warning(f"List models failed on {endpoint_url}: {e}. Trying next...")
+                continue
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    raise
+                last_error = e
+                continue
+
+        if last_error:
+            raise last_error
+        return []
 
 
 # Convenience alias
