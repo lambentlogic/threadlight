@@ -48,7 +48,6 @@ function threadlightApp() {
             type: 'relational',
             content: {},
             cuePhrasesStr: '',
-            contentJson: '{}',
         },
 
         // Embeddings state
@@ -96,11 +95,14 @@ function threadlightApp() {
 
         // Computed property to check if legacy config exists
         get hasLegacyProviderConfig() {
-            // Legacy config exists if there's a non-local provider type with an API base or API key
+            // Legacy config only exists if user has actually configured something worth migrating.
+            // A fresh database with default settings is NOT legacy config.
+            // The key indicator is has_api_key - without an API key, there's nothing to migrate.
             const cfg = this.legacyProviderConfig;
             if (!cfg) return false;
             if (cfg.provider_type === 'local') return false;
-            return cfg.has_api_key || (cfg.api_base && cfg.api_base.length > 0);
+            // Only show migration banner if there's an actual API key configured
+            return cfg.has_api_key;
         },
 
         // Provider models state (fetched from API)
@@ -1465,10 +1467,6 @@ function threadlightApp() {
             try {
                 let content = this.newMemory.content;
 
-                if (this.newMemory.type === 'custom') {
-                    content = JSON.parse(this.newMemory.contentJson);
-                }
-
                 const cue_phrases = this.newMemory.cuePhrasesStr
                     .split(',')
                     .map(s => s.trim())
@@ -1493,7 +1491,6 @@ function threadlightApp() {
                     type: 'relational',
                     content: {},
                     cuePhrasesStr: '',
-                    contentJson: '{}',
                 };
                 await this.loadMemories();
                 await this.loadStats();
@@ -1545,9 +1542,10 @@ function threadlightApp() {
                 ritual: 'bg-indigo-500/20 text-indigo-400',
                 witness: 'bg-pink-500/20 text-pink-400',
                 style: 'bg-green-500/20 text-green-400',
-                custom: 'bg-gray-500/20 text-gray-400',
+                note: 'bg-gray-500/20 text-gray-400',
+                custom: 'bg-gray-500/20 text-gray-400',  // Legacy fallback
             };
-            return colors[type] || colors.custom;
+            return colors[type] || colors.note;
         },
 
         // Get display name for memory types (maps internal names to user-friendly labels)
@@ -1559,7 +1557,8 @@ function threadlightApp() {
                 ritual: 'Command',
                 witness: 'Witness',
                 style: 'Style',
-                custom: 'Custom',
+                note: 'Note',
+                custom: 'Note',  // Legacy fallback
             };
             return displayNames[type] || type;
         },
@@ -2961,15 +2960,16 @@ function threadlightApp() {
         openMemoryTypeEditor() {
             this.newMemoryType = {
                 type_id: '',
+                display_name: '',
                 description: '',
                 display_template: '',
-                fields: [{ name: '', field_type: 'string', required: false }],
+                fields: [{ name: '', field_type: 'string', required: false, help_text: '', template: '' }],
             };
             this.showMemoryTypeEditor = true;
         },
 
         addMemoryTypeField() {
-            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false });
+            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false, help_text: '', template: '' });
         },
 
         removeMemoryTypeField(index) {
@@ -2995,13 +2995,15 @@ function threadlightApp() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         type_id: this.newMemoryType.type_id,
-                        description: this.newMemoryType.description || null,
-                        display_template: this.newMemoryType.display_template || null,
+                        display_name: this.newMemoryType.display_name || this.newMemoryType.type_id,
+                        description: this.newMemoryType.description || '',
+                        display_template: this.newMemoryType.display_template || '',
                         fields: validFields.map(f => ({
                             name: f.name.trim(),
                             field_type: f.field_type,
                             required: f.required,
-                            description: f.description || null,
+                            help_text: f.help_text || '',
+                            template: f.template || '',
                         })),
                     }),
                 });

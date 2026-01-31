@@ -372,30 +372,43 @@ class CustomTypeCapsule(MemoryCapsule):
         return errors
 
     def to_context(self, mode: ContextMode = ContextMode.NARRATIVE) -> str:
-        """Transform into prompt-ready context."""
+        """
+        Transform into prompt-ready context.
+
+        Uses field-level templates from the type definition to create
+        natural-feeling context. Falls back to display format if no
+        templates are defined.
+        """
         type_def = self.get_type_definition()
 
-        # Format display using type definition if available
+        # Format using field templates for rich context, display template for short form
         if type_def:
+            # Use field templates for full context composition
+            context_text = type_def.format_for_context(self.content)
             display = type_def.format_display(self.content)
             type_name = type_def.display_name
         else:
-            display = str(self.content)
+            context_text = str(self.content)
+            display = context_text
             type_name = self.custom_type_id or "Custom"
 
         if mode == ContextMode.DIRECT:
-            return f"[{type_name}] {display}"
+            # Use field templates for rich, natural context
+            return f"[{type_name}] {context_text}"
 
         elif mode == ContextMode.NARRATIVE:
-            return f'(You recall a {type_name.lower()}: "{display}")'
+            # Use field templates wrapped in narrative framing
+            return f"(You recall: {context_text})"
 
         elif mode == ContextMode.WHISPER:
-            return f'({display[:80]}...)'
+            # Short form uses display template
+            return f"({display[:80]}...)" if len(display) > 80 else f"({display})"
 
         elif mode == ContextMode.RITUAL:
-            return f'(A memory surfaces - {type_name}: "{display}")'
+            # Use field templates for full ritual context
+            return f"(A memory surfaces: {context_text})"
 
-        return display
+        return context_text
 
     def get_preview(self) -> str:
         """Get a short preview of this capsule."""

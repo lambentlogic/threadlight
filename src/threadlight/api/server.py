@@ -255,10 +255,14 @@ class SemanticSearchRequest(BaseModel):
 
 class FieldDefinitionRequest(BaseModel):
     name: str
-    type: str  # "string", "text", "number", "date", "list"
+    field_type: Optional[str] = None  # "string", "text", "number", "date", "list" (preferred)
+    type: Optional[str] = None  # Deprecated: use field_type (kept for JS compatibility)
     required: bool = True
     default: Optional[Any] = None
     help_text: str = ""
+    output_template: str = ""  # Shows how field appears in AI context, e.g., "There is {tone} in your tone"
+    template: str = ""  # Deprecated: use output_template
+    label: str = ""  # Display label (optional, defaults to name)
 
 
 class MemoryTypeRequest(BaseModel):
@@ -2550,15 +2554,12 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 continue
 
             try:
-                # Create an imported memory capsule
+                # Create an imported memory capsule using the "note" type
                 capsule = tl.memory.create(
-                    type="custom",
+                    type="note",
                     content={
-                        "capsule_subtype": "imported",
-                        "text": line,
-                        "source": request.source_name,
-                        "line_number": i,
-                        "tags": request.tags or [],
+                        "content": line,
+                        "about": request.source_name,
                     },
                     cue_phrases=_extract_cue_phrases(line),
                     retention="normal",
@@ -2600,14 +2601,13 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 continue
 
             try:
+                # Use "about" field to indicate source; tags not supported in simplified note type
+                about_context = source if not tag_list else f"{source} [{', '.join(tag_list)}]"
                 tl.memory.create(
-                    type="custom",
+                    type="note",
                     content={
-                        "capsule_subtype": "imported",
-                        "text": line,
-                        "source": source,
-                        "line_number": i,
-                        "tags": tag_list,
+                        "content": line,
+                        "about": about_context,
                     },
                     cue_phrases=_extract_cue_phrases(line),
                     retention="normal",
@@ -3600,8 +3600,23 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             )
 
         try:
-            # Convert Pydantic models to dicts
-            fields = [f.model_dump() for f in request.fields]
+            # Convert Pydantic models to dicts, handling field_type/type aliasing
+            fields = []
+            for f in request.fields:
+                field_dict = f.model_dump()
+                # Support both field_type (new) and type (legacy) field names
+                field_type = field_dict.get("field_type") or field_dict.get("type") or "string"
+                # Support both output_template (new) and template (legacy)
+                output_template = field_dict.get("output_template") or field_dict.get("template") or ""
+                fields.append({
+                    "name": field_dict["name"],
+                    "type": field_type,
+                    "required": field_dict.get("required", True),
+                    "default": field_dict.get("default"),
+                    "help_text": field_dict.get("help_text", ""),
+                    "output_template": output_template,
+                    "label": field_dict.get("label", ""),
+                })
 
             type_def = tl.create_memory_type(
                 type_id=request.type_id,
@@ -3632,8 +3647,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         """
         tl = get_threadlight()
 
-        # Check if it's a built-in type
-        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
+        # Check if it's a built-in type (include "custom" for backward compatibility)
+        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "note", "custom"]
         if type_id in builtin_ids:
             raise HTTPException(
                 status_code=400,
@@ -3686,8 +3701,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         """
         tl = get_threadlight()
 
-        # Check if it's a built-in type
-        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
+        # Check if it's a built-in type (include "custom" for backward compatibility)
+        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "note", "custom"]
         if type_id in builtin_ids:
             raise HTTPException(
                 status_code=400,

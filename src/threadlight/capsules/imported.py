@@ -24,28 +24,40 @@ from threadlight.capsules.base import (
 
 
 @register_capsule_type("imported")
+@register_capsule_type("note")
 @dataclass
 class ImportedMemory(MemoryCapsule):
     """
-    A raw imported memory from an external source.
+    A general note or imported memory.
 
-    ImportedMemory capsules preserve freeform text content from
-    imports (text files, documents, etc). They are searchable
-    by text content and can be converted to structured types
-    (relational, myth_seed, etc) later.
+    This capsule type serves dual purposes:
+    1. As "note" - a simple text note with optional context (about)
+    2. As "imported" - raw content from external sources
 
-    Examples:
-    - Memories imported from fable-memory.txt
-    - Notes imported from personal archives
-    - Journal entries brought into the system
+    The "note" type is the default for unstructured memories that
+    don't fit other types. When in doubt, use note.
+
+    Fields for "note" type:
+    - content: The note text itself (required)
+    - about: What or who the note is about (optional)
+
+    Legacy fields for "imported" type (backward compatibility):
+    - text: The memory text
+    - source: Source file/origin
+    - line_number: Line number in source
+    - tags: Organization tags
     """
 
     type: CapsuleType = field(default=CapsuleType.CUSTOM, init=False)
 
-    # Default to normal retention -- imported memories can decay
+    # Default to normal retention -- these memories can decay
     retention: RetentionPolicy = field(default=RetentionPolicy.NORMAL)
 
-    # Imported memory specific fields
+    # Note type fields (new schema)
+    note_content: str = ""  # The note text (named to avoid conflict with base content dict)
+    about: str = ""  # What/who the note is about
+
+    # Legacy imported memory fields (for backward compatibility)
     text: str = ""  # The original memory text
     source: str = ""  # Source file/origin (e.g., "fable-memory.txt")
     line_number: Optional[int] = None  # Line number in source file
@@ -53,22 +65,39 @@ class ImportedMemory(MemoryCapsule):
 
     def __post_init__(self) -> None:
         # Set the type value for serialization
-        # We use CUSTOM since IMPORTED isn't in the enum yet
         self.type = CapsuleType.CUSTOM
 
         if not self.content:
-            self.content = {
-                "text": self.text,
-                "source": self.source,
-                "line_number": self.line_number,
-                "tags": self.tags,
-                "capsule_subtype": "imported",  # Mark as imported subtype
-            }
+            # Building content from fields
+            if self.note_content or self.about:
+                # New "note" schema
+                self.content = {
+                    "content": self.note_content,
+                    "about": self.about,
+                }
+            else:
+                # Legacy "imported" schema
+                self.content = {
+                    "text": self.text,
+                    "source": self.source,
+                    "line_number": self.line_number,
+                    "tags": self.tags,
+                    "capsule_subtype": "imported",
+                }
         else:
+            # Extracting from content dict - support both schemas
+            # New "note" schema uses "content" key
+            self.note_content = self.content.get("content", "")
+            self.about = self.content.get("about", "")
+            # Legacy schema uses "text" key
             self.text = self.content.get("text", self.text)
             self.source = self.content.get("source", self.source)
             self.line_number = self.content.get("line_number", self.line_number)
             self.tags = self.content.get("tags", self.tags)
+
+            # Normalize: if we have "content" but not "text", copy it
+            if self.note_content and not self.text:
+                self.text = self.note_content
 
         # Build cue phrases from text content for searchability
         if not self.cue_phrases and self.text:
@@ -112,36 +141,48 @@ class ImportedMemory(MemoryCapsule):
 
     def validate(self) -> bool:
         """Validate that required fields are present."""
-        return bool(self.text)
+        # Valid if we have text (legacy) or note_content (new schema)
+        return bool(self.text or self.note_content)
+
+    def get_text(self) -> str:
+        """Get the main text content, supporting both schemas."""
+        return self.text or self.note_content or ""
 
     def to_context(self, mode: ContextMode = ContextMode.NARRATIVE) -> str:
         """Transform into prompt-ready context."""
-        source_info = ""
-        if self.source:
-            source_info = f" (from {self.source}"
+        text = self.get_text()
+
+        # Build context info from either schema
+        context_info = ""
+        if self.about:
+            # New "note" schema with "about" field
+            context_info = f" about {self.about}"
+        elif self.source:
+            # Legacy "imported" schema with source
+            context_info = f" (from {self.source}"
             if self.line_number is not None:
-                source_info += f", line {self.line_number}"
-            source_info += ")"
+                context_info += f", line {self.line_number}"
+            context_info += ")"
 
         tag_info = ""
         if self.tags:
             tag_info = f" [tags: {', '.join(self.tags)}]"
 
         if mode == ContextMode.DIRECT:
-            return f"[Memory{source_info}] {self.text}{tag_info}"
+            return f"[Note{context_info}] {text}{tag_info}"
 
         elif mode == ContextMode.NARRATIVE:
-            return f'(You remember{source_info}: "{self.text}")'
+            return f'(You remember{context_info}: "{text}")'
 
         elif mode == ContextMode.WHISPER:
             # For whisper mode, just the essence
-            return f'("{self.text[:100]}...")'
+            return f'("{text[:100]}...")'
 
         elif mode == ContextMode.RITUAL:
             # In ritual mode, memories carry context
-            return f'(A memory surfaces{source_info}: "{self.text}")'
+            return f'(A memory surfaces{context_info}: "{text}")'
 
-        return self.text
+        return text
 
     def add_tag(self, tag: str) -> None:
         """Add a tag to this memory."""

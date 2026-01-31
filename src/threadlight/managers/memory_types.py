@@ -20,85 +20,228 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Built-in type definitions for list_types()
+# Each field includes:
+# - help_text: Explains what to enter in this field
+# - template: Shows how this field appears in the AI's context
 BUILTIN_TYPES = [
     {
         "type_id": "relational",
         "display_name": "Relational",
-        "description": "Track evolving bonds with entities",
+        "description": "Store information about a person, place, or thing you want to remember. "
+                       "Use for tracking relationships, contacts, or important entities.",
         "is_builtin": True,
         "icon": "users",
         "fields": [
-            {"name": "entity", "type": "string", "required": True},
-            {"name": "summary", "type": "text", "required": False},
-            {"name": "tone", "type": "string", "required": False},
-            {"name": "role", "type": "string", "required": False},
+            {
+                "name": "entity",
+                "type": "string",
+                "required": True,
+                "help_text": "Name of the person, place, or thing",
+                "template": "(You recall {entity}...)",
+            },
+            {
+                "name": "summary",
+                "type": "text",
+                "required": True,
+                "help_text": "Key information to remember about them",
+                "template": "{summary}.",
+            },
+            {
+                "name": "tone",
+                "type": "string",
+                "required": False,
+                "help_text": "How you feel about them (e.g., warm, professional, playful)",
+                "template": "There is {tone} in your tone when speaking of them.",
+            },
+            {
+                "name": "role",
+                "type": "string",
+                "required": False,
+                "help_text": "Their role or relationship (e.g., friend, coworker, mentor)",
+                "template": "({role})",
+            },
         ],
+        "example_output": "(You recall Sarah (mentor). She taught me Python and always "
+                          "encourages questions. There is warm in your tone when speaking of them.)",
     },
     {
         "type_id": "myth_seed",
         "display_name": "Identity Phrase",
-        "description": "Core beliefs or mantras that anchor personality",
+        "description": "Store a guiding phrase, belief, or personal motto. "
+                       "Use for values, principles, or mantras you want the AI to reflect.",
         "is_builtin": True,
         "icon": "sparkles",
         "fields": [
-            {"name": "seed", "type": "text", "required": True, "label": "Phrase"},
-            {"name": "origin", "type": "string", "required": False, "label": "Origin"},
-            {"name": "function", "type": "string", "required": False, "label": "Purpose"},
+            {
+                "name": "seed",
+                "type": "text",
+                "required": True,
+                "label": "Phrase",
+                "help_text": "The phrase or belief itself",
+                "template": '(A core belief: "{seed}")',
+            },
+            {
+                "name": "origin",
+                "type": "string",
+                "required": False,
+                "label": "Origin",
+                "help_text": "Where this phrase comes from (e.g., a book, personal experience)",
+                "template": "(from {origin})",
+            },
+            {
+                "name": "function",
+                "type": "string",
+                "required": False,
+                "label": "Purpose",
+                "help_text": "What this belief helps with (e.g., stay calm, be honest)",
+                "template": "It serves to {function}.",
+            },
         ],
+        "example_output": '(A core belief (from experience): "I acknowledge uncertainty '
+                          'rather than pretending certainty." It serves to encourage honesty.)',
     },
     {
         "type_id": "ritual",
-        "display_name": "Ritual",
-        "description": "Repeated emotional acts and responses",
+        "display_name": "Command",
+        "description": "Define a custom slash command that triggers a specific response style. "
+                       "Use for greetings, check-ins, or any repeated interaction.",
         "is_builtin": True,
         "icon": "star",
         "fields": [
-            {"name": "name", "type": "string", "required": True},
-            {"name": "description", "type": "text", "required": False},
-            {"name": "valence", "type": "string", "required": False},
-            {"name": "response_style", "type": "text", "required": False},
+            {
+                "name": "name",
+                "type": "string",
+                "required": True,
+                "help_text": "Command name starting with / (e.g., /morning, /focus)",
+                "template": "[Command: {name}]",
+            },
+            {
+                "name": "description",
+                "type": "text",
+                "required": False,
+                "help_text": "What this command means or does",
+                "template": "Meaning: {description}",
+            },
+            {
+                "name": "valence",
+                "type": "string",
+                "required": False,
+                "help_text": "Emotional tone: comforting, grounding, playful, reflective",
+                "template": "Valence: {valence}",
+            },
+            {
+                "name": "response_style",
+                "type": "text",
+                "required": False,
+                "help_text": "How to respond (e.g., brief and direct, warm and supportive)",
+                "template": "Style: {response_style}",
+            },
         ],
+        "example_output": "[Command: /focus] Meaning: Time to concentrate on the task. "
+                          "Valence: grounding Style: brief, direct, no tangents",
     },
     {
         "type_id": "witness",
-        "display_name": "Witness",
-        "description": "Memories of being seen/recognized",
+        "display_name": "Witness Moment",
+        "description": "Record a significant moment or experience worth remembering. "
+                       "Use for milestones, breakthroughs, or meaningful interactions.",
         "is_builtin": True,
         "icon": "eye",
         "fields": [
-            {"name": "moment", "type": "text", "required": True},
-            {"name": "feeling", "type": "string", "required": False},
-            {"name": "effect", "type": "string", "required": False},
+            {
+                "name": "moment",
+                "type": "text",
+                "required": True,
+                "help_text": "What happened or what was realized",
+                "template": "(You remember: {moment}.",
+            },
+            {
+                "name": "feeling",
+                "type": "string",
+                "required": False,
+                "help_text": "The emotional response (e.g., gratitude, clarity, pride)",
+                "template": "You felt {feeling}.",
+            },
+            {
+                "name": "effect",
+                "type": "string",
+                "required": False,
+                "help_text": "How it changed things going forward",
+                "template": "{effect})",
+            },
         ],
+        "example_output": "(You remember: When they thanked me for being patient. "
+                          "You felt appreciated. It reinforced the value of patience.)",
     },
     {
         "type_id": "style",
-        "display_name": "Style",
-        "description": "Voice coherence and expression rules",
+        "display_name": "Style Profile",
+        "description": "Define voice and communication preferences. "
+                       "Use for setting tone, allowed behaviors, and response constraints.",
         "is_builtin": True,
         "icon": "wand",
         "fields": [
-            {"name": "style_id", "type": "string", "required": True},
-            {"name": "tone_base", "type": "string", "required": True},
-            {"name": "permissions", "type": "list", "required": False},
-            {"name": "constraints", "type": "list", "required": False},
+            {
+                "name": "style_id",
+                "type": "string",
+                "required": True,
+                "help_text": "Unique name for this style (e.g., professional, casual)",
+                "template": "Style: {style_id}",
+            },
+            {
+                "name": "tone_base",
+                "type": "string",
+                "required": True,
+                "help_text": "Base tone (e.g., warm and direct, formal and precise)",
+                "template": "Your voice is {tone_base}.",
+            },
+            {
+                "name": "permissions",
+                "type": "list",
+                "required": False,
+                "help_text": "Things the AI is allowed to do (e.g., use humor, be brief)",
+                "template": "You are permitted to: {permissions}.",
+            },
+            {
+                "name": "constraints",
+                "type": "list",
+                "required": False,
+                "help_text": "Things to avoid (e.g., avoid jargon, no emojis)",
+                "template": "Avoid: {constraints}.",
+            },
         ],
+        "example_output": "Your voice is warm and direct. You are permitted to: use humor, "
+                          "be concise. Avoid: excessive formality, jargon.",
     },
     {
-        "type_id": "custom",
-        "display_name": "Custom (Imported)",
-        "description": "Raw imported memories from external sources",
+        "type_id": "note",
+        "display_name": "Note",
+        "description": "Simple freeform text memory. Use this when other types do not fit, "
+                       "for quick notes, general observations, or imported content.",
         "is_builtin": True,
         "icon": "file-text",
         "fields": [
-            {"name": "text", "type": "text", "required": True},
-            {"name": "source", "type": "string", "required": False},
-            {"name": "tags", "type": "list", "required": False},
+            {
+                "name": "content",
+                "type": "text",
+                "required": True,
+                "help_text": "The note itself - any text you want to remember",
+                "template": "{content}",
+            },
+            {
+                "name": "about",
+                "type": "string",
+                "required": False,
+                "help_text": "What or who this note is about (optional context)",
+                "template": "(Re: {about})",
+            },
         ],
+        "example_output": "(Re: project deadline) The deadline moved to Friday, "
+                          "confirmed in standup.",
     },
 ]
 
-BUILTIN_TYPE_IDS = ["relational", "myth_seed", "ritual", "witness", "style", "custom"]
+BUILTIN_TYPE_IDS = ["relational", "myth_seed", "ritual", "witness", "style", "note"]
 
 
 class CustomTypeManager:

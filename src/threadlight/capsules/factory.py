@@ -29,7 +29,7 @@ CAPSULE_TYPES = {
     CapsuleType.RITUAL.value: RitualHook,
     CapsuleType.STYLE.value: StyleProfile,
     CapsuleType.WITNESS.value: WitnessMoment,
-    CapsuleType.CUSTOM.value: ImportedMemory,  # Default custom to imported
+    CapsuleType.CUSTOM.value: ImportedMemory,  # Legacy "custom" type support
     # Aliases
     "relational": RelationalThread,
     "myth_seed": MythSeed,
@@ -38,6 +38,8 @@ CAPSULE_TYPES = {
     "style": StyleProfile,
     "witness": WitnessMoment,
     "imported": ImportedMemory,
+    "note": ImportedMemory,  # New name for general notes/imported content
+    "custom": ImportedMemory,  # Keep backward compatibility
 }
 
 
@@ -48,7 +50,7 @@ def create_capsule(data: dict[str, Any]) -> MemoryCapsule:
     Used for deserialization from storage and API requests.
     Handles both built-in types and user-defined custom types.
     """
-    capsule_type = data.get("type", "custom")
+    capsule_type = data.get("type", "note")
     content = data.get("content", {})
 
     # Check if this is a user-defined custom type

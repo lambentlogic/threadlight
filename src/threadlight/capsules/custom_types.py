@@ -38,6 +38,11 @@ class FieldDefinition:
     - number: Integer or float
     - date: ISO format date string
     - list: List of strings (comma-separated in UI)
+
+    The `output_template` field defines how this field should be rendered in context
+    composition. Use {field_name} as a placeholder for the field's value.
+    Example: "There is {tone} in your tone when speaking of them."
+    If no template is provided, the field will be rendered as "field_name: value".
     """
 
     name: str
@@ -45,6 +50,8 @@ class FieldDefinition:
     required: bool = True
     default: Any = None
     help_text: str = ""
+    output_template: str = ""  # Shows how field appears in AI context
+    label: str = ""  # Display label (optional, defaults to name)
 
     def __post_init__(self) -> None:
         if self.type not in FIELD_TYPES:
@@ -107,18 +114,55 @@ class FieldDefinition:
             "required": self.required,
             "default": self.default,
             "help_text": self.help_text,
+            "output_template": self.output_template,
+            "label": self.label,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> FieldDefinition:
         """Deserialize from dictionary."""
+        # Support both output_template (new) and template (legacy)
+        output_template = data.get("output_template") or data.get("template") or ""
         return cls(
             name=data["name"],
             type=data["type"],
             required=data.get("required", True),
             default=data.get("default"),
             help_text=data.get("help_text", ""),
+            output_template=output_template,
+            label=data.get("label", ""),
         )
+
+    def format_value(self, value: Any) -> str:
+        """
+        Format a field value using the output template.
+
+        If an output_template is defined, substitutes {field_name} or {value}
+        with the actual value. Otherwise returns a simple "name: value" format.
+
+        Args:
+            value: The field value to format
+
+        Returns:
+            Formatted string for context composition
+        """
+        if value is None or value == "" or value == []:
+            return ""
+
+        # Convert lists to comma-separated strings
+        if isinstance(value, list):
+            value_str = ", ".join(str(v) for v in value)
+        else:
+            value_str = str(value)
+
+        if self.output_template:
+            # Support both {field_name} and {value} as placeholders
+            result = self.output_template.replace(f"{{{self.name}}}", value_str)
+            result = result.replace("{value}", value_str)
+            return result
+        else:
+            display_name = self.label or self.name
+            return f"{display_name}: {value_str}"
 
 
 @dataclass
@@ -220,6 +264,33 @@ class CustomTypeDefinition:
         except Exception:
             # Fall back to simple format
             return f"{self.display_name}: {content}"
+
+    def format_for_context(self, content: dict[str, Any]) -> str:
+        """
+        Format content using field-level templates for context composition.
+
+        This method uses the template defined on each field to create
+        natural-feeling context for the AI. Fields without templates
+        are formatted as "field_name: value".
+
+        Args:
+            content: Dictionary of field values
+
+        Returns:
+            Formatted context string with all non-empty fields
+        """
+        parts = []
+        for field_def in self.fields:
+            value = content.get(field_def.name)
+            formatted = field_def.format_value(value)
+            if formatted:
+                parts.append(formatted)
+
+        if not parts:
+            # Fall back to display template if no fields formatted
+            return self.format_display(content)
+
+        return " ".join(parts)
 
     def get_field(self, name: str) -> Optional[FieldDefinition]:
         """Get a field definition by name."""
