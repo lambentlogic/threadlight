@@ -455,6 +455,7 @@ function threadlightApp() {
                     body: JSON.stringify({
                         message: message,
                         history: this.chatHistory,
+                        profile_id: this.currentProfileId,
                     }),
                 });
 
