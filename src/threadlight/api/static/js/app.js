@@ -126,6 +126,7 @@ function threadlightApp() {
 
         // Model configuration state
         currentModelId: '',
+        currentModelProviderId: '',  // Provider ID for current model (empty = default)
         currentModelConfig: {
             system_prompt: '',
             style_profile: null,
@@ -144,6 +145,7 @@ function threadlightApp() {
             memory_enabled: true,
             decay_enabled: false,
             temperature: 0.7,
+            provider_id: '',
         },
         configSaved: false,  // Auto-save indicator
 
@@ -2282,6 +2284,10 @@ function threadlightApp() {
                     this.currentModelConfig.memory_enabled = this.currentModelConfig.memory.enabled;
                     this.currentModelConfig.decay_enabled = this.currentModelConfig.memory.decay_enabled;
                 }
+                // Also load provider_id from config if present
+                this.currentModelProviderId = this.currentModelConfig.provider_id || '';
+                // Load detailed provider info
+                await this.loadModelProvider();
             } catch (error) {
                 console.error('Failed to load current model config:', error);
             }
@@ -2310,10 +2316,14 @@ function threadlightApp() {
                     this.currentModelConfig.memory_enabled = this.currentModelConfig.memory.enabled;
                     this.currentModelConfig.decay_enabled = this.currentModelConfig.memory.decay_enabled;
                 }
+                // Also load provider_id from config if present
+                this.currentModelProviderId = this.currentModelConfig.provider_id || '';
 
                 // Reload config and models
                 await this.loadConfig();
                 await this.loadModels();
+                // Reload provider info for the new model
+                await this.loadModelProvider();
 
                 this.showConfigSaved();
                 this.showToast(`Switched to ${modelId}`);
@@ -2345,6 +2355,64 @@ function threadlightApp() {
             }
         },
 
+        async loadModelProvider() {
+            // Load which provider the current model uses
+            if (!this.currentModelId) {
+                this.currentModelProviderId = '';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/models/${this.currentModelId}/provider`);
+                const data = await response.json();
+                // provider_id is null if using default provider
+                this.currentModelProviderId = data.provider_id || '';
+            } catch (error) {
+                console.error('Failed to load model provider:', error);
+                this.currentModelProviderId = '';
+            }
+        },
+
+        async updateModelProvider(providerId) {
+            // Set which provider the current model should use
+            if (!this.currentModelId) return;
+
+            try {
+                const response = await fetch(`/api/models/${this.currentModelId}/provider`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider_id: providerId || null }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to update model provider');
+                }
+
+                this.currentModelProviderId = providerId || '';
+                const providerName = providerId
+                    ? (this.namedProviders.find(p => p.id === providerId)?.name || providerId)
+                    : 'Default Provider';
+                this.showToast(`Provider set to: ${providerName}`);
+                this.showConfigSaved();
+            } catch (error) {
+                this.showToast('Failed to update model provider: ' + error.message, 'error');
+            }
+        },
+
+        getProviderDescription(providerId) {
+            // Get a description of the provider for display
+            const provider = this.namedProviders.find(p => p.id === providerId);
+            if (!provider) return '';
+
+            const parts = [];
+            if (provider.type) parts.push(provider.type);
+            if (provider.endpoints && provider.endpoints.length > 0) {
+                parts.push(provider.endpoints[0].url);
+            }
+            return parts.join(' - ');
+        },
+
         async addNewModel() {
             if (!this.newModelData.model_id) {
                 this.showToast('Please enter a model ID', 'error');
@@ -2369,6 +2437,15 @@ function threadlightApp() {
                     throw new Error(data.detail || 'Failed to add model');
                 }
 
+                // If a provider was selected, set it for the new model
+                if (this.newModelData.provider_id) {
+                    await fetch(`/api/models/${this.newModelData.model_id}/provider`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ provider_id: this.newModelData.provider_id }),
+                    });
+                }
+
                 this.showToast(`Added model: ${this.newModelData.model_id}`);
                 this.showAddModelModal = false;
                 this.newModelData = {
@@ -2378,6 +2455,7 @@ function threadlightApp() {
                     memory_enabled: true,
                     decay_enabled: false,
                     temperature: 0.7,
+                    provider_id: '',
                 };
                 await this.loadModels();
             } catch (error) {
