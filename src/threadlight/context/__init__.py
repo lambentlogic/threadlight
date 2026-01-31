@@ -32,6 +32,8 @@ from threadlight.context.composer import (
 from threadlight.context.soft_memory import (
     SoftMemory,
     SoftMemoryConfig,
+    WovenMemory,
+    EntityMatch,
     create_soft_memory,
 )
 
@@ -47,5 +49,7 @@ __all__ = [
     "compose_ritual",
     "SoftMemory",
     "SoftMemoryConfig",
+    "WovenMemory",
+    "EntityMatch",
     "create_soft_memory",
 ]

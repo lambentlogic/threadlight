@@ -176,6 +176,9 @@ class ContextComposer:
         current_message: Optional[str] = None,
         profile_philosophy: Optional[str] = None,
         approach_to_rituals: Optional[str] = None,
+        system_prompt_sections: Optional[list[dict[str, str]]] = None,
+        use_freeform_prompt: bool = False,
+        freeform_system_prompt: Optional[str] = None,
     ) -> ComposedContext:
         """
         Compose capsules into a context object.
@@ -190,8 +193,13 @@ class ContextComposer:
             current_message: Current user message (for soft memory relevance)
             profile_philosophy: Natural language description of the profile's approach
                 to interactions (e.g., "thoughtful and warm" or "concise and efficient")
+                DEPRECATED: Use system_prompt_sections instead
             approach_to_rituals: Natural language description of how commands
                 should be handled (e.g., "honor as meaningful moments" or "quick shortcuts")
+                DEPRECATED: Use system_prompt_sections instead
+            system_prompt_sections: List of {name, content} dicts for flexible prompt composition
+            use_freeform_prompt: If True, use freeform_system_prompt instead of sections
+            freeform_system_prompt: Raw system prompt when use_freeform_prompt is True
 
         Returns:
             ComposedContext with composed prompts
@@ -199,7 +207,7 @@ class ContextComposer:
         mode = mode or self.default_mode
         per_capsule_modes = per_capsule_modes or {}
         result = ComposedContext()
-        # Combine philosophy fields for ritual context
+        # Combine philosophy fields for ritual context (backward compat)
         self._current_philosophy = approach_to_rituals or profile_philosophy or ""
 
         # 1. Identity prompt
@@ -231,7 +239,13 @@ class ContextComposer:
 
         # 5. Compose full system message
         result.system_message = self._compose_system_message(
-            result, active_ritual, profile_philosophy, approach_to_rituals
+            result,
+            active_ritual,
+            profile_philosophy,
+            approach_to_rituals,
+            system_prompt_sections,
+            use_freeform_prompt,
+            freeform_system_prompt,
         )
 
         return result
@@ -411,6 +425,9 @@ class ContextComposer:
         active_ritual: Optional[str] = None,
         profile_philosophy: Optional[str] = None,
         approach_to_rituals: Optional[str] = None,
+        system_prompt_sections: Optional[list[dict[str, str]]] = None,
+        use_freeform_prompt: bool = False,
+        freeform_system_prompt: Optional[str] = None,
     ) -> str:
         """Compose the full system message from parts."""
         parts = []
@@ -419,9 +436,19 @@ class ContextComposer:
         if context.identity_prompt:
             parts.append(context.identity_prompt)
 
-        # Profile philosophy - guides overall interaction approach
-        if profile_philosophy:
-            parts.append(f"---\n## Your Approach\n{profile_philosophy}")
+        # Handle system prompt based on mode
+        if use_freeform_prompt and freeform_system_prompt:
+            # Freeform mode: use raw system prompt directly
+            parts.append("---\n" + freeform_system_prompt)
+        elif system_prompt_sections:
+            # Section-based mode: compose from sections
+            section_text = self._compose_sections(system_prompt_sections)
+            if section_text:
+                parts.append("---\n" + section_text)
+        else:
+            # Backward compat: use deprecated philosophy fields
+            if profile_philosophy:
+                parts.append(f"---\n## Your Approach\n{profile_philosophy}")
 
         # Style guidance
         if context.style_prompt:
@@ -438,11 +465,43 @@ class ContextComposer:
         # Active command/ritual with approach guidance
         if active_ritual:
             ritual_section = f"[Active command: {active_ritual}]"
-            if approach_to_rituals:
-                ritual_section += f"\n(Approach: {approach_to_rituals})"
+            # Find approach in sections or use deprecated field
+            approach = self._find_section_content(system_prompt_sections, "Approach to Rituals")
+            if not approach:
+                approach = approach_to_rituals
+            if approach:
+                ritual_section += f"\n(Approach: {approach})"
             parts.append("---\n" + ritual_section)
 
         return "\n\n".join(parts)
+
+    def _compose_sections(self, sections: list[dict[str, str]]) -> str:
+        """Compose system prompt sections into a single string."""
+        if not sections:
+            return ""
+
+        parts = []
+        for section in sections:
+            name = section.get("name", "")
+            content = section.get("content", "")
+            if name and content:
+                parts.append(f"[{name}]\n{content}")
+
+        return "\n\n".join(parts)
+
+    def _find_section_content(
+        self,
+        sections: Optional[list[dict[str, str]]],
+        section_name: str,
+    ) -> Optional[str]:
+        """Find the content of a specific section by name."""
+        if not sections:
+            return None
+
+        for section in sections:
+            if section.get("name", "").lower() == section_name.lower():
+                return section.get("content")
+        return None
 
     def compose_minimal(
         self,
@@ -465,6 +524,8 @@ class ContextComposer:
         self,
         ritual_capsule: MemoryCapsule,
         supporting_capsules: Optional[list[MemoryCapsule]] = None,
+        profile_philosophy: Optional[str] = None,
+        approach_to_rituals: Optional[str] = None,
     ) -> ComposedContext:
         """
         Compose context specifically for a ritual invocation.
@@ -472,6 +533,16 @@ class ContextComposer:
         The ritual capsule is composed in RITUAL mode, while supporting
         capsules (relationships, witnesses) use NARRATIVE mode to
         provide background.
+
+        Rituals are moments of deepening connection within ongoing relationship.
+        The context should include relational memories, identity phrases, and
+        witness moments to make the ritual feel continuous with the relationship.
+
+        Args:
+            ritual_capsule: The ritual being invoked
+            supporting_capsules: Relational, identity, and witness capsules
+            profile_philosophy: Natural language description of the profile's approach
+            approach_to_rituals: How this profile approaches rituals
         """
         capsules = [ritual_capsule]
         per_capsule_modes = {ritual_capsule.id: ContextMode.RITUAL}
@@ -485,6 +556,8 @@ class ContextComposer:
             capsules=capsules,
             mode=ContextMode.RITUAL,
             per_capsule_modes=per_capsule_modes,
+            profile_philosophy=profile_philosophy,
+            approach_to_rituals=approach_to_rituals,
         )
 
     def format_ritual_guidance(

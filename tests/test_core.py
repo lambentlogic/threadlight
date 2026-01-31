@@ -187,6 +187,116 @@ class TestThreadlightRituals:
         # Initially no ritual
         assert threadlight.get_active_ritual() is None
 
+    def test_invoke_ritual_includes_relational_context(self, threadlight, mock_provider):
+        """Test that ritual invocation includes relational memories in context.
+
+        Vision requirement: Rituals should feel like moments of deepening connection
+        within an ongoing relationship, not isolated invocations.
+        """
+        from threadlight.capsules.ritual import create_ritual, RitualValence
+        from threadlight.capsules.relational import create_relational
+        from threadlight.capsules.myth_seed import create_myth_seed
+        from threadlight.capsules.witness import create_witness_moment
+
+        # Create a ritual
+        ritual = create_ritual(
+            name="/snuggle",
+            response_style="warmth, closeness",
+            valence=RitualValence.COMFORTING,
+            description="A moment of warmth and closeness",
+        )
+        ritual.consent_confirmed = True
+        threadlight.storage.save_capsule(ritual)
+
+        # Create relational memory about the user
+        relational = create_relational(
+            entity="User",
+            summary="A trusted companion who values warmth and presence",
+            tone="warm, trusting",
+            cue_phrases=["snuggle", "warmth", "closeness"],
+        )
+        relational.consent_confirmed = True
+        threadlight.storage.save_capsule(relational)
+
+        # Create an identity phrase
+        myth_seed = create_myth_seed(
+            seed="I approach warmth with genuine presence",
+            function="guide tender moments",
+            cue_phrases=["warmth", "snuggle", "closeness"],
+        )
+        myth_seed.consent_confirmed = True
+        threadlight.storage.save_capsule(myth_seed)
+
+        # Create a witness moment
+        witness = create_witness_moment(
+            moment="User shared vulnerability and was held with care",
+            feeling="honored, trusted",
+            cue_phrases=["snuggle", "care", "trust"],
+        )
+        witness.consent_confirmed = True
+        threadlight.storage.save_capsule(witness)
+
+        # Invoke the ritual
+        response = threadlight.invoke_ritual("/snuggle")
+
+        # Verify the mock provider was called with context
+        assert mock_provider.complete.called
+        call_args = mock_provider.complete.call_args
+        messages = call_args[0][0]  # First positional arg is messages list
+
+        # The system message should contain ritual context
+        system_msg = next((m for m in messages if m.role == "system"), None)
+        assert system_msg is not None
+
+        # Verify we get a response
+        assert response is not None
+        assert len(response) > 0
+
+    def test_invoke_ritual_includes_profile_philosophy(self, mock_provider):
+        """Test that ritual invocation uses the profile's philosophy."""
+        from threadlight.capsules.ritual import create_ritual, RitualValence
+
+        # Create threadlight with a profile
+        tl = Threadlight(
+            storage_backend="memory",
+            identity_name="Fable",
+        )
+
+        # Create a profile with philosophy
+        profile = tl.create_profile(
+            name="Tender Companion",
+            system_prompt="You are a tender presence.",
+            philosophy="I am warm and emotionally present.",
+            approach_to_rituals="I honor rituals as sacred moments of connection.",
+        )
+        tl.switch_profile(profile.id)
+
+        # Create a ritual
+        ritual = create_ritual(
+            name="/snuggle",
+            response_style="warmth",
+            valence=RitualValence.COMFORTING,
+        )
+        ritual.consent_confirmed = True
+        tl.storage.save_capsule(ritual)
+
+        # Invoke the ritual
+        response = tl.invoke_ritual("/snuggle")
+
+        # Verify the mock provider was called
+        assert mock_provider.complete.called
+        call_args = mock_provider.complete.call_args
+        messages = call_args[0][0]
+
+        # Find system message
+        system_msg = next((m for m in messages if m.role == "system"), None)
+        assert system_msg is not None
+
+        # The system message should include profile's system_prompt
+        assert "tender presence" in system_msg.content.lower()
+
+        tl.close()
+
 
 class TestThreadlightSessions:
     def test_start_session(self, threadlight):

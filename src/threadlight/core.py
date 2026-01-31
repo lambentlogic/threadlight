@@ -42,6 +42,7 @@ from threadlight.context.composer import ContextComposer, ComposedContext
 from threadlight.context.soft_memory import SoftMemory, SoftMemoryConfig
 from threadlight.memory.orchestrator import MemoryOrchestrator, Session
 from threadlight.decay.engine import DecayEngine
+from threadlight.decay.scheduler import DecayScheduler
 from threadlight.tools.definitions import get_tool_definitions, ToolName
 from threadlight.tools.executor import ToolExecutor
 from threadlight.profiles import Profile, ProfileManager, AlloyedProfileEngine, ModelStrategy
@@ -193,7 +194,7 @@ class Threadlight:
         )
 
     def _init_memory(self) -> None:
-        """Initialize memory orchestrator."""
+        """Initialize memory orchestrator and decay scheduler."""
         decay_engine = DecayEngine(self.storage) if self.config.memory.decay.enabled else None
         self.memory = MemoryOrchestrator(
             storage=self.storage,
@@ -204,6 +205,19 @@ class Threadlight:
             default_shared=self.config.memory.default_shared,
             current_model=self.config.provider.model,
         )
+
+        # Initialize decay scheduler if decay is enabled
+        self._decay_scheduler: Optional[DecayScheduler] = None
+        if self.config.memory.decay.enabled and decay_engine is not None:
+            self._decay_scheduler = DecayScheduler(
+                decay_engine=decay_engine,
+                interval_seconds=self.config.memory.decay.interval_seconds,
+            )
+            self._decay_scheduler.start()
+            logger.info(
+                f"Decay scheduler started "
+                f"(interval: {self.config.memory.decay.interval_seconds}s)"
+            )
 
     def _init_context(self) -> None:
         """Initialize context composer."""
@@ -331,6 +345,8 @@ class Threadlight:
         tags: Optional[list[str]] = None,
         philosophy: str = "",
         approach_to_rituals: str = "",
+        system_prompt_sections: Optional[list[dict[str, str]]] = None,
+        use_freeform_prompt: bool = False,
     ) -> Profile:
         """
         Create a new profile.
@@ -339,7 +355,7 @@ class Threadlight:
             name: Display name for the profile
             description: One-line description
             primary_model: Model to use (defaults to current model)
-            system_prompt: Base system prompt
+            system_prompt: Base system prompt (used when use_freeform_prompt=True)
             style_profile_id: Optional style profile to apply
             avatar: Optional avatar path/URL
             color: Optional hex color for UI
@@ -354,8 +370,10 @@ class Threadlight:
             max_tokens: Maximum tokens for responses
             top_p: Top-p sampling parameter
             tags: Optional tags for categorization
-            philosophy: Freeform description of the profile's philosophy
-            approach_to_rituals: Freeform description of how rituals are handled
+            philosophy: DEPRECATED - use system_prompt_sections instead
+            approach_to_rituals: DEPRECATED - use system_prompt_sections instead
+            system_prompt_sections: List of {name, content} dicts for flexible prompt composition
+            use_freeform_prompt: If True, use raw system_prompt instead of sections
 
         Returns:
             The created Profile
@@ -370,6 +388,8 @@ class Threadlight:
             access_shared_memories=access_shared_memories, max_tokens=max_tokens,
             top_p=top_p, tags=tags, philosophy=philosophy,
             approach_to_rituals=approach_to_rituals,
+            system_prompt_sections=system_prompt_sections,
+            use_freeform_prompt=use_freeform_prompt,
         )
 
     def list_profiles(self) -> list[Profile]:
@@ -712,6 +732,14 @@ class Threadlight:
         This method finds the matching ritual, composes context with the
         ritual's guidance, and lets the model respond naturally.
 
+        Rituals happen within the relationship, not in isolation. The context
+        includes:
+        - The profile's identity (system_prompt, philosophy)
+        - Relational memories about the user
+        - Identity phrases (myth-seeds) that shape tone
+        - Witness moments of past meaningful interactions
+        - The profile's approach to rituals
+
         Args:
             ritual_name: The ritual trigger (e.g., "/snuggle", "/coil")
 
@@ -727,15 +755,90 @@ class Threadlight:
         if not result.matched:
             return f"No ritual found for '{ritual_name}'"
 
-        # Let the model respond based on ritual guidance (don't use templates!)
-        # Build context with the ritual
-        ritual_context = result.capsule.to_context(ContextMode.RITUAL)
+        # === Gather relational context for the ritual ===
+        # Rituals should feel continuous with the relationship, not isolated
 
-        # Call model with ritual context
+        # Recall relational memories, identity phrases, and witness moments
+        supporting_capsules = []
+
+        # Get relational memories (who we're with)
+        relational_capsules = self.memory.recall(
+            cue=ritual_name,
+            types=[CapsuleType.RELATIONAL],
+            limit=3,
+            min_presence=0.2,
+        )
+        supporting_capsules.extend(relational_capsules)
+
+        # Get identity phrases (myth-seeds that shape our tone)
+        identity_capsules = self.memory.recall(
+            cue=ritual_name,
+            types=[CapsuleType.MYTH_SEED],
+            limit=2,
+            min_presence=0.2,
+        )
+        supporting_capsules.extend(identity_capsules)
+
+        # Get witness moments (past meaningful interactions)
+        witness_capsules = self.memory.recall(
+            cue=ritual_name,
+            types=[CapsuleType.WITNESS],
+            limit=2,
+            min_presence=0.2,
+        )
+        supporting_capsules.extend(witness_capsules)
+
+        # Get the profile's philosophy and approach to rituals
+        profile_philosophy = ""
+        approach_to_rituals = ""
+        base_system_prompt = ""
+
+        if self.active_profile:
+            profile_philosophy = self.active_profile.philosophy
+            approach_to_rituals = self.active_profile.approach_to_rituals
+            base_system_prompt = self.active_profile.system_prompt
+        elif self.config.identity.system_prompt:
+            base_system_prompt = self.config.identity.system_prompt
+
+        # Use the composer to create rich ritual context
+        ritual_context = self.composer.compose_for_ritual(
+            ritual_capsule=result.capsule,
+            supporting_capsules=supporting_capsules if supporting_capsules else None,
+        )
+
+        # Build the full system message
+        system_parts = []
+
+        # Include base identity/system prompt
+        if base_system_prompt:
+            system_parts.append(base_system_prompt)
+
+        # Include profile philosophy if present
+        if profile_philosophy:
+            system_parts.append(f"## Your Approach\n{profile_philosophy}")
+
+        # Include ritual guidance with approach
+        ritual_section = "## Ritual Invoked\n"
+        ritual_section += f"A ritual has been invoked. Respond naturally while honoring this guidance.\n\n"
+        ritual_section += ritual_context.memory_context
+
+        if approach_to_rituals:
+            ritual_section += f"\n\n(Your approach to rituals: {approach_to_rituals})"
+
+        system_parts.append(ritual_section)
+
+        # Include supporting memories context
+        if ritual_context.memory_context and supporting_capsules:
+            # The memory context from compose_for_ritual already includes supporting capsules
+            pass
+
+        system_message = "\n\n---\n\n".join(system_parts)
+
+        # Call model with full relational context
         messages = []
         messages.append(ProviderMessage(
             role="system",
-            content=f"A ritual has been invoked. Respond naturally while honoring this guidance:\n\n{ritual_context}"
+            content=system_message
         ))
         messages.append(ProviderMessage(
             role="user",
@@ -963,6 +1066,32 @@ class Threadlight:
         """
         return self.memory.run_decay()
 
+    def get_decay_scheduler_stats(self) -> dict[str, Any]:
+        """
+        Get statistics about the decay scheduler.
+
+        Returns:
+            Dictionary with scheduler stats, or empty dict if scheduler is disabled
+        """
+        if self._decay_scheduler is None:
+            return {
+                "enabled": False,
+                "running": False,
+            }
+        stats = self._decay_scheduler.get_stats()
+        stats["enabled"] = True
+        return stats
+
+    @property
+    def decay_scheduler(self) -> Optional[DecayScheduler]:
+        """
+        Get the decay scheduler instance.
+
+        Returns None if decay is disabled. Use this for advanced scheduler
+        operations like adjusting the interval or manually triggering decay.
+        """
+        return self._decay_scheduler
+
     # === Memory Proposals ===
 
     def get_pending_proposals(self) -> list:
@@ -1005,6 +1134,11 @@ class Threadlight:
 
     def close(self) -> None:
         """Close connections and cleanup."""
+        # Stop decay scheduler if running
+        if self._decay_scheduler is not None:
+            self._decay_scheduler.stop()
+            self._decay_scheduler = None
+
         # End any active session
         if self.memory.get_current_session():
             self.memory.end_session()

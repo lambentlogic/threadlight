@@ -131,15 +131,21 @@ class Profile:
     top_p: float = 1.0
 
     # Personality
-    system_prompt: str = ""
+    system_prompt: str = ""  # Used as freeform override when use_freeform_prompt=True
     style_profile_id: Optional[str] = None
+
+    # System Prompt Sections - flexible way to compose the system prompt
+    # Each section is a dict with "name" and "content" keys
+    # Example: [{"name": "About Your Human", "content": "..."}, {"name": "Companion Identity", "content": "..."}]
+    system_prompt_sections: list[dict[str, str]] = field(default_factory=list)
+    use_freeform_prompt: bool = False  # If True, use raw system_prompt instead of composing from sections
 
     # Memory
     memory_scope: Optional[str] = None  # Defaults to profile ID
     access_shared_memories: bool = True
 
-    # Freeform Philosophy - describe interaction style in natural language
-    # These fields are PRIMARY - the system interprets them to guide responses
+    # DEPRECATED: Use system_prompt_sections instead
+    # Kept for backward compatibility - will be migrated to sections on load
     philosophy: str = ""  # e.g., "thoughtful and warm" or "concise and efficient"
     approach_to_rituals: str = ""  # e.g., "honor commands as meaningful moments" or "quick shortcuts"
 
@@ -186,8 +192,11 @@ class Profile:
             "top_p": self.top_p,
             "system_prompt": self.system_prompt,
             "style_profile_id": self.style_profile_id,
+            "system_prompt_sections": self.system_prompt_sections,
+            "use_freeform_prompt": self.use_freeform_prompt,
             "memory_scope": self.memory_scope,
             "access_shared_memories": self.access_shared_memories,
+            # Deprecated fields - kept for backward compatibility
             "philosophy": self.philosophy,
             "approach_to_rituals": self.approach_to_rituals,
             "created_at": self.created_at.isoformat(),
@@ -213,6 +222,17 @@ class Profile:
                 philosophy = "Brief, minimal acknowledgment"
             # functional is the implicit default, no need to add text
 
+        # Get system_prompt_sections from data or migrate from deprecated fields
+        system_prompt_sections = data.get("system_prompt_sections", [])
+        use_freeform_prompt = data.get("use_freeform_prompt", False)
+
+        # Migration: if no sections exist but deprecated fields do, create sections from them
+        if not system_prompt_sections and not use_freeform_prompt:
+            if philosophy:
+                system_prompt_sections.append({"name": "Philosophy", "content": philosophy})
+            if approach:
+                system_prompt_sections.append({"name": "Approach to Rituals", "content": approach})
+
         return cls(
             id=data["id"],
             name=data["name"],
@@ -226,6 +246,8 @@ class Profile:
             top_p=data.get("top_p", 1.0),
             system_prompt=data.get("system_prompt", ""),
             style_profile_id=data.get("style_profile_id"),
+            system_prompt_sections=system_prompt_sections,
+            use_freeform_prompt=use_freeform_prompt,
             memory_scope=data.get("memory_scope"),
             access_shared_memories=data.get("access_shared_memories", True),
             philosophy=philosophy,
@@ -234,6 +256,37 @@ class Profile:
             updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now(),
             last_used_at=datetime.fromisoformat(data["last_used_at"]) if data.get("last_used_at") else None,
         )
+
+    def get_composed_system_prompt(self) -> str:
+        """
+        Get the system prompt, either freeform or composed from sections.
+
+        If use_freeform_prompt is True, returns the raw system_prompt.
+        Otherwise, composes the prompt from system_prompt_sections.
+
+        Returns:
+            The composed or freeform system prompt string
+        """
+        if self.use_freeform_prompt:
+            return self.system_prompt
+
+        if not self.system_prompt_sections:
+            # Fall back to deprecated fields if no sections
+            parts = []
+            if self.philosophy:
+                parts.append(f"[Philosophy]\n{self.philosophy}")
+            if self.approach_to_rituals:
+                parts.append(f"[Approach to Rituals]\n{self.approach_to_rituals}")
+            return "\n\n".join(parts)
+
+        # Compose from sections
+        parts = []
+        for section in self.system_prompt_sections:
+            name = section.get("name", "")
+            content = section.get("content", "")
+            if name and content:
+                parts.append(f"[{name}]\n{content}")
+        return "\n\n".join(parts)
 
     def to_json(self) -> str:
         """Serialize to JSON string."""

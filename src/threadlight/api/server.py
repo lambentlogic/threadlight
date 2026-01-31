@@ -198,6 +198,10 @@ class ProfileCreateRequest(BaseModel):
     memory_scope: str = "isolated"
     access_shared_memories: bool = True
     tags: Optional[list[str]] = None
+    # New section-based system prompt fields
+    system_prompt_sections: Optional[list[dict[str, str]]] = None
+    use_freeform_prompt: bool = False
+    # Deprecated fields - kept for backward compatibility
     philosophy: str = ""
     approach_to_rituals: str = ""
 
@@ -216,6 +220,10 @@ class ProfileUpdateRequest(BaseModel):
     access_shared_memories: Optional[bool] = None
     is_active: Optional[bool] = None
     tags: Optional[list[str]] = None
+    # New section-based system prompt fields
+    system_prompt_sections: Optional[list[dict[str, str]]] = None
+    use_freeform_prompt: Optional[bool] = None
+    # Deprecated fields - kept for backward compatibility
     philosophy: Optional[str] = None
     approach_to_rituals: Optional[str] = None
 
@@ -4130,6 +4138,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             tags=request.tags,
             philosophy=request.philosophy,
             approach_to_rituals=request.approach_to_rituals,
+            system_prompt_sections=request.system_prompt_sections,
+            use_freeform_prompt=request.use_freeform_prompt,
         )
 
         return {
@@ -4188,6 +4198,10 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             updates["philosophy"] = request.philosophy
         if request.approach_to_rituals is not None:
             updates["approach_to_rituals"] = request.approach_to_rituals
+        if request.system_prompt_sections is not None:
+            updates["system_prompt_sections"] = request.system_prompt_sections
+        if request.use_freeform_prompt is not None:
+            updates["use_freeform_prompt"] = request.use_freeform_prompt
 
         logger.info(f"[update_profile] Updates dict: {updates}")
         profile = tl.update_profile(profile_id, **updates)
@@ -4355,6 +4369,8 @@ def _profile_to_dict(profile: Profile) -> dict[str, Any]:
         "tags": getattr(profile, 'tags', []),
         "philosophy": getattr(profile, 'philosophy', ""),
         "approach_to_rituals": getattr(profile, 'approach_to_rituals', ""),
+        "system_prompt_sections": getattr(profile, 'system_prompt_sections', []),
+        "use_freeform_prompt": getattr(profile, 'use_freeform_prompt', False),
         "created_at": profile.created_at.isoformat() if profile.created_at else None,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }

@@ -4,6 +4,7 @@ ProfileManager for Threadlight.
 Manages profile CRUD operations, caching, and switching between profiles.
 """
 
+from threading import RLock
 from typing import Optional
 from datetime import datetime
 import uuid
@@ -28,6 +29,7 @@ class ProfileManager:
             storage: Storage backend for persisting profiles
         """
         self.storage = storage
+        self._cache_lock = RLock()
         self._cache: dict[str, Profile] = {}
         self._active_profile_id: Optional[str] = None
 
@@ -53,6 +55,8 @@ class ProfileManager:
         tags: Optional[list[str]] = None,
         philosophy: str = "",
         approach_to_rituals: str = "",
+        system_prompt_sections: Optional[list[dict[str, str]]] = None,
+        use_freeform_prompt: bool = False,
     ) -> Profile:
         """
         Create a new profile.
@@ -61,7 +65,7 @@ class ProfileManager:
             name: Display name for the profile
             description: One-line description
             primary_model: Model to use for this profile
-            system_prompt: Base system prompt
+            system_prompt: Base system prompt (used when use_freeform_prompt=True)
             style_profile_id: Optional style profile to apply
             avatar: Optional avatar path/URL
             color: Optional hex color for UI
@@ -76,8 +80,10 @@ class ProfileManager:
             max_tokens: Maximum tokens for responses
             top_p: Top-p sampling parameter
             tags: Optional tags for categorization
-            philosophy: Freeform description of the profile's philosophy/approach
-            approach_to_rituals: Freeform description of how rituals are handled
+            philosophy: DEPRECATED - use system_prompt_sections instead
+            approach_to_rituals: DEPRECATED - use system_prompt_sections instead
+            system_prompt_sections: List of {name, content} dicts for flexible prompt composition
+            use_freeform_prompt: If True, use raw system_prompt instead of sections
 
         Returns:
             The created Profile
@@ -123,13 +129,16 @@ class ProfileManager:
             access_shared_memories=access_shared_memories,
             philosophy=philosophy,
             approach_to_rituals=approach_to_rituals,
+            system_prompt_sections=system_prompt_sections or [],
+            use_freeform_prompt=use_freeform_prompt,
         )
 
         # Save to storage
         self.storage.save_profile(profile)
 
         # Cache it
-        self._cache[profile.id] = profile
+        with self._cache_lock:
+            self._cache[profile.id] = profile
 
         return profile
 
@@ -144,13 +153,15 @@ class ProfileManager:
             The Profile, or None if not found
         """
         # Check cache first
-        if profile_id in self._cache:
-            return self._cache[profile_id]
+        with self._cache_lock:
+            if profile_id in self._cache:
+                return self._cache[profile_id]
 
         # Load from storage
         profile = self.storage.get_profile(profile_id)
         if profile:
-            self._cache[profile_id] = profile
+            with self._cache_lock:
+                self._cache[profile_id] = profile
 
         return profile
 
@@ -167,7 +178,8 @@ class ProfileManager:
         self.storage.update_profile(profile)
 
         # Update cache
-        self._cache[profile.id] = profile
+        with self._cache_lock:
+            self._cache[profile.id] = profile
 
     def delete(self, profile_id: str) -> bool:
         """
@@ -180,7 +192,8 @@ class ProfileManager:
             True if deleted, False if not found
         """
         # Remove from cache
-        self._cache.pop(profile_id, None)
+        with self._cache_lock:
+            self._cache.pop(profile_id, None)
 
         # If this was the active profile, clear it
         if self._active_profile_id == profile_id:
@@ -199,8 +212,9 @@ class ProfileManager:
         profiles = self.storage.list_profiles()
 
         # Update cache
-        for profile in profiles:
-            self._cache[profile.id] = profile
+        with self._cache_lock:
+            for profile in profiles:
+                self._cache[profile.id] = profile
 
         return profiles
 
@@ -244,7 +258,8 @@ class ProfileManager:
 
     def clear_cache(self) -> None:
         """Clear the profile cache."""
-        self._cache.clear()
+        with self._cache_lock:
+            self._cache.clear()
 
     def export_profile(
         self,
@@ -320,7 +335,8 @@ class ProfileManager:
 
         # Save profile
         self.storage.save_profile(profile)
-        self._cache[profile.id] = profile
+        with self._cache_lock:
+            self._cache[profile.id] = profile
 
         # Import memories if included
         if "memories" in export_data:

@@ -152,10 +152,16 @@ class ChatManager:
         """Build context from memory for a message."""
         from threadlight.capsules.base import CapsuleType
 
+        # Determine include_shared from active profile's access_shared_memories setting
+        include_shared = True
+        if self.tl.active_profile:
+            include_shared = self.tl.active_profile.access_shared_memories
+
         # Recall relevant memories
         capsules = self.tl.memory.recall_for_message(
             message,
             limit=self.tl.config.memory.max_capsules_per_request,
+            include_shared=include_shared,
         )
 
         # Apply additional filter if provided
@@ -181,27 +187,93 @@ class ChatManager:
             active_ritual=active_ritual,
         )
 
-    def build_soft_memory_context(self, message: str) -> str:
-        """Build soft memory context from past conversations."""
+    def build_soft_memory_context(
+        self,
+        message: str,
+        use_integrated_recall: bool = True,
+    ) -> str:
+        """
+        Build soft memory context from past conversations.
+
+        When integrated recall is enabled, this weaves together soft memory
+        (past conversations) with hard memory (capsules). If a past conversation
+        mentions someone, the relational thread about them is surfaced alongside.
+
+        Args:
+            message: Current user message to find context for
+            use_integrated_recall: If True, cross-reference with capsules
+
+        Returns:
+            Formatted context string for prompt injection
+        """
         if not self.tl.soft_memory:
             return ""
 
         try:
-            results = self.tl.soft_memory.recall_relevant(
-                message,
-                limit=self.tl.config.memory.conversation.soft_memory_limit,
-            )
-
-            if not results:
-                return ""
-
-            return self.tl.soft_memory.format_for_prompt(
-                results,
-                header="## Relevant Past Conversations",
-            )
+            if use_integrated_recall:
+                # Use integrated recall to weave soft and hard memory
+                return self._build_woven_context(message)
+            else:
+                # Fallback to simple soft memory recall
+                return self._build_simple_soft_context(message)
         except Exception as e:
             logger.warning(f"Soft memory recall failed: {e}")
             return ""
+
+    def _build_woven_context(self, message: str) -> str:
+        """
+        Build woven context combining soft memory with related capsules.
+
+        This is the "threads" vision - when a conversation mentions someone,
+        surface both the conversation and who that person is to the companion.
+        """
+        try:
+            woven = self.tl.soft_memory.recall_with_context(
+                message=message,
+                orchestrator=self.tl.memory,
+                soft_memory_limit=self.tl.config.memory.conversation.soft_memory_limit,
+                capsules_per_entity=2,
+            )
+
+            if not woven.soft_memory_results and not woven.related_capsules:
+                return ""
+
+            # If we have woven context (both soft memory and capsules),
+            # use the integrated format
+            if woven.has_woven_context():
+                return woven.format_for_prompt(
+                    max_soft_memory=self.tl.config.memory.conversation.soft_memory_limit,
+                    max_capsules_per_entity=2,
+                    header="## Relevant Context",
+                )
+
+            # If we only have soft memory, format just that
+            if woven.soft_memory_results:
+                return self.tl.soft_memory.format_for_prompt(
+                    woven.soft_memory_results,
+                    header="## Relevant Past Conversations",
+                )
+
+            return ""
+
+        except Exception as e:
+            logger.debug(f"Woven context failed, falling back to simple: {e}")
+            return self._build_simple_soft_context(message)
+
+    def _build_simple_soft_context(self, message: str) -> str:
+        """Build simple soft memory context without capsule cross-referencing."""
+        results = self.tl.soft_memory.recall_relevant(
+            message,
+            limit=self.tl.config.memory.conversation.soft_memory_limit,
+        )
+
+        if not results:
+            return ""
+
+        return self.tl.soft_memory.format_for_prompt(
+            results,
+            header="## Relevant Past Conversations",
+        )
 
     def auto_save_messages(self, user_message: str, assistant_response: str) -> None:
         """Auto-save user message and assistant response to database."""

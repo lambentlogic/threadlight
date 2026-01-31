@@ -559,3 +559,177 @@ class TestMemoryOrchestratorUtility:
 
         session = orchestrator.get_current_session()
         assert session.message_count == 2
+
+
+class TestMemoryOrchestratorProfileIsolation:
+    """Tests for profile-based memory isolation."""
+
+    @pytest.fixture
+    def isolated_orchestrator(self, storage, decay_engine):
+        """Create orchestrator with per-profile isolation enabled."""
+        return MemoryOrchestrator(
+            storage=storage,
+            decay_engine=decay_engine,
+            per_profile_isolation=True,
+            current_profile="profile-a",
+        )
+
+    def test_recall_for_message_respects_include_shared_false(self, isolated_orchestrator):
+        """Test that recall_for_message excludes shared memories when include_shared=False."""
+        # Create a shared memory (no profile_scope)
+        shared_capsule = isolated_orchestrator.create(
+            type="relational",
+            content={"entity": "SharedEntity", "summary": "A shared memory"},
+            cue_phrases=["sharedentity"],
+            consent_confirmed=True,
+            shared=True,  # Explicitly shared
+        )
+
+        # Create a profile-scoped memory
+        profile_capsule = isolated_orchestrator.create(
+            type="relational",
+            content={"entity": "ProfileEntity", "summary": "A profile memory"},
+            cue_phrases=["profileentity"],
+            consent_confirmed=True,
+            shared=False,  # Profile-specific
+        )
+
+        # With include_shared=False, should only get profile-scoped memories
+        results = isolated_orchestrator.recall_for_message(
+            "Tell me about SharedEntity and ProfileEntity",
+            include_shared=False,
+        )
+
+        result_ids = [r.id for r in results]
+        assert profile_capsule.id in result_ids
+        assert shared_capsule.id not in result_ids
+
+    def test_recall_for_message_includes_shared_by_default(self, isolated_orchestrator):
+        """Test that recall_for_message includes shared memories by default."""
+        # Create a shared memory
+        shared_capsule = isolated_orchestrator.create(
+            type="relational",
+            content={"entity": "DefaultShared", "summary": "A shared memory"},
+            cue_phrases=["defaultshared"],
+            consent_confirmed=True,
+            shared=True,
+        )
+
+        # With default include_shared=True, should get shared memories
+        results = isolated_orchestrator.recall_for_message(
+            "Tell me about DefaultShared",
+            include_shared=True,
+        )
+
+        result_ids = [r.id for r in results]
+        assert shared_capsule.id in result_ids
+
+    def test_recall_for_message_profile_scoped_always_included(self, isolated_orchestrator):
+        """Test that profile-scoped memories are always included for matching profile."""
+        # Create a profile-scoped memory for current profile
+        profile_capsule = isolated_orchestrator.create(
+            type="relational",
+            content={"entity": "MyProfileMemory", "summary": "My private memory"},
+            cue_phrases=["myprofilememory"],
+            consent_confirmed=True,
+            shared=False,
+        )
+
+        # Even with include_shared=False, profile-scoped memories should be included
+        results = isolated_orchestrator.recall_for_message(
+            "Tell me about MyProfileMemory",
+            include_shared=False,
+        )
+
+        result_ids = [r.id for r in results]
+        assert profile_capsule.id in result_ids
+
+    def test_recall_for_message_excludes_other_profile_memories(self, isolated_orchestrator):
+        """Test that memories from other profiles are not included."""
+        # Create a memory scoped to a different profile
+        other_profile_capsule = isolated_orchestrator.create(
+            type="relational",
+            content={"entity": "OtherProfile", "summary": "Other profile memory"},
+            cue_phrases=["otherprofile"],
+            consent_confirmed=True,
+            profile_scope="profile-b",  # Different profile
+        )
+
+        # Should not get memories from other profiles
+        results = isolated_orchestrator.recall_for_message(
+            "Tell me about OtherProfile",
+            include_shared=True,
+        )
+
+        result_ids = [r.id for r in results]
+        assert other_profile_capsule.id not in result_ids
+
+    def test_ritual_filtering_respects_include_shared(self, isolated_orchestrator, storage):
+        """Test that ritual filtering respects include_shared parameter."""
+        # Create a shared ritual
+        shared_ritual = create_ritual(
+            name="/shared-ritual",
+            response_style="warm",
+            valence=RitualValence.COMFORTING,
+        )
+        shared_ritual.consent_confirmed = True
+        shared_ritual.profile_scope = None  # Shared
+        storage.save_capsule(shared_ritual)
+
+        # Create a profile-scoped ritual
+        profile_ritual = create_ritual(
+            name="/profile-ritual",
+            response_style="warm",
+            valence=RitualValence.COMFORTING,
+        )
+        profile_ritual.consent_confirmed = True
+        profile_ritual.profile_scope = "profile-a"
+        storage.save_capsule(profile_ritual)
+
+        # With include_shared=False, should only get profile-scoped rituals
+        results = isolated_orchestrator.recall_for_message(
+            "/shared-ritual or /profile-ritual",
+            include_shared=False,
+            include_rituals=True,
+        )
+
+        result_ids = [r.id for r in results]
+        assert profile_ritual.id in result_ids
+        assert shared_ritual.id not in result_ids
+
+    def test_style_filtering_respects_include_shared(self, isolated_orchestrator, storage):
+        """Test that style filtering respects include_shared parameter."""
+        from threadlight.capsules.style import StyleProfile
+
+        # Create a shared style
+        shared_style = StyleProfile(
+            style_id="shared-style",
+            tone_base="warm",
+            vocal_motifs=["shared"],
+        )
+        shared_style.consent_confirmed = True
+        shared_style.profile_scope = None  # Shared
+        storage.save_capsule(shared_style)
+
+        # Create a profile-scoped style
+        profile_style = StyleProfile(
+            style_id="profile-style",
+            tone_base="warm",
+            vocal_motifs=["private"],
+        )
+        profile_style.consent_confirmed = True
+        profile_style.profile_scope = "profile-a"
+        storage.save_capsule(profile_style)
+
+        # With include_shared=False, should only get profile-scoped styles
+        results = isolated_orchestrator.recall_for_message(
+            "hello",
+            include_shared=False,
+            include_style=True,
+        )
+
+        result_ids = [r.id for r in results]
+        # Profile style should be included
+        assert profile_style.id in result_ids
+        # Shared style should be excluded
+        assert shared_style.id not in result_ids

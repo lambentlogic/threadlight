@@ -41,8 +41,12 @@ class SQLiteStorage(StorageBackend):
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
 
-        # Enable JSON support
+        # Enable WAL mode for better concurrency
         self.conn.execute("PRAGMA journal_mode=WAL")
+        # Enable foreign key constraints for CASCADE deletes
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        # Set busy timeout to prevent immediate failures on concurrent access
+        self.conn.execute("PRAGMA busy_timeout=5000")
 
         # Create tables
         self.conn.executescript("""
@@ -350,6 +354,11 @@ class SQLiteStorage(StorageBackend):
     def close(self) -> None:
         """Close database connection."""
         if self.conn:
+            # Checkpoint WAL to prevent unbounded growth
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass  # Best effort - don't fail close on checkpoint error
             self.conn.close()
             self.conn = None
 
@@ -906,19 +915,24 @@ class SQLiteStorage(StorageBackend):
         """Delete a conversation and all its messages."""
         conn = self._ensure_connected()
 
-        # Delete messages first (cascade should handle this, but be explicit)
-        conn.execute(
-            "DELETE FROM messages WHERE conversation_id = ?",
-            (conversation_id,)
-        )
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            # Delete messages first (cascade should handle this, but be explicit)
+            conn.execute(
+                "DELETE FROM messages WHERE conversation_id = ?",
+                (conversation_id,)
+            )
 
-        result = conn.execute(
-            "DELETE FROM conversations WHERE id = ?",
-            (conversation_id,)
-        )
-        conn.commit()
+            result = conn.execute(
+                "DELETE FROM conversations WHERE id = ?",
+                (conversation_id,)
+            )
+            conn.commit()
 
-        return result.rowcount > 0
+            return result.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
 
     def save_message(self, message: Message) -> str:
         """Save a message to the database."""

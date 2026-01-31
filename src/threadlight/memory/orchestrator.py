@@ -573,6 +573,7 @@ class MemoryOrchestrator:
         include_rituals: bool = True,
         include_style: bool = True,
         limit: int = 5,
+        include_shared: bool = True,
     ) -> list[MemoryCapsule]:
         """
         Recall all relevant memories for a user message.
@@ -585,6 +586,8 @@ class MemoryOrchestrator:
             include_rituals: Whether to check for ritual triggers
             include_style: Whether to include style profiles
             limit: Maximum capsules to return
+            include_shared: Whether to include shared (profile_scope=NULL) memories.
+                           Set to False for profiles with access_shared_memories=False.
 
         Returns:
             List of relevant capsules sorted by presence score
@@ -601,17 +604,25 @@ class MemoryOrchestrator:
         # Search each cue
         seen_ids = set()
         for cue in cues[:5]:  # Limit cue searches
-            matches = self.recall(cue, limit=3)
+            matches = self.recall(cue, limit=3, include_shared=include_shared)
             for m in matches:
                 if m.id not in seen_ids:
                     results.append(m)
                     seen_ids.add(m.id)
+
+        # Determine effective profile scope for ritual/style filtering
+        isolation_enabled = self._per_profile_isolation or self._per_model_isolation
+        effective_scope = None
+        if isolation_enabled:
+            effective_scope = self._current_profile or self._current_model
 
         # Check for ritual triggers
         if include_rituals:
             ritual_filter = CapsuleFilter(
                 type=CapsuleType.RITUAL,
                 consent_confirmed=True,
+                profile_scope=effective_scope if isolation_enabled else None,
+                include_shared=include_shared,
             )
             rituals = self.storage.list_capsules(ritual_filter)
             for ritual in rituals:
@@ -630,6 +641,8 @@ class MemoryOrchestrator:
             style_filter = CapsuleFilter(
                 type=CapsuleType.STYLE,
                 limit=1,
+                profile_scope=effective_scope if isolation_enabled else None,
+                include_shared=include_shared,
             )
             styles = self.storage.list_capsules(style_filter)
             for style in styles:

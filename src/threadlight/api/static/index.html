@@ -3746,32 +3746,74 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
                         </div>
 
-                        <!-- Interaction Style - Freeform Philosophy -->
+                        <!-- System Prompt Sections -->
                         <div class="pt-4 border-t border-threadlight-border">
-                            <h4 class="font-medium text-threadlight-text mb-3">Interaction Style</h4>
-                            <p class="text-xs text-threadlight-muted mb-4">Describe how this profile should interact in your own words. The AI will interpret your description to shape its responses.</p>
+                            <div class="flex items-center justify-between mb-3">
+                                <h4 class="font-medium text-threadlight-text">System Prompt</h4>
+                                <button type="button" @click="newProfile.use_freeform_prompt = !newProfile.use_freeform_prompt"
+                                    class="text-xs px-3 py-1 rounded-lg transition-colors"
+                                    :class="newProfile.use_freeform_prompt ? 'bg-threadlight-accent text-white' : 'bg-threadlight-elevated text-threadlight-muted hover:text-threadlight-text'">
+                                    <span x-text="newProfile.use_freeform_prompt ? 'Using Freeform' : 'Switch to Freeform'"></span>
+                                </button>
+                            </div>
 
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Philosophy</label>
-                                    <textarea x-model="newProfile.philosophy" rows="3"
-                                        placeholder="Examples:
-- I want thoughtful, emotionally aware responses that honor silence
-- Be concise and efficient - quick acknowledgments, then substance
-- Warm companion energy with playful asides
-- Professional and direct, focus on practical solutions"
-                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-none"></textarea>
-                                    <p class="text-xs text-threadlight-muted mt-1">Describe in your own words how this profile should approach conversations.</p>
-                                </div>
-                                <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Command Style</label>
-                                    <textarea x-model="newProfile.approach_to_rituals" rows="2"
-                                        placeholder="Examples:
-- Honor rituals as sacred moments, let them shape your emotional state
-- Treat commands as quick shortcuts, don't elaborate
-- Playful and warm when responding to commands"
-                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-none"></textarea>
-                                    <p class="text-xs text-threadlight-muted mt-1">Describe how custom commands (like /snuggle or /reflect) should be handled.</p>
+                            <!-- Freeform mode -->
+                            <div x-show="newProfile.use_freeform_prompt" class="space-y-2">
+                                <p class="text-xs text-threadlight-muted">Write a custom system prompt directly. This gives you full control over the prompt format.</p>
+                                <textarea x-model="newProfile.system_prompt" rows="8"
+                                    placeholder="You are a helpful assistant...
+
+Write any instructions you want the AI to follow."
+                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-none font-mono text-sm"></textarea>
+                            </div>
+
+                            <!-- Section-based mode -->
+                            <div x-show="!newProfile.use_freeform_prompt" class="space-y-4">
+                                <p class="text-xs text-threadlight-muted">Define sections that will be composed into the system prompt. Each section has a name and content.</p>
+
+                                <!-- Existing sections -->
+                                <template x-for="(section, index) in newProfile.system_prompt_sections" :key="index">
+                                    <div class="bg-threadlight-elevated rounded-lg p-4 space-y-3">
+                                        <div class="flex items-center gap-2">
+                                            <input type="text" x-model="section.name" placeholder="Section Name"
+                                                class="flex-1 bg-threadlight-surface border border-threadlight-border rounded-lg px-3 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent text-sm">
+                                            <button type="button" @click="newProfile.system_prompt_sections.splice(index, 1)"
+                                                class="p-2 text-red-400 hover:text-red-300 transition-colors">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                        <textarea x-model="section.content" rows="3"
+                                            placeholder="Section content..."
+                                            class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-3 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-none text-sm"></textarea>
+                                    </div>
+                                </template>
+
+                                <!-- Add section button -->
+                                <button type="button" @click="newProfile.system_prompt_sections.push({name: '', content: ''})"
+                                    class="w-full py-2 border-2 border-dashed border-threadlight-border rounded-lg text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent transition-colors flex items-center justify-center gap-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                                    </svg>
+                                    Add Section
+                                </button>
+
+                                <!-- Quick add common sections -->
+                                <div class="flex flex-wrap gap-2">
+                                    <span class="text-xs text-threadlight-muted">Quick add:</span>
+                                    <button type="button" @click="addProfileSection('About Your Human', '')"
+                                        class="text-xs px-2 py-1 bg-threadlight-elevated rounded hover:bg-threadlight-border transition-colors text-threadlight-muted hover:text-threadlight-text">
+                                        About Your Human
+                                    </button>
+                                    <button type="button" @click="addProfileSection('Companion Identity', '')"
+                                        class="text-xs px-2 py-1 bg-threadlight-elevated rounded hover:bg-threadlight-border transition-colors text-threadlight-muted hover:text-threadlight-text">
+                                        Companion Identity
+                                    </button>
+                                    <button type="button" @click="addProfileSection('Communication Style', '')"
+                                        class="text-xs px-2 py-1 bg-threadlight-elevated rounded hover:bg-threadlight-border transition-colors text-threadlight-muted hover:text-threadlight-text">
+                                        Communication Style
+                                    </button>
                                 </div>
                             </div>
                         </div>

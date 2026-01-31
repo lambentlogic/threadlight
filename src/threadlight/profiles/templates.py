@@ -17,12 +17,19 @@ class ProfileTemplate:
     id: str  # Template identifier
     name: str  # Display name
     description: str  # One-line description for the template picker
-    philosophy: str  # Brief philosophy (1-2 sentences)
+    philosophy: str  # Brief philosophy (1-2 sentences) - converted to section
     system_prompt: str = ""  # Optional system prompt hint
-    approach_to_rituals: str = ""  # Optional ritual approach hint
+    approach_to_rituals: str = ""  # Optional ritual approach hint - converted to section
 
     def to_dict(self) -> dict:
         """Convert to dictionary for API response."""
+        # Build sections from philosophy and approach fields
+        sections = []
+        if self.philosophy:
+            sections.append({"name": "Philosophy", "content": self.philosophy})
+        if self.approach_to_rituals:
+            sections.append({"name": "Approach to Rituals", "content": self.approach_to_rituals})
+
         return {
             "id": self.id,
             "name": self.name,
@@ -30,6 +37,8 @@ class ProfileTemplate:
             "philosophy": self.philosophy,
             "system_prompt": self.system_prompt,
             "approach_to_rituals": self.approach_to_rituals,
+            "system_prompt_sections": sections,
+            "use_freeform_prompt": False,
         }
 
 

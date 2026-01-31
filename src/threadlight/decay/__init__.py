@@ -13,6 +13,9 @@ Retention Policies:
 - SACRED: Never decays
 - NORMAL: Standard decay, reinforced by access
 - EPHEMERAL: Rapid decay, session-scoped
+
+Scheduling:
+- DecayScheduler: Background thread for periodic decay
 """
 
 from threadlight.decay.engine import (
@@ -27,6 +30,7 @@ from threadlight.decay.engine import (
     list_strategies,
     register_strategy,
 )
+from threadlight.decay.scheduler import DecayScheduler
 
 __all__ = [
     "DecayEngine",
@@ -36,6 +40,7 @@ __all__ = [
     "RelationshipDecayStrategy",
     "DecayResult",
     "ReinforcementResult",
+    "DecayScheduler",
     "get_strategy",
     "list_strategies",
     "register_strategy",

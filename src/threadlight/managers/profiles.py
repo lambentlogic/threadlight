@@ -147,6 +147,8 @@ class ProfileInterface:
         tags: Optional[list[str]] = None,
         philosophy: str = "",
         approach_to_rituals: str = "",
+        system_prompt_sections: Optional[list[dict[str, str]]] = None,
+        use_freeform_prompt: bool = False,
     ) -> 'Profile':
         """
         Create a new profile.
@@ -155,7 +157,7 @@ class ProfileInterface:
             name: Display name for the profile
             description: One-line description
             primary_model: Model to use (defaults to current model)
-            system_prompt: Base system prompt
+            system_prompt: Base system prompt (used when use_freeform_prompt=True)
             style_profile_id: Optional style profile to apply
             avatar: Optional avatar path/URL
             color: Optional hex color for UI
@@ -170,8 +172,10 @@ class ProfileInterface:
             max_tokens: Maximum tokens for responses
             top_p: Top-p sampling parameter
             tags: Optional tags for categorization
-            philosophy: Freeform description of the profile's philosophy/approach
-            approach_to_rituals: Freeform description of how rituals are handled
+            philosophy: DEPRECATED - use system_prompt_sections instead
+            approach_to_rituals: DEPRECATED - use system_prompt_sections instead
+            system_prompt_sections: List of {name, content} dicts for flexible prompt composition
+            use_freeform_prompt: If True, use raw system_prompt instead of sections
 
         Returns:
             The created Profile
@@ -199,6 +203,8 @@ class ProfileInterface:
             tags=tags,
             philosophy=philosophy,
             approach_to_rituals=approach_to_rituals,
+            system_prompt_sections=system_prompt_sections,
+            use_freeform_prompt=use_freeform_prompt,
         )
 
     def list(self) -> list['Profile']:

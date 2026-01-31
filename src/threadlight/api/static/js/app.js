@@ -229,8 +229,10 @@ function threadlightApp() {
             access_shared_memories: true,
             tags: [],
             tags_str: '',  // For comma-separated input
-            philosophy: '',  // Freeform philosophy description
-            approach_to_rituals: '',  // Freeform approach to rituals
+            philosophy: '',  // DEPRECATED: Freeform philosophy description
+            approach_to_rituals: '',  // DEPRECATED: Freeform approach to rituals
+            system_prompt_sections: [],  // List of {name, content} dicts
+            use_freeform_prompt: false,  // If true, use system_prompt instead of sections
             routing_rules: [],  // For content-routed strategy
         },
 
@@ -3361,6 +3363,8 @@ function threadlightApp() {
                     tags_str: (profile.tags || []).join(', '),
                     philosophy: profile.philosophy || '',
                     approach_to_rituals: profile.approach_to_rituals || '',
+                    system_prompt_sections: profile.system_prompt_sections || [],
+                    use_freeform_prompt: profile.use_freeform_prompt || false,
                     routing_rules: profile.routing_rules || [],
                     useManualModelInput: false,  // Start with dropdown if models available
                 };
@@ -3383,6 +3387,8 @@ function threadlightApp() {
                     tags_str: '',
                     philosophy: '',
                     approach_to_rituals: '',
+                    system_prompt_sections: [],
+                    use_freeform_prompt: false,
                     routing_rules: [],
                     useManualModelInput: false,  // Start with dropdown if models available
                 };
@@ -3405,6 +3411,11 @@ function threadlightApp() {
                 ? this.newProfile.tags_str.split(',').map(s => s.trim()).filter(s => s)
                 : [];
 
+            // Filter out empty sections
+            const sections = this.newProfile.system_prompt_sections.filter(
+                s => s.name && s.content
+            );
+
             const profileData = {
                 name: this.newProfile.name,
                 description: this.newProfile.description,
@@ -3418,6 +3429,8 @@ function threadlightApp() {
                 tags: tags.length > 0 ? tags : null,
                 philosophy: this.newProfile.philosophy || '',
                 approach_to_rituals: this.newProfile.approach_to_rituals || '',
+                system_prompt_sections: sections,
+                use_freeform_prompt: this.newProfile.use_freeform_prompt,
                 routing_rules: this.newProfile.routing_rules.length > 0 ? this.newProfile.routing_rules : null,
             };
 
@@ -3583,6 +3596,15 @@ function threadlightApp() {
         },
 
         applyTemplate(template) {
+            // Convert deprecated philosophy/approach fields to sections if present
+            const sections = [];
+            if (template.philosophy) {
+                sections.push({ name: 'Philosophy', content: template.philosophy });
+            }
+            if (template.approach_to_rituals) {
+                sections.push({ name: 'Approach to Rituals', content: template.approach_to_rituals });
+            }
+
             // Pre-fill the profile editor with template values
             this.newProfile = {
                 name: template.name,
@@ -3599,6 +3621,8 @@ function threadlightApp() {
                 tags_str: '',
                 philosophy: template.philosophy || '',
                 approach_to_rituals: template.approach_to_rituals || '',
+                system_prompt_sections: sections,
+                use_freeform_prompt: false,
                 routing_rules: [],
                 useManualModelInput: false,
             };
@@ -3609,6 +3633,16 @@ function threadlightApp() {
             this.selectedProfile = null;
             this.showProfileEditor = true;
             this.loadProviderModels();
+        },
+
+        addProfileSection(name, content) {
+            // Add a new section with the given name (avoid duplicates)
+            const exists = this.newProfile.system_prompt_sections.some(
+                s => s.name.toLowerCase() === name.toLowerCase()
+            );
+            if (!exists) {
+                this.newProfile.system_prompt_sections.push({ name, content });
+            }
         },
 
         // ============================================
