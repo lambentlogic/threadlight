@@ -2133,8 +2133,9 @@
                                 <div class="flex flex-wrap gap-1 mb-3">
                                     <span class="text-xs px-2 py-0.5 bg-threadlight-bg rounded text-threadlight-muted"
                                         x-text="'Strategy: ' + profile.model_strategy"></span>
-                                    <span class="text-xs px-2 py-0.5 bg-threadlight-bg rounded text-threadlight-muted"
-                                        x-text="'Memory: ' + profile.memory_scope"></span>
+                                    <span x-show="profile.access_shared_memories" class="text-xs px-2 py-0.5 bg-threadlight-bg rounded text-threadlight-muted">
+                                        Shared access
+                                    </span>
                                 </div>
 
                                 <div class="flex gap-2">
@@ -3712,24 +3713,16 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                         <div class="pt-4 border-t border-threadlight-border">
                             <h4 class="font-medium text-threadlight-text mb-3">Memory Configuration</h4>
 
-                            <div class="grid gap-4 md:grid-cols-2">
+                            <div class="flex items-center gap-3">
+                                <button type="button" @click="newProfile.access_shared_memories = !newProfile.access_shared_memories"
+                                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out"
+                                    :class="newProfile.access_shared_memories ? 'bg-threadlight-accent' : 'bg-threadlight-border'">
+                                    <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out"
+                                        :class="newProfile.access_shared_memories ? 'translate-x-5' : 'translate-x-0'"></span>
+                                </button>
                                 <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Memory Scope</label>
-                                    <select x-model="newProfile.memory_scope"
-                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
-                                        <option value="isolated">Isolated (profile-specific)</option>
-                                        <option value="shared">Shared (global)</option>
-                                        <option value="hybrid">Hybrid (profile + shared)</option>
-                                    </select>
-                                </div>
-                                <div class="flex items-center gap-3 pt-6">
-                                    <button type="button" @click="newProfile.access_shared_memories = !newProfile.access_shared_memories"
-                                        class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out"
-                                        :class="newProfile.access_shared_memories ? 'bg-threadlight-accent' : 'bg-threadlight-border'">
-                                        <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out"
-                                            :class="newProfile.access_shared_memories ? 'translate-x-5' : 'translate-x-0'"></span>
-                                    </button>
-                                    <span class="text-sm text-threadlight-muted">Access shared memories</span>
+                                    <span class="text-sm text-threadlight-text">Access shared memories</span>
+                                    <p class="text-xs text-threadlight-muted">Allow this profile to see memories marked as shared</p>
                                 </div>
                             </div>
                         </div>
