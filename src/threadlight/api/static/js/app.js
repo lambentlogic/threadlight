@@ -1957,8 +1957,10 @@ function threadlightApp() {
             const payload = {
                 name: this.providerForm.name,
                 type: this.providerForm.type,
-                default_model: this.providerForm.default_model || null,
+                // Use empty string instead of null - backend expects string type
+                default_model: this.providerForm.default_model || '',
             };
+            console.log('saveProvider payload:', payload);
 
             // Handle API key - either direct value or env var
             if (this.providerForm.api_key) {
@@ -1995,8 +1997,25 @@ function threadlightApp() {
                 }
 
                 if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.detail || 'Failed to save provider');
+                    const data = await response.json().catch(() => ({}));
+                    console.error('saveProvider error response:', data);
+                    let errorMsg = 'Failed to save provider';
+
+                    // Handle FastAPI validation errors (detail is an array)
+                    if (Array.isArray(data.detail)) {
+                        errorMsg = data.detail.map(err => {
+                            const field = err.loc ? err.loc.join('.') : 'unknown';
+                            return `${field}: ${err.msg}`;
+                        }).join(', ');
+                    } else if (data.detail) {
+                        errorMsg = data.detail;
+                    } else if (data.error) {
+                        errorMsg = data.error;
+                    } else if (data.message) {
+                        errorMsg = data.message;
+                    }
+
+                    throw new Error(errorMsg);
                 }
 
                 await this.loadNamedProviders();
@@ -2005,6 +2024,7 @@ function threadlightApp() {
                 this.resetProviderForm();
                 this.showToast(isEditing ? 'Provider updated' : 'Provider created');
             } catch (error) {
+                console.error('saveProvider failed:', error);
                 this.showToast('Failed to save provider: ' + error.message, 'error');
             }
         },
