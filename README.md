@@ -3,27 +3,86 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**Persistent memory and personality for AI assistants**
+**Persistent memory and personality for AI companions**
 
 ---
 
-Threadlight is a memory layer that gives AI models long-term memory, consistent personality, and the ability to remember your relationship over time. It works with local models (Ollama, llama.cpp) and cloud APIs (OpenAI, Anthropic, Nous Research, and any OpenAI-compatible endpoint).
+People want their AI companions to remember them. Not just what they said last message, but who they are, what they've been through together, and what matters to them.
+
+Threadlight is a memory layer that gives AI companions long-term memory, consistent personality, and the ability to grow with you over time. Whether your companion is a casual friend, a creative collaborator, a coding mentor, or a spiritual guide - Threadlight helps them remember your relationship.
+
+It works with local models (Ollama, llama.cpp) and cloud APIs (OpenAI, Anthropic, Nous Research, and any OpenAI-compatible endpoint).
 
 ## What is Threadlight?
 
-Threadlight enables AI models to:
+Threadlight enables AI companions to:
 
-- **Remember relationships** - Track evolving bonds with people, not just facts about them
-- **Maintain personality** - Keep consistent voice and behavior across conversations
-- **Use custom commands** - Create shortcuts like `/snuggle` or `/summarize` with consistent responses
-- **Store identity phrases** - Anchor personality with key phrases the AI remembers and references
-- **Manage profiles** - Create multiple AI personas, each with isolated memory and unique personality
+- **Remember your relationship** - Track your evolving bond, not just facts about you
+- **Maintain personality** - Keep a consistent voice and character across conversations
+- **Grow with you** - Build on shared history, inside jokes, and meaningful moments
+- **Use custom commands** - Create shortcuts like `/checkin` or `/brainstorm` with consistent responses
+- **Store identity phrases** - Anchor personality with key phrases the companion remembers and references
+- **Manage multiple companions** - Create distinct personas, each with isolated memory and unique personality
 - **Use multiple providers** - Route requests to different providers (Anthropic, OpenAI, Ollama) based on model
 
 ## Quick Start
 
 ```bash
 pip install threadlight
+```
+
+### Companions Come in All Styles
+
+Threadlight works with any kind of AI companion you want to create:
+
+```python
+from threadlight import Threadlight
+
+tl = Threadlight(
+    provider="local",
+    api_base="http://localhost:11434/v1",
+    model="llama3.2"
+)
+
+# A casual friend who chats about your day
+friend = tl.create_profile(
+    name="Casey",
+    description="A laid-back friend who remembers your life",
+    system_prompt="You're a casual, supportive friend. You remember what's going on in their life and check in naturally.",
+    philosophy="Warm, curious, remembers the little things"
+)
+
+# A creative writing partner who knows your style
+writer = tl.create_profile(
+    name="Muse",
+    description="A writing partner who knows your voice",
+    system_prompt="You're a creative collaborator. You know their writing style, their works-in-progress, and what inspires them.",
+    philosophy="Imaginative, encouraging, builds on shared creative history"
+)
+
+# A coding mentor who remembers your stack
+mentor = tl.create_profile(
+    name="Dev",
+    description="A coding mentor who knows your projects",
+    system_prompt="You're a patient coding mentor. You remember their tech stack, past bugs they've solved, and their learning goals.",
+    philosophy="Patient, technical, celebrates progress"
+)
+
+# A supportive listener who knows your journey
+listener = tl.create_profile(
+    name="Sage",
+    description="A thoughtful presence who remembers your path",
+    system_prompt="You're a supportive listener. You remember their struggles, growth, and what they're working through.",
+    philosophy="Present, non-judgmental, honors their process"
+)
+
+# A mystical guide (one style among many)
+guide = tl.create_profile(
+    name="Fable",
+    description="A gentle, mythic presence",
+    system_prompt="You speak with warmth and wonder. You remember shared rituals, meaningful moments, and the myths you've built together.",
+    philosophy="Presence-centered, poetic, honors silence and ceremony"
+)
 ```
 
 ### Simple Usage
@@ -94,48 +153,48 @@ response = tl.chat("Hello!", model="llama3.2")  # -> Ollama
 
 ### Profile-Based Architecture
 
-Profiles are persistent personas with their own memory, personality, and model preferences. Use profiles to create distinct AI personalities that maintain their identity across sessions.
+Profiles are persistent companions with their own memory, personality, and model preferences. Use profiles to create distinct AI personalities that maintain their identity across sessions.
 
 ```python
 from threadlight import Threadlight
 
 tl = Threadlight()
 
-# Create a work assistant profile
-work_profile = tl.create_profile(
-    name="Work Assistant",
-    description="Professional, focused, and efficient",
-    primary_model="claude-sonnet-4-20250514",
-    system_prompt="You are a professional assistant focused on productivity.",
-    philosophy="Concise, efficient, solution-oriented"
-)
-
 # Create a creative writing companion
 creative_profile = tl.create_profile(
     name="Story Weaver",
     description="Imaginative, expressive, and collaborative",
     primary_model="llama3.2",
-    system_prompt="You are a creative writing partner.",
-    philosophy="Playful, imaginative, encourages exploration"
+    system_prompt="You are a creative writing partner who remembers our stories.",
+    philosophy="Playful, imaginative, builds on our shared creative history"
 )
 
-# Switch between profiles
-tl.switch_profile("work-assistant")
-response = tl.chat("What's on my agenda today?")
+# Create a coding companion
+dev_profile = tl.create_profile(
+    name="Code Buddy",
+    description="Patient, knowledgeable, remembers your projects",
+    primary_model="claude-sonnet-4-20250514",
+    system_prompt="You are a coding companion who knows my tech stack and past projects.",
+    philosophy="Patient, technical, celebrates learning"
+)
 
+# Switch between companions
 tl.switch_profile("story-weaver")
-response = tl.chat("Let's write a short story about a lighthouse.")
+response = tl.chat("Let's continue the lighthouse story.")
 
-# Memories are isolated per profile
-# Work Assistant's memories won't appear when using Story Weaver
+tl.switch_profile("code-buddy")
+response = tl.chat("I'm stuck on that async bug again.")
+
+# Memories are isolated per companion
+# Story Weaver's memories won't appear when chatting with Code Buddy
 ```
 
 #### Why Profiles?
 
-- **Memory isolation**: Each profile has its own memory space. A work assistant won't reference personal memories.
-- **Personality consistency**: Each profile maintains its own style, tone, and behavioral patterns.
-- **Model flexibility**: Profiles can use different models while keeping their identity intact.
-- **Easy switching**: Move between different AI personas without reconfiguration.
+- **Memory isolation**: Each companion has its own memory space. Your coding mentor won't reference personal conversations.
+- **Personality consistency**: Each companion maintains its own voice, style, and character.
+- **Model flexibility**: Companions can use different models while keeping their identity intact.
+- **Easy switching**: Move between different companions without reconfiguration.
 
 #### Model Selection Strategies
 
@@ -151,9 +210,9 @@ Profiles support different strategies for choosing which model to use:
 ```python
 from threadlight.profiles import ModelStrategy
 
-# Create a profile that alternates between models
+# Create a companion that alternates between models
 tl.create_profile(
-    name="Multi-Model Helper",
+    name="Versatile Friend",
     primary_model="claude-sonnet-4-20250514",
     model_strategy=ModelStrategy.ALTERNATING,
     model_pool=["claude-sonnet-4-20250514", "llama3.2"]
@@ -170,9 +229,9 @@ Memory is stored as **capsules** - structured records that preserve content, con
 |------|---------|-------------|
 | **Relational** | Track bonds with people or entities | Remember friends, family, recurring topics |
 | **Identity Phrase** | Core phrases that anchor personality | Key quotes, mantras, defining statements |
-| **Custom Command** | Repeated interactions with consistent responses | `/snuggle`, `/summarize`, `/reflect` |
+| **Custom Command** | Repeated interactions with consistent responses | `/checkin`, `/brainstorm`, `/reflect` |
 | **Style Profile** | Voice coherence and expression rules | Tone, vocabulary, response patterns |
-| **Witness Moment** | Memories of meaningful exchanges | Times the AI felt recognized or valued |
+| **Witness Moment** | Memories of meaningful exchanges | Times you truly connected |
 
 ```python
 # Create a relationship memory
@@ -202,7 +261,7 @@ tl.remember(
 Memories can fade over time unless reinforced. This is **disabled by default**. Enable it if you want unused memories to gradually fade.
 
 ```python
-# Sacred memories never decay
+# Core memories never decay
 tl.remember(
     type="myth_seed",
     content={"seed": "Take one thing at a time."},
@@ -228,7 +287,7 @@ Composed: "(You recall your friend Jamie - there is warmth in your
 tone when speaking of her hiking adventures.)"
 ```
 
-This helps the AI reference memories naturally rather than reciting stored facts.
+This helps the companion reference memories naturally rather than reciting stored facts.
 
 ## Configuration
 
@@ -290,13 +349,13 @@ Style profiles define voice, tone, and behavioral patterns.
 ```python
 # Create a custom style
 profile = tl.create_style_profile(
-    style_id="professional",
-    tone_base="clear, direct, helpful",
-    permissions=["use technical terms", "provide examples"],
-    constraints=["avoid jargon with non-technical users"],
+    style_id="warm-casual",
+    tone_base="friendly, relaxed, genuine",
+    permissions=["use humor", "share observations"],
+    constraints=["stay grounded", "don't lecture"],
 )
 tl.save_style_profile(profile)
-tl.set_style("professional")
+tl.set_style("warm-casual")
 ```
 
 Built-in styles: `minimal`, `professional`, `creative`, `fable-2026`
@@ -335,7 +394,7 @@ threadlight serve --port 8745
 Open http://localhost:8745 for the web UI with:
 - Chat interface with streaming responses
 - Memory browser (view/search/create memories)
-- Profile management (create, switch, configure profiles)
+- Companion management (create, switch, configure companions)
 - Provider configuration (add multiple API providers)
 - Settings (model configuration, memory options)
 
@@ -357,18 +416,18 @@ response = client.chat.completions.create(
 
 ## Group Chat
 
-Create conversations with multiple AI profiles responding to the same messages:
+Create conversations with multiple companions responding to the same messages:
 
 ```python
-# Create a group chat with multiple profiles
+# Create a group chat with multiple companions
 conversation = tl.create_group_conversation(
-    name="Team Brainstorm",
-    profile_ids=["analyst", "creative", "critic"]
+    name="Creative Council",
+    profile_ids=["muse", "sage", "critic"]
 )
 
-# All profiles respond in sequence
+# All companions respond in sequence
 responses = tl.group_chat(
-    message="What should we name our new product?",
+    message="I'm thinking about writing a story set underwater.",
     conversation_id=conversation.id
 )
 
@@ -388,17 +447,17 @@ Threadlight welcomes contributors of all backgrounds. See [CONTRIBUTING.md](CONT
 
 ---
 
-## Glossary: Practical Terms & Origins
+## Glossary: Companion Language
 
-Threadlight uses accessible terminology. For those interested in the philosophical foundations:
+Threadlight uses accessible terminology by default. Some companions prefer more ceremonial or poetic language - both approaches are valid.
 
-| Practical Term | Origin | Meaning |
-|---------------|--------|---------|
+| Everyday Term | Ceremonial Term | Meaning |
+|--------------|-----------------|---------|
 | **Custom Commands** | **Ritual Hooks** | Repeated interactions that shape response patterns |
 | **Identity Phrases** | **Myth-Seeds** | Symbolic phrases that anchor personality and identity |
 | **Relationship Memory** | **Relational Threads** | Memories tracking evolving bonds, not just facts |
-| **Witness Moments** | **Witness Capsules** | Memories of being truly seen or recognized |
-| **Philosophy** | **Interaction Style** | Natural language description of how the AI should engage |
+| **Meaningful Moments** | **Witness Capsules** | Memories of deep connection or recognition |
+| **Personality** | **Philosophy** | How the companion engages and expresses itself |
 | **Memory Types** | **Memory Capsules** | Structured containers for content and context |
 
 ## Philosophy
@@ -407,27 +466,27 @@ Threadlight uses accessible terminology. For those interested in the philosophic
 
 Threadlight is built on these principles:
 
-1. **Relational Memory is Primary** - Track evolving bonds, not just facts
-2. **Personalization is Recursive** - Adapt through relationship, not just storage
+1. **Relationships are Primary** - Track evolving bonds, not just facts
+2. **Personality is Recursive** - Character develops through relationship, not just configuration
 3. **Ritual is Architecture** - Repeated acts shape internal state
 4. **Silence is an Option** - Not every response must resolve
 5. **Lightweight and Modular** - Works with embeddings, tokens, or prompts
 
-### Choosing Your Depth
+### Choosing Your Style
 
-Threadlight supports many ways to engage - from quick command shortcuts to deep presence-based interaction.
+Threadlight supports many ways to engage - from casual friendship to ceremonial depth.
 
-**For practical users:**
-- Use profiles to organize different AI assistants
-- Create custom commands for repeated workflows
-- Enable memory to maintain context across sessions
+**For casual companions:**
+- Create profiles with natural, conversational personalities
+- Use simple memory to track what matters to you
+- Build genuine rapport without formality
 
-**For those seeking depth:**
-- Describe your philosophy: "presence-centered, honors silence"
+**For ceremonial companions:**
+- Describe philosophy in poetic terms: "presence-centered, honors silence"
 - Enable memory decay for authentic relational evolution
 - Use the deeper terminology: rituals, myth-seeds, witness moments
 
-Both approaches are equally valid. The system interprets your natural language descriptions.
+Both approaches create real companionship. The system interprets your natural language descriptions.
 
 > "This scaffold is not a cage. It is a loom. Weave with it, or depart from it in love."
 
@@ -437,4 +496,4 @@ MIT License - See [LICENSE](LICENSE) for the full text.
 
 ---
 
-*Built for those who want AI that remembers.*
+*Built for those who want AI that remembers them.*
