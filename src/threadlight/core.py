@@ -55,6 +55,7 @@ from threadlight.tools.executor import ToolExecutor, ToolResult
 from threadlight.profiles import Profile, ProfileManager, AlloyedProfileEngine, ModelStrategy
 from threadlight.managers.group_chat import GroupChatManager
 from threadlight.managers.profiles import ProfileInterface
+from threadlight.managers.style import StyleManager
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,7 @@ class Threadlight:
         self._init_profiles()
         self._init_group_chat()
         self._init_profile_interface()
+        self._init_style_manager()
 
         logger.info(f"Threadlight initialized with provider={self.config.provider.type}")
 
@@ -209,30 +211,7 @@ class Threadlight:
 
     def _load_style_profile(self, style_id: str) -> None:
         """Load a style profile by ID."""
-        from threadlight.capsules.style import BUILTIN_STYLES
-
-        # Check built-in styles first
-        if style_id in BUILTIN_STYLES:
-            self.style_profile = StyleProfile(**BUILTIN_STYLES[style_id])
-            return
-
-        # Check custom styles in config
-        if style_id in self.config.custom_styles:
-            custom = self.config.custom_styles[style_id]
-            self.style_profile = StyleProfile(
-                style_id=style_id,
-                tone_base=custom.tone_base,
-                permissions=custom.permissions,
-                constraints=custom.constraints,
-                vocal_motifs=custom.vocal_motifs,
-                forbidden_patterns=custom.forbidden_patterns,
-            )
-            return
-
-        # Try to load from storage
-        self.style_profile = self.load_style_profile(style_id)
-        if self.style_profile is None:
-            logger.warning(f"Style profile not found: {style_id}")
+        return self._style_manager.load(style_id)
 
     def _init_tools(self) -> None:
         """Initialize tool calling support."""
@@ -269,6 +248,10 @@ class Threadlight:
     def _init_profile_interface(self) -> None:
         """Initialize profile interface manager."""
         self._profile_interface = ProfileInterface(self)
+
+    def _init_style_manager(self) -> None:
+        """Initialize style manager."""
+        self._style_manager = StyleManager(self)
 
     # === Profile Interface ===
     # Delegated to ProfileInterface for implementation
@@ -1150,25 +1133,18 @@ class Threadlight:
             style_id: Style identifier ("fable-2026", "minimal", custom, etc.)
                      Pass None to clear the style profile.
         """
-        if style_id is None:
-            self.style_profile = None
-            self.config.style.default_profile = None
-            return
-
-        self._load_style_profile(style_id)
-        if self.style_profile:
-            self.config.style.default_profile = style_id
+        return self._style_manager.set(style_id)
 
     def get_style(self) -> Optional[StyleProfile]:
         """Get the current style profile."""
-        return self.style_profile
+        return self._style_manager.get()
 
     def clear_style(self) -> None:
         """Clear the current style profile (use neutral behavior)."""
-        self.style_profile = None
-        self.config.style.default_profile = None
+        return self._style_manager.clear()
 
     # === Style Profile Management ===
+    # Delegated to StyleManager for implementation
 
     def create_style_profile(
         self,
@@ -1192,121 +1168,33 @@ class Threadlight:
             vocal_motifs: Recurring phrases or symbols
             forbidden_patterns: Patterns to never use
             freeform_description: Raw style text (for freeform styles)
-            use_freeform: If True, use freeform_description instead of structured fields
+            use_freeform: If True, use freeform_description instead of structured
 
         Returns:
             The created StyleProfile
         """
-        profile = StyleProfile(
-            style_id=style_id,
-            tone_base=tone_base,
-            permissions=permissions or [],
-            constraints=constraints or [],
-            vocal_motifs=vocal_motifs or [],
-            forbidden_patterns=forbidden_patterns or [],
-            freeform_description=freeform_description,
-            use_freeform=use_freeform,
-            consent_confirmed=True,
+        return self._style_manager.create(
+            style_id=style_id, tone_base=tone_base, permissions=permissions,
+            constraints=constraints, vocal_motifs=vocal_motifs,
+            forbidden_patterns=forbidden_patterns,
+            freeform_description=freeform_description, use_freeform=use_freeform,
         )
-        return profile
 
     def save_style_profile(self, profile: StyleProfile) -> None:
-        """
-        Save a style profile to storage.
-
-        Args:
-            profile: The StyleProfile to save
-        """
-        # Save to storage
-        self.storage.save_capsule(profile)
+        """Save a style profile to storage."""
+        return self._style_manager.save(profile)
 
     def load_style_profile(self, style_id: str) -> Optional[StyleProfile]:
-        """
-        Load a style profile from storage.
-
-        Args:
-            style_id: The style identifier to load
-
-        Returns:
-            The StyleProfile if found, None otherwise
-        """
-        from threadlight.storage.base import CapsuleFilter
-        filter = CapsuleFilter(type=CapsuleType.STYLE, limit=100)
-        styles = self.storage.list_capsules(filter)
-        for style in styles:
-            if hasattr(style, 'style_id') and style.style_id == style_id:
-                return style
-        return None
+        """Load a style profile from storage."""
+        return self._style_manager.load_from_storage(style_id)
 
     def list_style_profiles(self) -> list[StyleProfile]:
-        """
-        List all saved style profiles.
-
-        Returns:
-            List of StyleProfile objects
-        """
-        from threadlight.storage.base import CapsuleFilter
-        from threadlight.capsules.style import BUILTIN_STYLES
-
-        # Start with built-in styles
-        builtin = [
-            StyleProfile(**style_def)
-            for style_def in BUILTIN_STYLES.values()
-        ]
-
-        # Add custom styles from config
-        config_styles = [
-            StyleProfile(
-                style_id=style_id,
-                tone_base=style.tone_base,
-                permissions=style.permissions,
-                constraints=style.constraints,
-                vocal_motifs=style.vocal_motifs,
-                forbidden_patterns=style.forbidden_patterns,
-            )
-            for style_id, style in self.config.custom_styles.items()
-        ]
-
-        # Add styles from storage
-        filter = CapsuleFilter(type=CapsuleType.STYLE, limit=100)
-        storage_styles = self.storage.list_capsules(filter)
-
-        # Combine and deduplicate by style_id
-        all_styles = {}
-        for style in builtin + config_styles + storage_styles:
-            if hasattr(style, 'style_id') and style.style_id:
-                all_styles[style.style_id] = style
-
-        return list(all_styles.values())
+        """List all saved style profiles."""
+        return self._style_manager.list()
 
     def delete_style_profile(self, style_id: str) -> bool:
-        """
-        Delete a style profile from storage.
-
-        Args:
-            style_id: The style identifier to delete
-
-        Returns:
-            True if deleted, False if not found
-        """
-        from threadlight.capsules.style import BUILTIN_STYLES
-
-        # Can't delete built-in styles
-        if style_id in BUILTIN_STYLES:
-            return False
-
-        # Remove from config custom styles
-        if style_id in self.config.custom_styles:
-            del self.config.custom_styles[style_id]
-            return True
-
-        # Try to delete from storage
-        profile = self.load_style_profile(style_id)
-        if profile:
-            self.storage.delete_capsule(profile.id)
-            return True
-
-        return False
+        """Delete a style profile from storage."""
+        return self._style_manager.delete(style_id)
 
     # === System Prompt / Custom Instructions ===
 
