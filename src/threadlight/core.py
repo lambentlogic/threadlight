@@ -43,18 +43,16 @@ from threadlight.context.soft_memory import SoftMemory, SoftMemoryConfig
 from threadlight.memory.orchestrator import MemoryOrchestrator, Session
 from threadlight.decay.engine import DecayEngine
 from threadlight.tools.definitions import get_tool_definitions, ToolName
-from threadlight.tools.executor import ToolExecutor, ToolResult
+from threadlight.tools.executor import ToolExecutor
 from threadlight.profiles import Profile, ProfileManager, AlloyedProfileEngine, ModelStrategy
 from threadlight.managers.group_chat import GroupChatManager
 from threadlight.managers.profiles import ProfileInterface
 from threadlight.managers.style import StyleManager
 from threadlight.managers.model_config import ModelConfigManager
 from threadlight.managers.memory_types import CustomTypeManager
+from threadlight.managers.chat import ChatManager
 
 logger = logging.getLogger(__name__)
-
-# Maximum tool calling iterations to prevent infinite loops
-MAX_TOOL_ITERATIONS = 10
 
 
 class Threadlight:
@@ -154,6 +152,7 @@ class Threadlight:
         self._init_context()
         self._init_tools()
         self._init_soft_memory()
+        self._init_chat_manager()
         self._init_custom_type_manager()
         self._load_custom_types()
         self._init_profiles()
@@ -256,6 +255,10 @@ class Threadlight:
     def _init_custom_type_manager(self) -> None:
         """Initialize custom type manager."""
         self._custom_type_manager = CustomTypeManager(self)
+
+    def _init_chat_manager(self) -> None:
+        """Initialize chat manager."""
+        self._chat_manager = ChatManager(self)
 
     # === Profile Interface ===
     # Delegated to ProfileInterface for implementation
@@ -622,35 +625,11 @@ class Threadlight:
 
     def _build_soft_memory_context(self, message: str) -> str:
         """Build soft memory context from past conversations."""
-        if not self.soft_memory:
-            return ""
-
-        try:
-            results = self.soft_memory.recall_relevant(
-                message,
-                limit=self.config.memory.conversation.soft_memory_limit,
-            )
-
-            if not results:
-                return ""
-
-            return self.soft_memory.format_for_prompt(
-                results,
-                header="## Relevant Past Conversations",
-            )
-        except Exception as e:
-            logger.warning(f"Soft memory recall failed: {e}")
-            return ""
+        return self._chat_manager.build_soft_memory_context(message)
 
     def _auto_save_messages(self, user_message: str, assistant_response: str) -> None:
         """Auto-save user message and assistant response to database."""
-        # Ensure we have a conversation attached to the session
-        if self.memory.get_current_session():
-            if not self.memory.get_current_session().conversation_id:
-                self.memory.attach_conversation_to_session()
-
-        # Save the message pair
-        self.memory.save_message_pair(user_message, assistant_response)
+        self._chat_manager.auto_save_messages(user_message, assistant_response)
 
     def _complete_with_tools(
         self,
@@ -658,74 +637,8 @@ class Threadlight:
         tools: Optional[list[dict[str, Any]]] = None,
         **kwargs: Any
     ) -> ProviderResponse:
-        """
-        Complete with tool calling loop.
-
-        If the model returns tool_calls, executes them and sends results
-        back to the model until it returns a text response.
-
-        Args:
-            messages: Conversation messages
-            tools: Tool definitions (None to disable)
-            **kwargs: Provider options
-
-        Returns:
-            Final ProviderResponse with text content
-        """
-        import json
-
-        iteration = 0
-        accumulated_tool_results: list[ToolResult] = []
-
-        while iteration < MAX_TOOL_ITERATIONS:
-            iteration += 1
-
-            # Make the API call
-            response = self.provider.complete(messages, tools=tools, **kwargs)
-
-            # If no tool calls, we're done
-            if not response.has_tool_calls:
-                # Attach tool results to response metadata
-                if accumulated_tool_results:
-                    if response.raw is None:
-                        response.raw = {}
-                    response.raw["tool_results"] = [r.to_dict() for r in accumulated_tool_results]
-                return response
-
-            logger.debug(f"Model requested {len(response.tool_calls)} tool call(s)")
-
-            # Add the assistant message with tool calls to context
-            messages.append(ProviderMessage.assistant_with_tool_calls(
-                content=response.content,
-                tool_calls=response.tool_calls,
-            ))
-
-            # Execute each tool call
-            for tool_call in response.tool_calls:
-                logger.debug(f"Executing tool: {tool_call.name}")
-
-                # Parse arguments
-                try:
-                    arguments = json.loads(tool_call.arguments)
-                except json.JSONDecodeError as e:
-                    arguments = {}
-                    logger.warning(f"Failed to parse tool arguments: {e}")
-
-                # Execute the tool
-                result = self.tool_executor.execute(tool_call.name, arguments)
-                accumulated_tool_results.append(result)
-
-                logger.debug(f"Tool result: success={result.success}, consent={result.requires_consent}")
-
-                # Add tool response to messages
-                messages.append(ProviderMessage.tool_response(
-                    tool_call_id=tool_call.id,
-                    content=result.to_tool_response(),
-                ))
-
-        # If we hit max iterations, return last response
-        logger.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
-        return response
+        """Complete with tool calling loop."""
+        return self._chat_manager.complete_with_tools(messages, tools, **kwargs)
 
     def stream(
         self,
@@ -734,26 +647,8 @@ class Threadlight:
         context_mode: Optional[ContextMode] = None,
         **kwargs: Any
     ) -> Iterator[str]:
-        """
-        Stream a response token by token.
-
-        Yields text chunks as they arrive.
-        """
-        messages = []
-
-        # Build context
-        if self.enable_memory:
-            context = self._build_context(message, context_mode=context_mode)
-            if context.system_message:
-                messages.append(ProviderMessage(role="system", content=context.system_message))
-
-        if history:
-            for msg in history:
-                messages.append(ProviderMessage(role=msg["role"], content=msg["content"]))
-
-        messages.append(ProviderMessage(role="user", content=message))
-
-        yield from self.provider.stream(messages, **kwargs)
+        """Stream a response token by token."""
+        yield from self._chat_manager.stream(message, history, context_mode, **kwargs)
 
     def _build_context(
         self,
@@ -762,34 +657,7 @@ class Threadlight:
         context_mode: Optional[ContextMode] = None,
     ) -> ComposedContext:
         """Build context from memory for a message."""
-        # Recall relevant memories
-        capsules = self.memory.recall_for_message(
-            message,
-            limit=self.config.memory.max_capsules_per_request,
-        )
-
-        # Apply additional filter if provided
-        if memory_filter:
-            if "type" in memory_filter:
-                filter_type = CapsuleType(memory_filter["type"])
-                capsules = [c for c in capsules if c.type == filter_type]
-            if "entity" in memory_filter:
-                entity = memory_filter["entity"].lower()
-                capsules = [
-                    c for c in capsules
-                    if hasattr(c, 'entity') and entity in c.entity.lower()
-                ]
-
-        # Get active ritual if any
-        active_ritual = self.memory.get_active_ritual()
-
-        # Compose context
-        return self.composer.compose(
-            capsules=capsules,
-            style_profile=self.style_profile,
-            mode=context_mode,
-            active_ritual=active_ritual,
-        )
+        return self._chat_manager.build_context(message, memory_filter, context_mode)
 
     # === Ritual Interface ===
 
