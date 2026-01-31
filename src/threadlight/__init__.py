@@ -37,7 +37,7 @@ Design Principles:
 """
 
 from threadlight.core import Threadlight
-from threadlight.config import ThreadlightConfig
+from threadlight.config import ThreadlightConfig, ProviderDefinition, ModelConfig
 
 # Capsule system
 from threadlight.capsules.base import (
@@ -89,6 +89,7 @@ from threadlight.providers import (
     ProviderResponse,
     OpenAIProvider,
     create_provider,
+    ProviderManager,
 )
 
 # Context composition
@@ -131,6 +132,8 @@ __all__ = [
     # Main interface
     "Threadlight",
     "ThreadlightConfig",
+    "ProviderDefinition",
+    "ModelConfig",
     # Capsule base
     "MemoryCapsule",
     "CapsuleType",
@@ -168,6 +171,7 @@ __all__ = [
     "ToolCall",
     "OpenAIProvider",
     "create_provider",
+    "ProviderManager",
     # Context composition
     "ContextComposer",
     "ComposedContext",

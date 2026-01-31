@@ -24,6 +24,7 @@ from threadlight.providers.base import (
     get_provider_class,
 )
 from threadlight.providers.openai import OpenAIProvider, NousProvider
+from threadlight.providers.manager import ProviderManager
 
 __all__ = [
     # Base classes
@@ -39,6 +40,8 @@ __all__ = [
     "NousProvider",  # Alias for OpenAIProvider configured for Nous
     # Factory
     "create_provider",
+    # Manager
+    "ProviderManager",
 ]
 
 # Default API configuration

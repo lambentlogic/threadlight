@@ -99,16 +99,23 @@ class TestAlternatingStrategy:
         assert engine.select_model("test") == "model-a"
 
 
-class TestRoundRobinStrategy:
-    """Tests for ROUND_ROBIN model selection strategy."""
+class TestRoundRobinMigration:
+    """Tests for deprecated ROUND_ROBIN migration to ALTERNATING."""
 
-    def test_cycles_through_models(self, storage, base_profile):
-        """ROUND_ROBIN should cycle through models in order."""
-        base_profile.alloyed_config = AlloyedConfig(
-            strategy=ModelStrategy.ROUND_ROBIN,
-            model_pool=["model-a", "model-b", "model-c"],
-        )
+    def test_round_robin_migrates_to_alternating(self, storage, base_profile):
+        """Loading a profile with round_robin strategy should migrate to alternating."""
+        # Simulate loading a profile with the deprecated round_robin strategy
+        config_dict = {
+            "strategy": "round_robin",
+            "model_pool": ["model-a", "model-b", "model-c"],
+        }
+        config = AlloyedConfig.from_dict(config_dict)
 
+        # Should be migrated to ALTERNATING
+        assert config.strategy == ModelStrategy.ALTERNATING
+
+        # Behavior should work the same as ALTERNATING
+        base_profile.alloyed_config = config
         engine = AlloyedProfileEngine(base_profile, storage)
 
         results = [engine.select_model("test") for _ in range(6)]

@@ -128,12 +128,12 @@ class TestProfile:
             id="test",
             name="Test",
             alloyed_config=AlloyedConfig(
-                strategy=ModelStrategy.ROUND_ROBIN,
+                strategy=ModelStrategy.ALTERNATING,
                 model_pool=["model-a", "model-b"],
             ),
         )
 
-        assert profile.model_strategy == ModelStrategy.ROUND_ROBIN
+        assert profile.model_strategy == ModelStrategy.ALTERNATING
 
     def test_model_pool_property(self):
         """Test the model_pool property."""
@@ -558,7 +558,7 @@ class TestSQLiteProfileStorage:
     def test_save_profile_with_alloyed_config(self, storage):
         """Test saving a profile with alloyed config as JSON."""
         config = AlloyedConfig(
-            strategy=ModelStrategy.ROUND_ROBIN,
+            strategy=ModelStrategy.ALTERNATING,
             model_pool=["model-a", "model-b", "model-c"],
             current_index=2,
             turn_count=50,
@@ -576,7 +576,7 @@ class TestSQLiteProfileStorage:
 
         assert retrieved is not None
         assert retrieved.alloyed_config is not None
-        assert retrieved.alloyed_config.strategy == ModelStrategy.ROUND_ROBIN
+        assert retrieved.alloyed_config.strategy == ModelStrategy.ALTERNATING
         assert retrieved.alloyed_config.model_pool == ["model-a", "model-b", "model-c"]
         assert retrieved.alloyed_config.current_index == 2
         assert retrieved.alloyed_config.turn_count == 50

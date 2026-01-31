@@ -33,7 +33,6 @@ class AlloyedProfileEngine:
     Strategies:
         - SINGLE: Always use primary_model
         - ALTERNATING: Alternate between models in pool (A, B, A, B, ...)
-        - ROUND_ROBIN: Cycle through all models in order
         - RATIO: Use models according to specified ratios (e.g., 2:1)
         - WEIGHTED: Weighted random selection based on weights
         - DYNAMIC: Choose based on message characteristics
@@ -94,8 +93,6 @@ class AlloyedProfileEngine:
             model = self._select_single()
         elif strategy == ModelStrategy.ALTERNATING:
             model = self._select_alternating()
-        elif strategy == ModelStrategy.ROUND_ROBIN:
-            model = self._select_round_robin()
         elif strategy == ModelStrategy.RATIO:
             model = self._select_ratio()
         elif strategy == ModelStrategy.WEIGHTED:
@@ -148,15 +145,6 @@ class AlloyedProfileEngine:
         self.config.current_index = (index + 1) % len(pool)
 
         return model
-
-    def _select_round_robin(self) -> str:
-        """
-        ROUND_ROBIN strategy: Cycle through models in order.
-
-        This is identical to ALTERNATING but provided as a separate strategy
-        for clarity of intent. Both cycle through the pool in order.
-        """
-        return self._select_alternating()
 
     def _select_ratio(self) -> str:
         """
@@ -464,7 +452,7 @@ class AlloyedProfileEngine:
         Preview which models would be selected for the next N turns.
 
         This is useful for deterministic strategies (SINGLE, ALTERNATING,
-        ROUND_ROBIN, RATIO) but not for random strategies (WEIGHTED, DYNAMIC).
+        RATIO) but not for random strategies (WEIGHTED, DYNAMIC).
 
         Args:
             count: Number of turns to preview
@@ -484,7 +472,7 @@ class AlloyedProfileEngine:
         for _ in range(count):
             if strategy == ModelStrategy.SINGLE:
                 preview.append(self.profile.primary_model)
-            elif strategy in (ModelStrategy.ALTERNATING, ModelStrategy.ROUND_ROBIN):
+            elif strategy == ModelStrategy.ALTERNATING:
                 pool = self.model_pool
                 if pool:
                     idx = self.config.current_index % len(pool)

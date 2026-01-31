@@ -20,7 +20,6 @@ class ModelStrategy(str, Enum):
     RATIO = "ratio"  # Use models according to specified ratios
     WEIGHTED = "weighted"  # Weighted random selection
     DYNAMIC = "dynamic"  # Choose based on message characteristics
-    ROUND_ROBIN = "round_robin"  # Cycle through models in order
     ROUTED = "routed"  # Use routing rules
 
 
@@ -67,7 +66,7 @@ class AlloyedConfig:
     routing_rules: list[RoutingRule] = field(default_factory=list)  # For ROUTED
 
     # State tracking (persisted)
-    current_index: int = 0  # For ALTERNATING, ROUND_ROBIN
+    current_index: int = 0  # For ALTERNATING
     turn_count: int = 0  # For tracking turns
     model_counts: dict[str, int] = field(default_factory=dict)  # Usage tracking
 
@@ -90,8 +89,12 @@ class AlloyedConfig:
         routing_rules = [
             RoutingRule.from_dict(r) for r in data.get("routing_rules", [])
         ]
+        # Migration: convert deprecated ROUND_ROBIN to ALTERNATING
+        strategy_value = data.get("strategy", "single")
+        if strategy_value == "round_robin":
+            strategy_value = "alternating"
         return cls(
-            strategy=ModelStrategy(data.get("strategy", "single")),
+            strategy=ModelStrategy(strategy_value),
             model_pool=data.get("model_pool", []),
             ratios=data.get("ratios"),
             weights=data.get("weights"),

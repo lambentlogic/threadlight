@@ -53,6 +53,121 @@ class Endpoint:
 
 
 @dataclass
+class ProviderDefinition:
+    """A named provider configuration for multi-provider support.
+
+    Each provider definition represents a distinct inference backend that can
+    be used by one or more models. This allows users to configure multiple
+    providers (e.g., Anthropic, local Ollama, OpenAI) and have different
+    models route to appropriate providers.
+
+    Example providers:
+        - "anthropic": Anthropic API for Claude models
+        - "local-ollama": Local Ollama instance for Hermes/Llama models
+        - "openai-prod": OpenAI API for GPT models
+    """
+
+    id: str  # Unique identifier (e.g., "anthropic", "local-ollama", "openai-prod")
+    name: str  # Display name (e.g., "Anthropic", "Local Ollama")
+    type: str = "openai"  # Provider type: "openai", "anthropic", "local", "custom"
+
+    # Authentication - exactly one of api_key or api_key_env_var should be set
+    api_key: Optional[str] = None  # Direct API key (stored securely)
+    api_key_env_var: Optional[str] = None  # Environment variable name for API key
+
+    # Endpoints (supports multiple for fallback)
+    endpoints: list[Endpoint] = field(default_factory=list)
+
+    # Default model for this provider (used if model doesn't specify)
+    default_model: str = ""
+
+    # Provider-specific settings
+    timeout: float = 60.0
+    max_retries: int = 3
+    extra_headers: dict[str, str] = field(default_factory=dict)
+
+    # Anthropic-specific
+    anthropic_version: str = "2023-06-01"
+
+    # Health tracking
+    is_healthy: Optional[bool] = None
+    last_checked: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Initialize provider with defaults."""
+        # Resolve API key from environment if using env var
+        if self.api_key is None and self.api_key_env_var:
+            self.api_key = os.getenv(self.api_key_env_var)
+
+        # Ensure at least one endpoint based on provider type
+        if not self.endpoints:
+            default_endpoints = {
+                "openai": "https://api.openai.com/v1",
+                "anthropic": "https://api.anthropic.com",
+                "nous": "https://inference-api.nousresearch.com/v1",
+                "local": "http://localhost:11434/v1",  # Ollama default
+            }
+            default_url = default_endpoints.get(self.type, "")
+            if default_url:
+                self.endpoints = [Endpoint(url=default_url, name="Primary", priority=0)]
+
+    @property
+    def api_base(self) -> str:
+        """Get the primary API base URL for backward compatibility."""
+        if not self.endpoints:
+            return ""
+        sorted_endpoints = sorted(self.endpoints, key=lambda e: e.priority)
+        return sorted_endpoints[0].url
+
+    def get_api_key(self) -> Optional[str]:
+        """Get the resolved API key (from direct value or environment)."""
+        if self.api_key:
+            return self.api_key
+        if self.api_key_env_var:
+            return os.getenv(self.api_key_env_var)
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Export provider definition as dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "type": self.type,
+            "api_key_env_var": self.api_key_env_var,  # Don't serialize actual key
+            "endpoints": [ep.to_dict() for ep in self.endpoints],
+            "default_model": self.default_model,
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+            "extra_headers": self.extra_headers,
+            "anthropic_version": self.anthropic_version,
+            "is_healthy": self.is_healthy,
+            "last_checked": self.last_checked,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProviderDefinition":
+        """Create ProviderDefinition from dictionary."""
+        endpoints = [
+            Endpoint.from_dict(ep) for ep in data.get("endpoints", [])
+        ]
+        return cls(
+            id=data.get("id", "default"),
+            name=data.get("name", "Default Provider"),
+            type=data.get("type", "openai"),
+            api_key=data.get("api_key"),  # May be loaded if present
+            api_key_env_var=data.get("api_key_env_var"),
+            endpoints=endpoints,
+            default_model=data.get("default_model", ""),
+            timeout=data.get("timeout", 60.0),
+            max_retries=data.get("max_retries", 3),
+            extra_headers=data.get("extra_headers", {}),
+            anthropic_version=data.get("anthropic_version", "2023-06-01"),
+            is_healthy=data.get("is_healthy"),
+            last_checked=data.get("last_checked"),
+        )
+
+
+@dataclass
 class ProviderConfig:
     """Configuration for inference providers."""
 
@@ -308,7 +423,12 @@ class IdentityConfig:
 
 @dataclass
 class ModelConfig:
-    """Configuration for a specific model."""
+    """Configuration for a specific model.
+
+    Each model config now includes a provider_id that specifies which
+    ProviderDefinition to use for inference. This enables multi-provider
+    support where different models can use different providers.
+    """
 
     model_id: str
     system_prompt: str = "You are a helpful AI assistant."
@@ -318,6 +438,10 @@ class ModelConfig:
     temperature: float = 0.7
     max_tokens: Optional[int] = None
     top_p: float = 1.0
+
+    # Multi-provider support: which provider to use for this model
+    # If None, uses the default provider from ThreadlightConfig.provider
+    provider_id: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Export model config as dictionary."""
@@ -332,6 +456,7 @@ class ModelConfig:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "top_p": self.top_p,
+            "provider_id": self.provider_id,
         }
 
     @classmethod
@@ -347,6 +472,7 @@ class ModelConfig:
             temperature=data.get("temperature", 0.7),
             max_tokens=data.get("max_tokens"),
             top_p=data.get("top_p", 1.0),
+            provider_id=data.get("provider_id"),
         )
 
 
@@ -354,10 +480,26 @@ class ModelConfig:
 class ThreadlightConfig:
     """Main configuration for Threadlight.
 
-    Supports per-model configuration profiles and automatic persistence.
+    Supports per-model configuration profiles, multi-provider support,
+    and automatic persistence.
+
+    Multi-provider Architecture:
+        The 'providers' dict contains named ProviderDefinition objects that
+        configure different inference backends (Anthropic, OpenAI, local Ollama, etc.).
+        Each ModelConfig can reference a specific provider via provider_id.
+
+        The legacy 'provider' field is maintained for backward compatibility
+        and serves as the default provider when a model doesn't specify one.
     """
 
+    # Legacy single provider (kept for backward compatibility)
+    # When no providers dict exists, this is used as the default
     provider: ProviderConfig = field(default_factory=ProviderConfig)
+
+    # Multi-provider support: named provider definitions
+    # Keys are provider IDs (e.g., "anthropic", "local-ollama")
+    providers: dict[str, ProviderDefinition] = field(default_factory=dict)
+
     storage: StorageConfig = field(default_factory=StorageConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     style: StyleConfig = field(default_factory=StyleConfig)
@@ -588,6 +730,12 @@ class ThreadlightConfig:
                 model_data["model_id"] = model_id
                 config.model_configs[model_id] = ModelConfig.from_dict(model_data)
 
+        # Parse providers (multi-provider support)
+        if "providers" in data:
+            for provider_id, provider_data in data["providers"].items():
+                provider_data["id"] = provider_id
+                config.providers[provider_id] = ProviderDefinition.from_dict(provider_data)
+
         return config
 
     def to_dict(self) -> dict[str, Any]:
@@ -660,6 +808,11 @@ class ThreadlightConfig:
             "model_configs": {
                 model_id: model_config.to_dict()
                 for model_id, model_config in self.model_configs.items()
+            },
+            # Multi-provider support
+            "providers": {
+                provider_id: provider_def.to_dict()
+                for provider_id, provider_def in self.providers.items()
             },
         }
         return result
@@ -792,6 +945,7 @@ class ThreadlightConfig:
             temperature=source.temperature,
             max_tokens=source.max_tokens,
             top_p=source.top_p,
+            provider_id=source.provider_id,
         )
         self.model_configs[target_model_id] = new_config
         self._trigger_auto_save()
@@ -813,8 +967,146 @@ class ThreadlightConfig:
             temperature=source.temperature,
             max_tokens=source.max_tokens,
             top_p=source.top_p,
+            provider_id=source.provider_id,
         )
         self._trigger_auto_save()
+
+    # === Provider Management ===
+
+    def get_provider(self, provider_id: str) -> Optional[ProviderDefinition]:
+        """Get a provider definition by ID.
+
+        Args:
+            provider_id: Provider identifier
+
+        Returns:
+            ProviderDefinition if found, None otherwise
+        """
+        return self.providers.get(provider_id)
+
+    def get_provider_for_model(self, model_id: str) -> Optional[ProviderDefinition]:
+        """Get the provider definition for a specific model.
+
+        Looks up the model's config to find its provider_id, then returns
+        the corresponding provider definition.
+
+        Args:
+            model_id: Model identifier
+
+        Returns:
+            ProviderDefinition if found, None if model uses default provider
+        """
+        model_config = self.model_configs.get(model_id)
+        if model_config and model_config.provider_id:
+            return self.providers.get(model_config.provider_id)
+        return None
+
+    def add_provider(self, provider: ProviderDefinition) -> None:
+        """Add a new provider definition.
+
+        Args:
+            provider: ProviderDefinition to add
+        """
+        self.providers[provider.id] = provider
+        self._trigger_auto_save()
+
+    def update_provider(self, provider_id: str, **kwargs: Any) -> Optional[ProviderDefinition]:
+        """Update a provider definition.
+
+        Args:
+            provider_id: Provider identifier
+            **kwargs: Fields to update
+
+        Returns:
+            Updated ProviderDefinition, or None if not found
+        """
+        provider = self.providers.get(provider_id)
+        if not provider:
+            return None
+
+        for key, value in kwargs.items():
+            if hasattr(provider, key):
+                setattr(provider, key, value)
+
+        self._trigger_auto_save()
+        return provider
+
+    def delete_provider(self, provider_id: str) -> bool:
+        """Delete a provider definition.
+
+        Note: This will not automatically update models that reference this provider.
+        Those models will fall back to the default provider.
+
+        Args:
+            provider_id: Provider identifier to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        if provider_id in self.providers:
+            del self.providers[provider_id]
+            self._trigger_auto_save()
+            return True
+        return False
+
+    def list_providers(self) -> list[str]:
+        """List all configured provider IDs.
+
+        Returns:
+            List of provider identifiers
+        """
+        return list(self.providers.keys())
+
+    def get_default_provider_id(self) -> Optional[str]:
+        """Get the default provider ID.
+
+        Returns the first provider marked as default, or the first provider
+        if none is marked as default, or None if no providers are configured.
+
+        Returns:
+            Default provider ID, or None
+        """
+        if not self.providers:
+            return None
+        # Return the first provider ID as default
+        return next(iter(self.providers.keys()))
+
+    def migrate_single_provider_to_multi(self) -> None:
+        """Migrate legacy single-provider config to multi-provider format.
+
+        This creates a provider definition from the existing ProviderConfig
+        and adds it to the providers dict. Safe to call multiple times.
+        """
+        if self.providers:
+            # Already have providers defined, no migration needed
+            return
+
+        # Create a default provider from the legacy config
+        provider_id = "default"
+
+        # Infer a better ID from the provider type/URL
+        if "anthropic" in self.provider.api_base.lower():
+            provider_id = "anthropic"
+        elif "openai" in self.provider.api_base.lower():
+            provider_id = "openai"
+        elif "nousresearch" in self.provider.api_base.lower():
+            provider_id = "nous"
+        elif "localhost" in self.provider.api_base.lower() or "127.0.0.1" in self.provider.api_base:
+            provider_id = "local"
+
+        # Create provider definition from legacy config
+        provider = ProviderDefinition(
+            id=provider_id,
+            name=provider_id.title(),
+            type=self.provider.type,
+            api_key=self.provider.api_key,
+            endpoints=self.provider.endpoints.copy(),
+            default_model=self.provider.model,
+            timeout=self.provider.timeout,
+            max_retries=self.provider.max_retries,
+        )
+
+        self.providers[provider_id] = provider
 
     # === Auto-Save Functionality ===
 

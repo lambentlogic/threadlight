@@ -36,7 +36,7 @@ from threadlight.capsules.custom_types import CustomTypeDefinition
 from threadlight.capsules.style import StyleProfile, BUILTIN_STYLES
 from threadlight.storage import create_storage, StorageBackend
 from threadlight.storage.base import Conversation, Message, MessageSearchResult
-from threadlight.providers import create_provider, BaseProvider
+from threadlight.providers import create_provider, BaseProvider, ProviderManager
 from threadlight.providers.base import ProviderMessage, ProviderResponse
 from threadlight.context.composer import ContextComposer, ComposedContext
 from threadlight.context.soft_memory import SoftMemory, SoftMemoryConfig
@@ -171,7 +171,20 @@ class Threadlight:
         self.storage.initialize()
 
     def _init_provider(self) -> None:
-        """Initialize inference provider."""
+        """Initialize inference provider(s).
+
+        Multi-provider support:
+        - If config.providers is populated, uses ProviderManager for routing
+        - Otherwise falls back to single provider for backward compatibility
+
+        The ProviderManager routes requests to the appropriate provider based
+        on the model's provider_id configuration.
+        """
+        # Initialize ProviderManager for multi-provider support
+        self.provider_manager: ProviderManager = ProviderManager(self.config)
+
+        # Also keep a single provider reference for backward compatibility
+        # This is the default provider used when no specific provider is configured
         self.provider: BaseProvider = create_provider(
             self.config.provider.type,
             api_base=self.config.provider.api_base,
@@ -521,10 +534,14 @@ class Threadlight:
         use_tools = enable_tools if enable_tools is not None else self.enable_tools
         should_auto_save = auto_save if auto_save is not None else self.config.memory.conversation.auto_save_messages
 
+        # Track selected model for multi-provider routing
+        selected_model: Optional[str] = None
+        original_model: Optional[str] = None
+
         # Apply profile's model selection if active
         if self.active_profile and self._alloyed_engine:
             selected_model = self._alloyed_engine.select_model(message)
-            # Temporarily set the provider model for this request
+            # Temporarily set the provider model for this request (backward compat)
             original_model = self.provider.model
             self.provider.model = selected_model
 
@@ -590,11 +607,16 @@ class Threadlight:
         tools = self.tool_definitions if (use_tools and self.tool_executor) else None
 
         # Send to provider with tool calling loop
+        # Pass selected_model for multi-provider routing
         try:
-            response = self._complete_with_tools(messages, tools, **kwargs)
+            response = self._complete_with_tools(
+                messages, tools,
+                model_id=selected_model,  # For multi-provider routing
+                **kwargs
+            )
         finally:
             # Restore original model if we changed it for profile
-            if self.active_profile and self._alloyed_engine and 'original_model' in dir():
+            if original_model is not None:
                 self.provider.model = original_model
 
         # Auto-save messages to database (don't fail if save fails)
@@ -635,20 +657,41 @@ class Threadlight:
         self,
         messages: list[ProviderMessage],
         tools: Optional[list[dict[str, Any]]] = None,
+        model_id: Optional[str] = None,
         **kwargs: Any
     ) -> ProviderResponse:
-        """Complete with tool calling loop."""
-        return self._chat_manager.complete_with_tools(messages, tools, **kwargs)
+        """Complete with tool calling loop.
+
+        Args:
+            messages: Conversation messages
+            tools: Tool definitions
+            model_id: Model ID for multi-provider routing
+            **kwargs: Additional provider options
+        """
+        return self._chat_manager.complete_with_tools(
+            messages, tools, model_id=model_id, **kwargs
+        )
 
     def stream(
         self,
         message: str,
         history: Optional[list[dict[str, str]]] = None,
         context_mode: Optional[ContextMode] = None,
+        model_id: Optional[str] = None,
         **kwargs: Any
     ) -> Iterator[str]:
-        """Stream a response token by token."""
-        yield from self._chat_manager.stream(message, history, context_mode, **kwargs)
+        """Stream a response token by token.
+
+        Args:
+            message: User message
+            history: Conversation history
+            context_mode: Context composition mode
+            model_id: Model ID for multi-provider routing
+            **kwargs: Additional provider options
+        """
+        yield from self._chat_manager.stream(
+            message, history, context_mode, model_id=model_id, **kwargs
+        )
 
     def _build_context(
         self,
@@ -1410,6 +1453,158 @@ class Threadlight:
     def disable_config_auto_save(self) -> None:
         """Disable automatic config persistence."""
         return self._model_config_manager.disable_auto_save()
+
+    # === Provider Management ===
+
+    def list_providers(self) -> list[dict[str, Any]]:
+        """
+        List all configured providers.
+
+        Returns:
+            List of provider information dictionaries
+        """
+        return self.provider_manager.get_all_provider_info()
+
+    def get_provider_info(self, provider_id: str) -> dict[str, Any]:
+        """
+        Get information about a specific provider.
+
+        Args:
+            provider_id: The provider ID
+
+        Returns:
+            Provider information dictionary
+        """
+        return self.provider_manager.get_provider_info(provider_id)
+
+    def add_provider(
+        self,
+        provider_id: str,
+        name: str,
+        provider_type: str = "openai",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+        api_key_env_var: Optional[str] = None,
+        default_model: str = "",
+        **kwargs: Any
+    ) -> dict[str, Any]:
+        """
+        Add a new provider.
+
+        Args:
+            provider_id: Unique identifier for the provider
+            name: Display name
+            provider_type: Provider type ("openai", "anthropic", "local", "custom")
+            api_base: API base URL
+            api_key: API key (optional, prefer api_key_env_var)
+            api_key_env_var: Environment variable name for API key
+            default_model: Default model for this provider
+            **kwargs: Additional provider options
+
+        Returns:
+            Provider information dictionary
+        """
+        from threadlight.config import ProviderDefinition, Endpoint
+
+        # Build endpoints
+        endpoints = []
+        if api_base:
+            endpoints = [Endpoint(url=api_base, name="Primary", priority=0)]
+
+        provider = ProviderDefinition(
+            id=provider_id,
+            name=name,
+            type=provider_type,
+            api_key=api_key,
+            api_key_env_var=api_key_env_var,
+            endpoints=endpoints,
+            default_model=default_model,
+            **kwargs
+        )
+
+        self.config.add_provider(provider)
+
+        # Invalidate cache so next request uses new config
+        self.provider_manager.invalidate_cache(provider_id)
+
+        return self.provider_manager.get_provider_info(provider_id)
+
+    def update_provider(self, provider_id: str, **kwargs: Any) -> Optional[dict[str, Any]]:
+        """
+        Update an existing provider.
+
+        Args:
+            provider_id: Provider ID to update
+            **kwargs: Fields to update
+
+        Returns:
+            Updated provider info, or None if not found
+        """
+        provider = self.config.update_provider(provider_id, **kwargs)
+        if provider:
+            # Invalidate cache so next request uses new config
+            self.provider_manager.invalidate_cache(provider_id)
+            return self.provider_manager.get_provider_info(provider_id)
+        return None
+
+    def delete_provider(self, provider_id: str) -> bool:
+        """
+        Delete a provider.
+
+        Args:
+            provider_id: Provider ID to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        if self.config.delete_provider(provider_id):
+            self.provider_manager.invalidate_cache(provider_id)
+            return True
+        return False
+
+    def test_provider(self, provider_id: str) -> dict[str, Any]:
+        """
+        Test a provider's connectivity.
+
+        Args:
+            provider_id: Provider ID to test
+
+        Returns:
+            Health check results
+        """
+        return self.provider_manager.health_check(provider_id)
+
+    def get_provider_for_model(self, model_id: str) -> Optional[dict[str, Any]]:
+        """
+        Get which provider will be used for a specific model.
+
+        Args:
+            model_id: Model identifier
+
+        Returns:
+            Provider info dict, or None if using default provider
+        """
+        provider_def = self.config.get_provider_for_model(model_id)
+        if provider_def:
+            return self.provider_manager.get_provider_info(provider_def.id)
+        return None
+
+    def set_model_provider(self, model_id: str, provider_id: Optional[str]) -> bool:
+        """
+        Set which provider a model should use.
+
+        Args:
+            model_id: Model identifier
+            provider_id: Provider ID (or None to use default)
+
+        Returns:
+            True if updated successfully
+        """
+        # Get or create model config
+        model_config = self.config.get_model_config(model_id)
+        model_config.provider_id = provider_id
+        self.config.set_model_config(model_id, model_config)
+        return True
 
     # === Memory Type Management ===
     # Delegated to CustomTypeManager for implementation

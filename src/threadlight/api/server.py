@@ -299,6 +299,40 @@ class ProviderConfigRequest(BaseModel):
     endpoints: Optional[list[EndpointRequest]] = None  # List of endpoints
 
 
+class ProviderCreateRequest(BaseModel):
+    """Request model for creating a new provider definition."""
+    id: str  # Unique identifier (e.g., "anthropic", "local-ollama")
+    name: str  # Display name (e.g., "Anthropic", "Local Ollama")
+    type: str = "openai"  # Provider type: "openai", "anthropic", "local", "custom"
+    api_key: Optional[str] = None  # Direct API key
+    api_key_env_var: Optional[str] = None  # Environment variable name for API key
+    endpoints: Optional[list[EndpointRequest]] = None  # API endpoints
+    default_model: str = ""  # Default model for this provider
+    timeout: float = 60.0
+    max_retries: int = 3
+    extra_headers: Optional[dict[str, str]] = None
+    anthropic_version: str = "2023-06-01"
+
+
+class ProviderUpdateRequest(BaseModel):
+    """Request model for updating a provider definition."""
+    name: Optional[str] = None
+    type: Optional[str] = None
+    api_key: Optional[str] = None
+    api_key_env_var: Optional[str] = None
+    endpoints: Optional[list[EndpointRequest]] = None
+    default_model: Optional[str] = None
+    timeout: Optional[float] = None
+    max_retries: Optional[int] = None
+    extra_headers: Optional[dict[str, str]] = None
+    anthropic_version: Optional[str] = None
+
+
+class ModelProviderRequest(BaseModel):
+    """Request model for setting a model's provider."""
+    provider_id: Optional[str] = None  # Provider ID or None to use default
+
+
 # ============================================================================
 # Global State
 # ============================================================================
@@ -2036,6 +2070,464 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 "models": [],
                 "cached": False,
             }
+
+    # ========================================================================
+    # Multi-Provider Management Endpoints
+    # ========================================================================
+
+    @app.get("/api/providers")
+    async def list_providers():
+        """List all configured provider definitions.
+
+        Returns all providers in the multi-provider configuration,
+        including their endpoints, health status, and API key presence.
+        """
+        tl = get_threadlight()
+
+        providers = []
+        for provider_id, provider_def in tl.config.providers.items():
+            providers.append({
+                "id": provider_def.id,
+                "name": provider_def.name,
+                "type": provider_def.type,
+                "has_api_key": bool(provider_def.get_api_key()),
+                "api_key_env_var": provider_def.api_key_env_var,
+                "endpoints": [ep.to_dict() for ep in provider_def.endpoints],
+                "default_model": provider_def.default_model,
+                "timeout": provider_def.timeout,
+                "max_retries": provider_def.max_retries,
+                "is_healthy": provider_def.is_healthy,
+                "last_checked": provider_def.last_checked,
+            })
+
+        # Also include info about the legacy default provider for compatibility
+        legacy_provider = {
+            "id": "_default",
+            "name": "Default Provider (Legacy)",
+            "type": tl.config.provider.type,
+            "has_api_key": bool(tl.config.provider.api_key),
+            "endpoints": [ep.to_dict() for ep in tl.config.provider.endpoints],
+            "default_model": tl.config.provider.model,
+            "timeout": tl.config.provider.timeout,
+            "is_legacy": True,
+        }
+
+        return {
+            "providers": providers,
+            "legacy_provider": legacy_provider,
+            "count": len(providers),
+        }
+
+    @app.post("/api/providers")
+    async def create_provider(request: ProviderCreateRequest):
+        """Create a new provider definition.
+
+        This adds a named provider that can be referenced by models via provider_id.
+        """
+        from threadlight.config import ProviderDefinition, Endpoint
+
+        tl = get_threadlight()
+
+        # Check if provider ID already exists
+        if request.id in tl.config.providers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider with ID '{request.id}' already exists"
+            )
+
+        # Build endpoints
+        endpoints = []
+        if request.endpoints:
+            for i, ep in enumerate(request.endpoints):
+                endpoints.append(Endpoint(
+                    url=ep.url,
+                    name=ep.name or f"Endpoint {i+1}",
+                    priority=ep.priority,
+                    purpose=ep.purpose,
+                ))
+
+        # Create provider definition
+        provider = ProviderDefinition(
+            id=request.id,
+            name=request.name,
+            type=request.type,
+            api_key=request.api_key,
+            api_key_env_var=request.api_key_env_var,
+            endpoints=endpoints,
+            default_model=request.default_model,
+            timeout=request.timeout,
+            max_retries=request.max_retries,
+            extra_headers=request.extra_headers or {},
+            anthropic_version=request.anthropic_version,
+        )
+
+        tl.config.add_provider(provider)
+        tl.config.mark_changed()
+
+        return {
+            "status": "created",
+            "provider": {
+                "id": provider.id,
+                "name": provider.name,
+                "type": provider.type,
+                "has_api_key": bool(provider.get_api_key()),
+                "endpoints": [ep.to_dict() for ep in provider.endpoints],
+                "default_model": provider.default_model,
+            }
+        }
+
+    @app.get("/api/providers/{provider_id}")
+    async def get_provider(provider_id: str):
+        """Get a specific provider definition."""
+        tl = get_threadlight()
+
+        provider_def = tl.config.providers.get(provider_id)
+        if not provider_def:
+            raise HTTPException(status_code=404, detail=f"Provider not found: {provider_id}")
+
+        return {
+            "id": provider_def.id,
+            "name": provider_def.name,
+            "type": provider_def.type,
+            "has_api_key": bool(provider_def.get_api_key()),
+            "api_key_env_var": provider_def.api_key_env_var,
+            "endpoints": [ep.to_dict() for ep in provider_def.endpoints],
+            "default_model": provider_def.default_model,
+            "timeout": provider_def.timeout,
+            "max_retries": provider_def.max_retries,
+            "extra_headers": provider_def.extra_headers,
+            "anthropic_version": provider_def.anthropic_version,
+            "is_healthy": provider_def.is_healthy,
+            "last_checked": provider_def.last_checked,
+        }
+
+    @app.put("/api/providers/{provider_id}")
+    async def update_provider(provider_id: str, request: ProviderUpdateRequest):
+        """Update an existing provider definition."""
+        from threadlight.config import Endpoint
+
+        tl = get_threadlight()
+
+        provider_def = tl.config.providers.get(provider_id)
+        if not provider_def:
+            raise HTTPException(status_code=404, detail=f"Provider not found: {provider_id}")
+
+        # Update fields if provided
+        if request.name is not None:
+            provider_def.name = request.name
+        if request.type is not None:
+            provider_def.type = request.type
+        if request.api_key is not None:
+            provider_def.api_key = request.api_key
+        if request.api_key_env_var is not None:
+            provider_def.api_key_env_var = request.api_key_env_var
+        if request.default_model is not None:
+            provider_def.default_model = request.default_model
+        if request.timeout is not None:
+            provider_def.timeout = request.timeout
+        if request.max_retries is not None:
+            provider_def.max_retries = request.max_retries
+        if request.extra_headers is not None:
+            provider_def.extra_headers = request.extra_headers
+        if request.anthropic_version is not None:
+            provider_def.anthropic_version = request.anthropic_version
+
+        # Handle endpoints update
+        if request.endpoints is not None:
+            provider_def.endpoints = [
+                Endpoint(
+                    url=ep.url,
+                    name=ep.name or f"Endpoint {i+1}",
+                    priority=ep.priority,
+                    purpose=ep.purpose,
+                )
+                for i, ep in enumerate(request.endpoints)
+            ]
+
+        # Invalidate cached provider instance
+        tl.provider_manager.invalidate_cache(provider_id)
+        tl.config.mark_changed()
+
+        return {
+            "status": "updated",
+            "provider": {
+                "id": provider_def.id,
+                "name": provider_def.name,
+                "type": provider_def.type,
+                "has_api_key": bool(provider_def.get_api_key()),
+                "endpoints": [ep.to_dict() for ep in provider_def.endpoints],
+                "default_model": provider_def.default_model,
+            }
+        }
+
+    @app.delete("/api/providers/{provider_id}")
+    async def delete_provider(provider_id: str):
+        """Delete a provider definition.
+
+        Note: Models referencing this provider will fall back to the default provider.
+        """
+        tl = get_threadlight()
+
+        if provider_id not in tl.config.providers:
+            raise HTTPException(status_code=404, detail=f"Provider not found: {provider_id}")
+
+        tl.config.delete_provider(provider_id)
+        tl.provider_manager.invalidate_cache(provider_id)
+        tl.config.mark_changed()
+
+        return {"status": "deleted", "provider_id": provider_id}
+
+    @app.post("/api/providers/{provider_id}/test")
+    async def test_provider(provider_id: str):
+        """Test connectivity to a specific provider.
+
+        Attempts to connect to the provider's endpoints and verify
+        authentication is working.
+        """
+        import httpx
+
+        tl = get_threadlight()
+
+        provider_def = tl.config.providers.get(provider_id)
+        if not provider_def:
+            raise HTTPException(status_code=404, detail=f"Provider not found: {provider_id}")
+
+        api_key = provider_def.get_api_key()
+        api_base = provider_def.api_base
+
+        if not api_base:
+            return {
+                "status": "error",
+                "message": "No endpoint configured for this provider",
+            }
+
+        if provider_def.type == "local" and "localhost" in api_base:
+            # Local providers may not require authentication
+            pass
+        elif not api_key and provider_def.type not in ("local",):
+            return {
+                "status": "error",
+                "message": "API key is required for this provider",
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                headers = {"Content-Type": "application/json"}
+                if api_key:
+                    if provider_def.type == "anthropic":
+                        headers["x-api-key"] = api_key
+                        headers["anthropic-version"] = provider_def.anthropic_version
+                    else:
+                        headers["Authorization"] = f"Bearer {api_key}"
+
+                # Add extra headers if any
+                if provider_def.extra_headers:
+                    headers.update(provider_def.extra_headers)
+
+                # Try to list models or make a minimal request
+                if provider_def.type == "anthropic":
+                    # Anthropic doesn't have a models endpoint, test with a minimal message
+                    response = await client.post(
+                        f"{api_base}/v1/messages",
+                        headers=headers,
+                        json={
+                            "model": provider_def.default_model or "claude-3-haiku-20240307",
+                            "max_tokens": 1,
+                            "messages": [{"role": "user", "content": "test"}],
+                        },
+                    )
+                    if response.status_code in (200, 400):  # 400 might be bad model but auth works
+                        provider_def.is_healthy = True
+                        return {"status": "success", "message": "Provider is accessible"}
+                    elif response.status_code == 401:
+                        provider_def.is_healthy = False
+                        return {"status": "error", "message": "Invalid API key"}
+                    else:
+                        provider_def.is_healthy = False
+                        return {"status": "error", "message": f"Error: {response.status_code}"}
+                else:
+                    # OpenAI-compatible: try /models endpoint
+                    response = await client.get(f"{api_base}/models", headers=headers)
+                    if response.status_code == 200:
+                        data = response.json()
+                        model_count = len(data.get("data", []))
+                        provider_def.is_healthy = True
+                        return {
+                            "status": "success",
+                            "message": f"Connected ({model_count} models available)",
+                        }
+                    elif response.status_code == 401:
+                        provider_def.is_healthy = False
+                        return {"status": "error", "message": "Invalid API key"}
+                    elif response.status_code == 404:
+                        # No models endpoint, try a minimal completion
+                        chat_response = await client.post(
+                            f"{api_base}/chat/completions",
+                            headers=headers,
+                            json={
+                                "model": provider_def.default_model or "gpt-3.5-turbo",
+                                "messages": [{"role": "user", "content": "test"}],
+                                "max_tokens": 1,
+                            },
+                        )
+                        if chat_response.status_code in (200, 400):
+                            provider_def.is_healthy = True
+                            return {"status": "success", "message": "Provider is accessible"}
+                        else:
+                            provider_def.is_healthy = False
+                            return {"status": "error", "message": f"Error: {chat_response.status_code}"}
+                    else:
+                        provider_def.is_healthy = False
+                        return {"status": "error", "message": f"Error: {response.status_code}"}
+
+        except httpx.ConnectError:
+            provider_def.is_healthy = False
+            return {"status": "error", "message": "Could not connect to provider"}
+        except httpx.TimeoutException:
+            provider_def.is_healthy = False
+            return {"status": "error", "message": "Connection timed out"}
+        except Exception as e:
+            provider_def.is_healthy = False
+            return {"status": "error", "message": f"Error: {str(e)}"}
+
+    @app.get("/api/providers/{provider_id}/models")
+    async def get_provider_models(provider_id: str):
+        """List available models from a specific provider."""
+        import httpx
+
+        tl = get_threadlight()
+
+        provider_def = tl.config.providers.get(provider_id)
+        if not provider_def:
+            raise HTTPException(status_code=404, detail=f"Provider not found: {provider_id}")
+
+        api_key = provider_def.get_api_key()
+        api_base = provider_def.api_base
+
+        if not api_base:
+            return {"status": "error", "message": "No endpoint configured", "models": []}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                headers = {"Content-Type": "application/json"}
+                if api_key:
+                    if provider_def.type == "anthropic":
+                        # Anthropic doesn't support model listing
+                        return {
+                            "status": "success",
+                            "models": [
+                                {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
+                                {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
+                                {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
+                                {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet"},
+                            ],
+                            "message": "Anthropic models (pre-defined list)",
+                        }
+                    else:
+                        headers["Authorization"] = f"Bearer {api_key}"
+
+                response = await client.get(f"{api_base}/models", headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    raw_models = data.get("data", data.get("models", []))
+
+                    models = []
+                    for model in raw_models:
+                        if isinstance(model, str):
+                            models.append({"id": model, "name": model})
+                        elif isinstance(model, dict):
+                            model_id = model.get("id") or model.get("name")
+                            if model_id:
+                                models.append({
+                                    "id": model_id,
+                                    "name": model.get("name") or model_id,
+                                    "owned_by": model.get("owned_by"),
+                                })
+
+                    models.sort(key=lambda m: m.get("name", "").lower())
+                    return {"status": "success", "models": models}
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Error: {response.status_code}",
+                        "models": [],
+                    }
+
+        except Exception as e:
+            return {"status": "error", "message": str(e), "models": []}
+
+    @app.get("/api/models/{model_id}/provider")
+    async def get_model_provider(model_id: str):
+        """Get which provider is configured for a specific model."""
+        tl = get_threadlight()
+
+        model_config = tl.config.model_configs.get(model_id)
+        if model_config and model_config.provider_id:
+            provider_def = tl.config.providers.get(model_config.provider_id)
+            if provider_def:
+                return {
+                    "model_id": model_id,
+                    "provider_id": provider_def.id,
+                    "provider_name": provider_def.name,
+                    "provider_type": provider_def.type,
+                }
+
+        # Model uses default provider
+        return {
+            "model_id": model_id,
+            "provider_id": None,
+            "provider_name": "Default Provider",
+            "provider_type": tl.config.provider.type,
+            "uses_default": True,
+        }
+
+    @app.put("/api/models/{model_id}/provider")
+    async def set_model_provider(model_id: str, request: ModelProviderRequest):
+        """Set which provider a model should use."""
+        tl = get_threadlight()
+
+        # Validate provider exists if specified
+        if request.provider_id and request.provider_id not in tl.config.providers:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Provider not found: {request.provider_id}"
+            )
+
+        # Get or create model config
+        model_config = tl.config.get_model_config(model_id)
+        model_config.provider_id = request.provider_id
+        tl.config.set_model_config(model_id, model_config)
+
+        return {
+            "status": "updated",
+            "model_id": model_id,
+            "provider_id": request.provider_id,
+        }
+
+    @app.post("/api/providers/migrate")
+    async def migrate_to_multi_provider():
+        """Migrate legacy single-provider config to multi-provider format.
+
+        Creates a provider definition from the existing ProviderConfig
+        if no providers are configured yet.
+        """
+        tl = get_threadlight()
+
+        if tl.config.providers:
+            return {
+                "status": "skipped",
+                "message": "Providers already configured",
+                "count": len(tl.config.providers),
+            }
+
+        tl.config.migrate_single_provider_to_multi()
+        tl.config.mark_changed()
+
+        return {
+            "status": "migrated",
+            "providers": list(tl.config.providers.keys()),
+            "count": len(tl.config.providers),
+        }
 
     # ========================================================================
     # Import Endpoints

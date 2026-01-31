@@ -51,6 +51,7 @@ class ChatManager:
         self,
         messages: list['ProviderMessage'],
         tools: Optional[list[dict[str, Any]]] = None,
+        model_id: Optional[str] = None,
         **kwargs: Any
     ) -> 'ProviderResponse':
         """
@@ -59,9 +60,13 @@ class ChatManager:
         If the model returns tool_calls, executes them and sends results
         back to the model until it returns a text response.
 
+        Supports multi-provider routing: if model_id is specified and the model
+        has a provider_id configured, the request is routed to that provider.
+
         Args:
             messages: Conversation messages
             tools: Tool definitions (None to disable)
+            model_id: Model to use (for multi-provider routing)
             **kwargs: Provider options
 
         Returns:
@@ -72,11 +77,27 @@ class ChatManager:
         iteration = 0
         accumulated_tool_results: list['ToolResult'] = []
 
+        # Determine which provider to use
+        # If model_id specified and multi-provider is configured, use ProviderManager
+        use_provider_manager = (
+            model_id is not None and
+            hasattr(self.tl, 'provider_manager') and
+            self.tl.config.providers
+        )
+
         while iteration < MAX_TOOL_ITERATIONS:
             iteration += 1
 
-            # Make the API call
-            response = self.tl.provider.complete(messages, tools=tools, **kwargs)
+            # Make the API call - route to appropriate provider
+            if use_provider_manager:
+                response = self.tl.provider_manager.complete(
+                    model_id=model_id,
+                    messages=messages,
+                    tools=tools,
+                    **kwargs
+                )
+            else:
+                response = self.tl.provider.complete(messages, tools=tools, **kwargs)
 
             # If no tool calls, we're done
             if not response.has_tool_calls:
@@ -197,12 +218,24 @@ class ChatManager:
         message: str,
         history: Optional[list[dict[str, str]]] = None,
         context_mode: Optional['ContextMode'] = None,
+        model_id: Optional[str] = None,
         **kwargs: Any
     ) -> Iterator[str]:
         """
         Stream a response token by token.
 
-        Yields text chunks as they arrive.
+        Supports multi-provider routing: if model_id is specified and the model
+        has a provider_id configured, the request is routed to that provider.
+
+        Args:
+            message: User message
+            history: Conversation history
+            context_mode: Context composition mode
+            model_id: Model to use (for multi-provider routing)
+            **kwargs: Additional provider options
+
+        Yields:
+            Text chunks as they arrive.
         """
         from threadlight.providers.base import ProviderMessage
 
@@ -220,4 +253,14 @@ class ChatManager:
 
         messages.append(ProviderMessage(role="user", content=message))
 
-        yield from self.tl.provider.stream(messages, **kwargs)
+        # Determine which provider to use
+        use_provider_manager = (
+            model_id is not None and
+            hasattr(self.tl, 'provider_manager') and
+            self.tl.config.providers
+        )
+
+        if use_provider_manager:
+            yield from self.tl.provider_manager.stream(model_id=model_id, messages=messages, **kwargs)
+        else:
+            yield from self.tl.provider.stream(messages, **kwargs)

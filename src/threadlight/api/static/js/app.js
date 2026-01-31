@@ -111,6 +111,20 @@ function threadlightApp() {
         providerModelsLastFetched: null,  // Timestamp for cache invalidation
         providerModelsCacheDuration: 5 * 60 * 1000,  // Cache for 5 minutes
 
+        // Multi-provider state (named providers)
+        namedProviders: [],  // List of ProviderDefinition objects
+        showAddProviderModal: false,
+        editingProviderId: null,  // ID of provider being edited
+        providerForm: {
+            id: '',
+            name: '',
+            type: 'openai',
+            api_key: '',
+            api_key_env_var: '',
+            api_base: '',
+            default_model: '',
+        },
+
         // Model configuration state
         currentModelId: '',
         currentModelConfig: {
@@ -280,6 +294,7 @@ function threadlightApp() {
             await this.loadModelScopeConfig();
             await this.loadProfiles();
             await this.loadProviderConfig();
+            await this.loadNamedProviders();
 
             // Connect WebSocket
             this.connectWebSocket();
@@ -2086,6 +2101,196 @@ function threadlightApp() {
             return model?.name || modelId;
         },
 
+        // Named Provider Management Functions
+        async loadNamedProviders() {
+            try {
+                const response = await fetch('/api/providers');
+                if (!response.ok) throw new Error('Failed to load providers');
+                const data = await response.json();
+                this.namedProviders = data.providers || [];
+                console.log('[loadNamedProviders] Loaded', this.namedProviders.length, 'providers');
+            } catch (error) {
+                console.error('Failed to load named providers:', error);
+                this.namedProviders = [];
+            }
+        },
+
+        async migrateToMultiProvider() {
+            try {
+                const response = await fetch('/api/providers/migrate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'migrated') {
+                    await this.loadNamedProviders();
+                    this.showToast('Provider configuration migrated successfully');
+                } else if (data.status === 'skipped') {
+                    this.showToast(data.message, 'warning');
+                } else {
+                    throw new Error(data.detail || 'Migration failed');
+                }
+            } catch (error) {
+                this.showToast('Migration failed: ' + error.message, 'error');
+            }
+        },
+
+        async testNamedProvider(providerId) {
+            try {
+                const response = await fetch(`/api/providers/${providerId}/test`, {
+                    method: 'POST',
+                });
+
+                const data = await response.json();
+
+                // Update the provider's health status in the list
+                const provider = this.namedProviders.find(p => p.id === providerId);
+                if (provider) {
+                    provider.is_healthy = data.status === 'success';
+                    provider.last_checked = new Date().toISOString();
+                }
+
+                if (data.status === 'success') {
+                    this.showToast(`Provider "${providerId}" is healthy`);
+                } else {
+                    this.showToast(`Provider test failed: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                this.showToast('Provider test failed: ' + error.message, 'error');
+            }
+        },
+
+        editProvider(providerId) {
+            const provider = this.namedProviders.find(p => p.id === providerId);
+            if (!provider) {
+                this.showToast('Provider not found', 'error');
+                return;
+            }
+
+            // Populate form with existing data
+            this.providerForm = {
+                id: provider.id,
+                name: provider.name,
+                type: provider.type,
+                api_key: '',  // Don't prefill API key for security
+                api_key_env_var: provider.api_key_env_var || '',
+                api_base: provider.api_base || (provider.endpoints && provider.endpoints.length > 0 ? provider.endpoints[0].url : ''),
+                default_model: provider.default_model || '',
+            };
+
+            this.editingProviderId = providerId;
+        },
+
+        async deleteNamedProvider(providerId) {
+            this.showConfirm(
+                'Delete Provider',
+                `Are you sure you want to delete the provider "${providerId}"? Models using this provider will fall back to the default provider.`,
+                async () => {
+                    try {
+                        const response = await fetch(`/api/providers/${providerId}`, {
+                            method: 'DELETE',
+                        });
+
+                        if (!response.ok) {
+                            const data = await response.json();
+                            throw new Error(data.detail || 'Failed to delete provider');
+                        }
+
+                        await this.loadNamedProviders();
+                        this.showToast('Provider deleted');
+                    } catch (error) {
+                        this.showToast('Failed to delete provider: ' + error.message, 'error');
+                    }
+                },
+                'Delete',
+                'Cancel'
+            );
+        },
+
+        async saveProvider() {
+            const isEditing = !!this.editingProviderId;
+            const providerId = isEditing ? this.editingProviderId : this.providerForm.id;
+
+            // Validation
+            if (!providerId) {
+                this.showToast('Provider ID is required', 'error');
+                return;
+            }
+            if (!this.providerForm.name) {
+                this.showToast('Provider name is required', 'error');
+                return;
+            }
+
+            // Build the payload
+            const payload = {
+                name: this.providerForm.name,
+                type: this.providerForm.type,
+                default_model: this.providerForm.default_model || null,
+            };
+
+            // Handle API key - either direct value or env var
+            if (this.providerForm.api_key) {
+                payload.api_key = this.providerForm.api_key;
+            }
+            if (this.providerForm.api_key_env_var) {
+                payload.api_key_env_var = this.providerForm.api_key_env_var;
+            }
+
+            // Handle endpoints
+            if (this.providerForm.api_base) {
+                payload.endpoints = [{
+                    url: this.providerForm.api_base,
+                    name: 'Primary',
+                    priority: 0,
+                }];
+            }
+
+            try {
+                let response;
+                if (isEditing) {
+                    response = await fetch(`/api/providers/${providerId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                } else {
+                    payload.id = providerId;
+                    response = await fetch('/api/providers', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                }
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to save provider');
+                }
+
+                await this.loadNamedProviders();
+                this.showAddProviderModal = false;
+                this.editingProviderId = null;
+                this.resetProviderForm();
+                this.showToast(isEditing ? 'Provider updated' : 'Provider created');
+            } catch (error) {
+                this.showToast('Failed to save provider: ' + error.message, 'error');
+            }
+        },
+
+        resetProviderForm() {
+            this.providerForm = {
+                id: '',
+                name: '',
+                type: 'openai',
+                api_key: '',
+                api_key_env_var: '',
+                api_base: '',
+                default_model: '',
+            };
+        },
+
         // Per-profile memory isolation functions
         async togglePerProfileIsolation() {
             const oldValue = this.perProfileIsolation;
@@ -3498,14 +3703,6 @@ function threadlightApp() {
                     requires: 'Model pool (order matters)',
                     example: 'Request 1 → GPT-4o, Request 2 → Claude, Request 3 → GPT-4o, ...',
                 },
-                'round_robin': {
-                    name: 'Round Robin',
-                    category: 'basic',
-                    description: 'Similar to alternating - cycles through models sequentially with conversation context.',
-                    when_to_use: 'Best for: Load balancing across equivalent models',
-                    requires: 'Model pool (order matters)',
-                    example: 'Distributes requests evenly across all pool models',
-                },
                 'weighted': {
                     name: 'Weighted Random',
                     category: 'advanced',
@@ -3551,7 +3748,7 @@ function threadlightApp() {
         },
 
         isBasicStrategy(strategy) {
-            return ['single', 'alternating', 'round_robin'].includes(strategy);
+            return ['single', 'alternating'].includes(strategy);
         },
 
         isAdvancedStrategy(strategy) {
@@ -3575,7 +3772,7 @@ function threadlightApp() {
         },
 
         strategyPoolOrderMatters(strategy) {
-            return ['alternating', 'round_robin'].includes(strategy);
+            return strategy === 'alternating';
         },
 
         getModelPoolPlaceholder(strategy) {
