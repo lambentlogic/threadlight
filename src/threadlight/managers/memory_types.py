@@ -270,7 +270,7 @@ class CustomTypeManager:
         display_name: str,
         fields: list[dict[str, Any]],
         description: str = "",
-        display_output_template: str = "",
+        display_template: str = "",
         icon: str = "file-text",
     ) -> 'CustomTypeDefinition':
         """
@@ -285,8 +285,10 @@ class CustomTypeManager:
                     - required: Whether field is required (optional, default True)
                     - default: Default value (optional)
                     - help_text: Help text for UI (optional)
+                    - output_template: Template for field output (optional)
+                    - label: Display label for field (optional)
             description: Description of what this type is for
-            display_output_template: Template for display, e.g., "{name} ({status})"
+            display_template: Template for display, e.g., "{name} ({status})"
             icon: Icon name for UI (default: "file-text")
 
         Returns:
@@ -307,6 +309,8 @@ class CustomTypeManager:
                 required=f.get("required", True),
                 default=f.get("default"),
                 help_text=f.get("help_text", ""),
+                output_template=f.get("output_template", ""),
+                label=f.get("label", ""),
             ))
 
         # Create the type definition
@@ -315,7 +319,7 @@ class CustomTypeManager:
             display_name=display_name,
             description=description,
             fields=field_defs,
-            display_output_template=display_output_template or f"{{{field_defs[0].name if field_defs else 'type_id'}}}",
+            display_template=display_template or f"{{{field_defs[0].name if field_defs else 'type_id'}}}",
             icon=icon,
         )
 
@@ -328,21 +332,52 @@ class CustomTypeManager:
         logger.info(f"Created custom memory type: {type_id}")
         return type_def
 
-    def list(self, include_builtin: bool = True) -> list[dict[str, Any]]:
+    def list(self, include_builtin: bool = True, include_hidden: bool = False) -> list[dict[str, Any]]:
         """
         List all available memory types (built-in + custom).
 
         Args:
             include_builtin: Whether to include built-in types
+            include_hidden: Whether to include hidden built-in types
 
         Returns:
             List of type information dictionaries
         """
         types = []
 
-        # Built-in types
+        # Get hidden and customized built-in type info
+        hidden_type_ids = set(self.tl.storage.list_hidden_builtin_types())
+        customizations = {c["type_id"]: c for c in self.tl.storage.list_builtin_customizations()}
+
+        # Built-in types (with customizations applied)
         if include_builtin:
-            types.extend(BUILTIN_TYPES.copy())
+            for builtin in BUILTIN_TYPES:
+                type_id = builtin["type_id"]
+
+                # Skip hidden types unless include_hidden is True
+                if type_id in hidden_type_ids and not include_hidden:
+                    continue
+
+                # Apply customizations if any
+                type_data = builtin.copy()
+                if type_id in customizations:
+                    custom = customizations[type_id]
+                    if custom.get("display_name"):
+                        type_data["display_name"] = custom["display_name"]
+                    if custom.get("description"):
+                        type_data["description"] = custom["description"]
+                    if custom.get("fields"):
+                        type_data["fields"] = custom["fields"]
+                    if custom.get("display_template"):
+                        type_data["display_template"] = custom["display_template"]
+                    if custom.get("icon"):
+                        type_data["icon"] = custom["icon"]
+                    type_data["is_customized"] = True
+
+                if type_id in hidden_type_ids:
+                    type_data["is_hidden"] = True
+
+                types.append(type_data)
 
         # User-defined custom types from storage
         custom_types = self.tl.storage.list_custom_types()
@@ -352,12 +387,13 @@ class CustomTypeManager:
 
         return types
 
-    def get(self, type_id: str) -> Optional[dict[str, Any]]:
+    def get(self, type_id: str, include_hidden: bool = False) -> Optional[dict[str, Any]]:
         """
         Get a specific memory type definition.
 
         Args:
             type_id: The type identifier
+            include_hidden: Whether to return hidden built-in types
 
         Returns:
             Type definition dictionary, or None if not found
@@ -368,9 +404,9 @@ class CustomTypeManager:
             custom_type["is_builtin"] = False
             return custom_type
 
-        # Check built-in types
+        # Check built-in types (with customizations applied)
         if type_id in BUILTIN_TYPE_IDS:
-            all_types = self.list(include_builtin=True)
+            all_types = self.list(include_builtin=True, include_hidden=include_hidden)
             for t in all_types:
                 if t["type_id"] == type_id:
                     return t
@@ -383,34 +419,82 @@ class CustomTypeManager:
         display_name: Optional[str] = None,
         description: Optional[str] = None,
         fields: Optional[list[dict[str, Any]]] = None,
-        display_output_template: Optional[str] = None,
+        display_template: Optional[str] = None,
         icon: Optional[str] = None,
     ) -> bool:
         """
-        Update an existing custom memory type.
+        Update an existing memory type.
 
-        Cannot update built-in types.
+        For built-in types, this creates/updates a customization overlay.
+        For custom types, this updates the type directly.
 
         Args:
             type_id: The type identifier to update
             display_name: New display name (optional)
             description: New description (optional)
             fields: New field definitions (optional)
-            display_output_template: New display output_template (optional)
+            display_template: New display template (optional)
             icon: New icon (optional)
 
         Returns:
-            True if updated, False if not found or is a built-in type
+            True if updated, False if not found
         """
         from threadlight.capsules.custom_types import CustomTypeDefinition
         from threadlight.capsules.base import register_custom_type_definition
 
-        # Can't update built-in types
+        # Handle built-in types - save customization
         if type_id in BUILTIN_TYPE_IDS:
-            logger.warning(f"Cannot update built-in type: {type_id}")
-            return False
+            # Get existing customization if any
+            existing = self.tl.storage.get_builtin_customization(type_id) or {}
 
-        # Get existing type
+            # Build customization dict
+            customization: dict[str, Any] = {
+                "is_hidden": existing.get("is_hidden", False),
+                "created_at": existing.get("created_at"),
+            }
+
+            # Process fields if provided
+            if fields is not None:
+                field_defs = []
+                for f in fields:
+                    field_defs.append({
+                        "name": f["name"],
+                        "type": f.get("type") or f.get("field_type", "string"),
+                        "required": f.get("required", True),
+                        "default": f.get("default"),
+                        "help_text": f.get("help_text", ""),
+                        "output_template": f.get("output_template", ""),
+                        "label": f.get("label", ""),
+                    })
+                customization["fields"] = field_defs
+            elif existing.get("fields"):
+                customization["fields"] = existing["fields"]
+
+            if display_name is not None:
+                customization["display_name"] = display_name
+            elif existing.get("display_name"):
+                customization["display_name"] = existing["display_name"]
+
+            if description is not None:
+                customization["description"] = description
+            elif existing.get("description"):
+                customization["description"] = existing["description"]
+
+            if display_template is not None:
+                customization["display_template"] = display_template
+            elif existing.get("display_template"):
+                customization["display_template"] = existing["display_template"]
+
+            if icon is not None:
+                customization["icon"] = icon
+            elif existing.get("icon"):
+                customization["icon"] = existing["icon"]
+
+            self.tl.storage.save_builtin_customization(type_id, customization)
+            logger.info(f"Updated built-in type customization: {type_id}")
+            return True
+
+        # Handle custom types - update directly
         existing = self.tl.storage.get_custom_type(type_id)
         if not existing:
             return False
@@ -427,14 +511,16 @@ class CustomTypeManager:
             for f in fields:
                 field_defs.append({
                     "name": f["name"],
-                    "type": f["type"],
+                    "type": f.get("type") or f.get("field_type", "string"),
                     "required": f.get("required", True),
                     "default": f.get("default"),
                     "help_text": f.get("help_text", ""),
+                    "output_template": f.get("output_template", ""),
+                    "label": f.get("label", ""),
                 })
             updates["fields"] = field_defs
-        if display_output_template is not None:
-            updates["display_output_template"] = display_output_template
+        if display_template is not None:
+            updates["display_template"] = display_template
         if icon is not None:
             updates["icon"] = icon
 
@@ -452,25 +538,28 @@ class CustomTypeManager:
 
     def delete(self, type_id: str) -> bool:
         """
-        Delete a custom memory type.
+        Delete or hide a memory type.
 
-        Cannot delete built-in types.
+        For built-in types, this hides them (soft delete).
+        For custom types, this deletes them permanently.
         Note: This does not delete existing memories of this type.
 
         Args:
-            type_id: The type identifier to delete
+            type_id: The type identifier to delete/hide
 
         Returns:
-            True if deleted, False if not found or is a built-in type
+            True if deleted/hidden, False if not found
         """
         from threadlight.capsules.base import unregister_custom_type_definition
 
-        # Can't delete built-in types
+        # Handle built-in types - hide them instead of deleting
         if type_id in BUILTIN_TYPE_IDS:
-            logger.warning(f"Cannot delete built-in type: {type_id}")
-            return False
+            success = self.tl.storage.hide_builtin_type(type_id)
+            if success:
+                logger.info(f"Hidden built-in type: {type_id}")
+            return success
 
-        # Delete from storage
+        # Handle custom types - delete them
         success = self.tl.storage.delete_custom_type(type_id)
 
         # Unregister from memory
@@ -478,6 +567,78 @@ class CustomTypeManager:
             unregister_custom_type_definition(type_id)
 
         return success
+
+    def restore(self, type_id: str) -> bool:
+        """
+        Restore a hidden built-in type.
+
+        Args:
+            type_id: The built-in type identifier to restore
+
+        Returns:
+            True if restored, False if not a hidden built-in type
+        """
+        if type_id not in BUILTIN_TYPE_IDS:
+            logger.warning(f"Cannot restore non-built-in type: {type_id}")
+            return False
+
+        success = self.tl.storage.restore_builtin_type(type_id)
+        if success:
+            logger.info(f"Restored built-in type: {type_id}")
+        return success
+
+    def reset_builtin(self, type_id: str) -> bool:
+        """
+        Reset a built-in type to its default configuration.
+
+        This removes all customizations and un-hides the type.
+
+        Args:
+            type_id: The built-in type identifier to reset
+
+        Returns:
+            True if reset, False if not a built-in type or no customization existed
+        """
+        if type_id not in BUILTIN_TYPE_IDS:
+            logger.warning(f"Cannot reset non-built-in type: {type_id}")
+            return False
+
+        success = self.tl.storage.delete_builtin_customization(type_id)
+        if success:
+            logger.info(f"Reset built-in type to defaults: {type_id}")
+        return success
+
+    def list_hidden_builtins(self) -> list[dict[str, Any]]:
+        """
+        List all hidden built-in types.
+
+        Returns:
+            List of hidden built-in type definitions
+        """
+        hidden_ids = set(self.tl.storage.list_hidden_builtin_types())
+        hidden_types = []
+
+        for builtin in BUILTIN_TYPES:
+            if builtin["type_id"] in hidden_ids:
+                type_data = builtin.copy()
+                type_data["is_hidden"] = True
+                hidden_types.append(type_data)
+
+        return hidden_types
+
+    def count_memories_by_type(self, type_id: str) -> int:
+        """
+        Count how many memories exist of a given type.
+
+        Args:
+            type_id: The type identifier
+
+        Returns:
+            Number of memories of this type
+        """
+        from threadlight.storage.base import CapsuleFilter
+        capsules = self.tl.storage.list_capsules(CapsuleFilter(type=type_id))
+        return len(capsules)
 
     def import_example(self, type_id: str) -> Optional['CustomTypeDefinition']:
         """

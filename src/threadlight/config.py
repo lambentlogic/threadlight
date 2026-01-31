@@ -96,7 +96,8 @@ class ProviderDefinition:
     def __post_init__(self) -> None:
         """Initialize provider with defaults."""
         # Resolve API key from environment if using env var
-        if self.api_key is None and self.api_key_env_var:
+        # Use 'not self.api_key' to treat empty strings as missing (same as None)
+        if not self.api_key and self.api_key_env_var:
             self.api_key = os.getenv(self.api_key_env_var)
 
         # Ensure at least one endpoint based on provider type
@@ -190,11 +191,13 @@ class ProviderConfig:
 
     def __post_init__(self) -> None:
         # Track if API key was explicitly set before loading from env
-        if self.api_key is not None:
+        # Use truthiness to exclude empty strings (which are not real keys)
+        if self.api_key:
             self._api_key_explicit = True
 
         # Try to load API key from environment if not provided
-        if self.api_key is None:
+        # Use 'not self.api_key' to treat empty strings as missing (same as None)
+        if not self.api_key:
             self.api_key = os.getenv("NOUS_API_KEY") or os.getenv("OPENAI_API_KEY")
 
         # Migrate legacy api_base to endpoints if needed
@@ -547,7 +550,8 @@ class ThreadlightConfig:
                     "THREADLIGHT_API_BASE",
                     "https://inference-api.nousresearch.com/v1"
                 ),
-                api_key=os.getenv("NOUS_API_KEY") or os.getenv("OPENAI_API_KEY"),
+                # Don't pass api_key here - let ProviderConfig load from env
+                # This ensures _api_key_explicit remains False for env-loaded keys
                 model=os.getenv("THREADLIGHT_MODEL", "Hermes-4.3-36B"),
             ),
             storage=StorageConfig(

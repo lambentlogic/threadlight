@@ -1609,6 +1609,11 @@ class Threadlight:
     # === Memory Type Management ===
     # Delegated to CustomTypeManager for implementation
 
+    @property
+    def memory_types(self) -> CustomTypeManager:
+        """Get the memory types manager for advanced operations."""
+        return self._custom_type_manager
+
     def create_memory_type(
         self,
         type_id: str,

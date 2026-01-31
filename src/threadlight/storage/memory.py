@@ -32,6 +32,8 @@ class InMemoryStorage(StorageBackend):
         self.conversations: dict[str, Conversation] = {}
         self.messages: dict[str, Message] = {}
         self.profiles: dict[str, Profile] = {}
+        self.custom_types: dict[str, dict[str, Any]] = {}
+        self.builtin_customizations: dict[str, dict[str, Any]] = {}
 
     def initialize(self) -> None:
         """Nothing to initialize for in-memory storage."""
@@ -44,6 +46,8 @@ class InMemoryStorage(StorageBackend):
         self.conversations.clear()
         self.messages.clear()
         self.profiles.clear()
+        self.custom_types.clear()
+        self.builtin_customizations.clear()
 
     # Capsule CRUD
 
@@ -472,3 +476,124 @@ class InMemoryStorage(StorageBackend):
         # Sort by updated_at descending
         profiles.sort(key=lambda p: p.updated_at, reverse=True)
         return profiles
+
+    # ========================================================================
+    # Custom Type Operations
+    # ========================================================================
+
+    def save_custom_type(self, type_def: dict[str, Any]) -> str:
+        """Save a custom type definition."""
+        type_id = type_def["type_id"]
+        self.custom_types[type_id] = type_def.copy()
+        return type_id
+
+    def get_custom_type(self, type_id: str) -> Optional[dict[str, Any]]:
+        """Get a custom type definition."""
+        return self.custom_types.get(type_id)
+
+    def list_custom_types(self) -> list[dict[str, Any]]:
+        """List all custom type definitions."""
+        return list(self.custom_types.values())
+
+    def update_custom_type(self, type_id: str, updates: dict[str, Any]) -> bool:
+        """Update a custom type definition."""
+        if type_id not in self.custom_types:
+            return False
+        for key, value in updates.items():
+            if key != "type_id":
+                self.custom_types[type_id][key] = value
+        self.custom_types[type_id]["updated_at"] = datetime.utcnow().isoformat()
+        return True
+
+    def delete_custom_type(self, type_id: str) -> bool:
+        """Delete a custom type definition."""
+        if type_id not in self.custom_types:
+            return False
+        del self.custom_types[type_id]
+        return True
+
+    # ========================================================================
+    # Built-in Type Customization Operations
+    # ========================================================================
+
+    def get_builtin_customization(self, type_id: str) -> Optional[dict[str, Any]]:
+        """Get customization for a built-in type."""
+        return self.builtin_customizations.get(type_id)
+
+    def save_builtin_customization(self, type_id: str, customization: dict[str, Any]) -> None:
+        """Save customization for a built-in type."""
+        self.builtin_customizations[type_id] = {
+            "type_id": type_id,
+            "is_hidden": customization.get("is_hidden", False),
+            "display_name": customization.get("display_name"),
+            "description": customization.get("description"),
+            "fields": customization.get("fields"),
+            "display_template": customization.get("display_template"),
+            "icon": customization.get("icon"),
+            "created_at": customization.get("created_at", datetime.utcnow().isoformat()),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+
+    def hide_builtin_type(self, type_id: str) -> bool:
+        """Mark a built-in type as hidden."""
+        existing = self.builtin_customizations.get(type_id)
+        if existing and existing.get("is_hidden"):
+            return False  # Already hidden
+
+        if existing:
+            existing["is_hidden"] = True
+            existing["updated_at"] = datetime.utcnow().isoformat()
+        else:
+            self.builtin_customizations[type_id] = {
+                "type_id": type_id,
+                "is_hidden": True,
+                "display_name": None,
+                "description": None,
+                "fields": None,
+                "display_template": None,
+                "icon": None,
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        return True
+
+    def restore_builtin_type(self, type_id: str) -> bool:
+        """Restore a hidden built-in type."""
+        existing = self.builtin_customizations.get(type_id)
+        if not existing or not existing.get("is_hidden"):
+            return False
+
+        # Check if there are any other customizations
+        has_customizations = (
+            existing.get("display_name") is not None or
+            existing.get("description") is not None or
+            existing.get("fields") is not None or
+            existing.get("display_template") is not None or
+            existing.get("icon") is not None
+        )
+
+        if has_customizations:
+            existing["is_hidden"] = False
+            existing["updated_at"] = datetime.utcnow().isoformat()
+        else:
+            del self.builtin_customizations[type_id]
+
+        return True
+
+    def list_builtin_customizations(self) -> list[dict[str, Any]]:
+        """List all built-in type customizations."""
+        return list(self.builtin_customizations.values())
+
+    def list_hidden_builtin_types(self) -> list[str]:
+        """List type IDs of all hidden built-in types."""
+        return [
+            c["type_id"] for c in self.builtin_customizations.values()
+            if c.get("is_hidden")
+        ]
+
+    def delete_builtin_customization(self, type_id: str) -> bool:
+        """Delete all customizations for a built-in type."""
+        if type_id not in self.builtin_customizations:
+            return False
+        del self.builtin_customizations[type_id]
+        return True

@@ -163,6 +163,19 @@ class SQLiteStorage(StorageBackend):
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- Built-in type customizations (edits and hides)
+            CREATE TABLE IF NOT EXISTS builtin_type_customizations (
+                type_id TEXT PRIMARY KEY,
+                is_hidden INTEGER DEFAULT 0,
+                display_name TEXT,
+                description TEXT,
+                fields TEXT,
+                display_template TEXT,
+                icon TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
             -- Profiles table for persistent personas
             CREATE TABLE IF NOT EXISTS profiles (
                 id TEXT PRIMARY KEY,
@@ -312,6 +325,26 @@ class SQLiteStorage(StorageBackend):
             self.conn.commit()
         if "approach_to_rituals" not in profile_columns:
             self.conn.execute("ALTER TABLE profiles ADD COLUMN approach_to_rituals TEXT DEFAULT ''")
+            self.conn.commit()
+
+        # Add builtin_type_customizations table if it doesn't exist
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='builtin_type_customizations'"
+        )
+        if cursor.fetchone() is None:
+            self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS builtin_type_customizations (
+                    type_id TEXT PRIMARY KEY,
+                    is_hidden INTEGER DEFAULT 0,
+                    display_name TEXT,
+                    description TEXT,
+                    fields TEXT,
+                    display_template TEXT,
+                    icon TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
             self.conn.commit()
 
     def close(self) -> None:
@@ -1533,6 +1566,202 @@ class SQLiteStorage(StorageBackend):
             "fields": json.loads(row["fields"]) if row["fields"] else [],
             "display_template": row["display_template"] or "{type_id}",
             "icon": row["icon"] or "file-text",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    # ========================================================================
+    # Built-in Type Customization Operations
+    # ========================================================================
+
+    def get_builtin_customization(self, type_id: str) -> Optional[dict[str, Any]]:
+        """
+        Get customization for a built-in type.
+
+        Args:
+            type_id: The built-in type identifier
+
+        Returns:
+            Dictionary containing customization data, or None if not customized
+        """
+        conn = self._ensure_connected()
+
+        row = conn.execute(
+            "SELECT * FROM builtin_type_customizations WHERE type_id = ?",
+            (type_id,)
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        return self._row_to_builtin_customization(row)
+
+    def save_builtin_customization(self, type_id: str, customization: dict[str, Any]) -> None:
+        """
+        Save customization for a built-in type.
+
+        Args:
+            type_id: The built-in type identifier
+            customization: Dictionary of customization fields
+        """
+        conn = self._ensure_connected()
+
+        # Serialize fields if present
+        fields_json = None
+        if "fields" in customization and customization["fields"] is not None:
+            fields_json = json.dumps(customization["fields"])
+
+        conn.execute("""
+            INSERT OR REPLACE INTO builtin_type_customizations
+            (type_id, is_hidden, display_name, description, fields, display_template, icon, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            type_id,
+            customization.get("is_hidden", 0),
+            customization.get("display_name"),
+            customization.get("description"),
+            fields_json,
+            customization.get("display_template"),
+            customization.get("icon"),
+            customization.get("created_at", datetime.utcnow().isoformat()),
+            datetime.utcnow().isoformat(),
+        ))
+        conn.commit()
+
+    def hide_builtin_type(self, type_id: str) -> bool:
+        """
+        Mark a built-in type as hidden.
+
+        Args:
+            type_id: The built-in type identifier
+
+        Returns:
+            True if hidden, False if already hidden
+        """
+        conn = self._ensure_connected()
+
+        # Check if already exists
+        existing = self.get_builtin_customization(type_id)
+        if existing and existing.get("is_hidden"):
+            return False  # Already hidden
+
+        if existing:
+            # Update existing to be hidden
+            conn.execute(
+                "UPDATE builtin_type_customizations SET is_hidden = 1, updated_at = ? WHERE type_id = ?",
+                (datetime.utcnow().isoformat(), type_id)
+            )
+        else:
+            # Create new hidden entry
+            conn.execute("""
+                INSERT INTO builtin_type_customizations (type_id, is_hidden, created_at, updated_at)
+                VALUES (?, 1, ?, ?)
+            """, (type_id, datetime.utcnow().isoformat(), datetime.utcnow().isoformat()))
+
+        conn.commit()
+        return True
+
+    def restore_builtin_type(self, type_id: str) -> bool:
+        """
+        Restore a hidden built-in type (un-hide it).
+
+        Args:
+            type_id: The built-in type identifier
+
+        Returns:
+            True if restored, False if not hidden
+        """
+        conn = self._ensure_connected()
+
+        existing = self.get_builtin_customization(type_id)
+        if not existing or not existing.get("is_hidden"):
+            return False  # Not hidden
+
+        # Check if there are any other customizations
+        has_customizations = (
+            existing.get("display_name") is not None or
+            existing.get("description") is not None or
+            existing.get("fields") is not None or
+            existing.get("display_template") is not None or
+            existing.get("icon") is not None
+        )
+
+        if has_customizations:
+            # Just update is_hidden flag
+            conn.execute(
+                "UPDATE builtin_type_customizations SET is_hidden = 0, updated_at = ? WHERE type_id = ?",
+                (datetime.utcnow().isoformat(), type_id)
+            )
+        else:
+            # Delete the record entirely since there are no other customizations
+            conn.execute(
+                "DELETE FROM builtin_type_customizations WHERE type_id = ?",
+                (type_id,)
+            )
+
+        conn.commit()
+        return True
+
+    def list_builtin_customizations(self) -> list[dict[str, Any]]:
+        """
+        List all built-in type customizations.
+
+        Returns:
+            List of customization dictionaries
+        """
+        conn = self._ensure_connected()
+
+        rows = conn.execute(
+            "SELECT * FROM builtin_type_customizations ORDER BY type_id"
+        ).fetchall()
+
+        return [self._row_to_builtin_customization(row) for row in rows]
+
+    def list_hidden_builtin_types(self) -> list[str]:
+        """
+        List type IDs of all hidden built-in types.
+
+        Returns:
+            List of hidden type IDs
+        """
+        conn = self._ensure_connected()
+
+        rows = conn.execute(
+            "SELECT type_id FROM builtin_type_customizations WHERE is_hidden = 1"
+        ).fetchall()
+
+        return [row["type_id"] for row in rows]
+
+    def delete_builtin_customization(self, type_id: str) -> bool:
+        """
+        Delete all customizations for a built-in type (reset to default).
+
+        Args:
+            type_id: The built-in type identifier
+
+        Returns:
+            True if deleted, False if no customization existed
+        """
+        conn = self._ensure_connected()
+
+        result = conn.execute(
+            "DELETE FROM builtin_type_customizations WHERE type_id = ?",
+            (type_id,)
+        )
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def _row_to_builtin_customization(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Convert a database row to a built-in customization dictionary."""
+        return {
+            "type_id": row["type_id"],
+            "is_hidden": bool(row["is_hidden"]),
+            "display_name": row["display_name"],
+            "description": row["description"],
+            "fields": json.loads(row["fields"]) if row["fields"] else None,
+            "display_template": row["display_template"],
+            "icon": row["icon"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

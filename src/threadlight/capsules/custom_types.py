@@ -156,9 +156,26 @@ class FieldDefinition:
             value_str = str(value)
 
         if self.output_template:
-            # Support both {value} and {field_name} as placeholders
-            result = self.output_template.replace("{value}", value_str)
-            result = result.replace(f"{{{self.name}}}", value_str)
+            # Escape curly braces in user values to prevent template injection.
+            # This prevents user-controlled data containing {value} or {field_name}
+            # from being substituted again or injecting context markers.
+            escaped_value = value_str.replace("{", "{{").replace("}", "}}")
+
+            # Build the result using Python's str.format() for safe substitution.
+            # First, escape curly braces in the template that are NOT our placeholders.
+            template = self.output_template
+            # Replace our specific placeholders with unique tokens
+            template = template.replace("{value}", "\x00VALUE\x00")
+            template = template.replace(f"{{{self.name}}}", "\x00FIELD\x00")
+            # Escape any remaining curly braces (user-defined template content)
+            template = template.replace("{", "{{").replace("}", "}}")
+            # Restore our placeholders as format specifiers
+            template = template.replace("\x00VALUE\x00", "{value}")
+            template = template.replace("\x00FIELD\x00", "{field}")
+            # Now use .format() with escaped user values
+            result = template.format(value=escaped_value, field=escaped_value)
+            # Unescape the doubled braces to get the final output
+            result = result.replace("{{", "{").replace("}}", "}")
             return result
         else:
             display_name = self.label or self.name
@@ -252,14 +269,41 @@ class CustomTypeDefinition:
             Formatted display string
         """
         try:
-            # Use safe formatting that won't raise on missing keys
-            result = self.display_template
+            # Build a mapping of field names to their escaped values.
+            # Escape curly braces in user values to prevent template injection.
+            escaped_values: dict[str, str] = {}
             for field_def in self.fields:
                 key = field_def.name
                 value = content.get(key, "")
                 if isinstance(value, list):
                     value = ", ".join(str(v) for v in value)
-                result = result.replace(f"{{{key}}}", str(value))
+                value_str = str(value)
+                # Escape curly braces in user values to prevent injection
+                escaped_values[key] = value_str.replace("{", "{{").replace("}", "}}")
+
+            # Process the template: replace field placeholders with unique tokens,
+            # escape remaining braces, then restore placeholders for .format()
+            template = self.display_template
+
+            # Replace each {field_name} placeholder with a unique token
+            tokens: dict[str, str] = {}
+            for key in escaped_values:
+                token = f"\x00FIELD_{key}\x00"
+                tokens[key] = token
+                template = template.replace(f"{{{key}}}", token)
+
+            # Escape any remaining curly braces in the template
+            template = template.replace("{", "{{").replace("}", "}}")
+
+            # Restore our placeholders as format specifiers
+            for key, token in tokens.items():
+                template = template.replace(token, f"{{{key}}}")
+
+            # Use .format() with escaped user values
+            result = template.format(**escaped_values)
+
+            # Unescape doubled braces to get the final output
+            result = result.replace("{{", "{").replace("}}", "}")
             return result
         except Exception:
             # Fall back to simple format

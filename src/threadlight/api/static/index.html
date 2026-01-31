@@ -1245,14 +1245,23 @@
                                         <div class="flex items-start justify-between mb-2">
                                             <div class="flex items-center gap-2">
                                                 <span class="font-medium text-threadlight-memory" x-text="memType.display_name || memType.type_id"></span>
-                                                <span x-show="memType.is_builtin" class="text-xs px-2 py-0.5 bg-threadlight-accent/10 text-threadlight-accent rounded">built-in</span>
+                                                <span x-show="memType.is_builtin && !memType.is_customized" class="text-xs px-2 py-0.5 bg-threadlight-accent/10 text-threadlight-accent rounded">built-in</span>
+                                                <span x-show="memType.is_builtin && memType.is_customized" class="text-xs px-2 py-0.5 bg-yellow-500/10 text-yellow-400 rounded">customized</span>
                                                 <span x-show="!memType.is_builtin" class="text-xs px-2 py-0.5 bg-threadlight-memory/10 text-threadlight-memory rounded">custom</span>
                                             </div>
-                                            <button x-show="!memType.is_builtin" @click.stop="deleteMemoryType(memType.type_id)" class="p-1 text-threadlight-muted hover:text-red-400 transition-colors">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                                </svg>
-                                            </button>
+                                            <div class="flex items-center gap-1">
+                                                <button @click.stop="openEditMemoryType(memType)" class="p-1 text-threadlight-muted hover:text-threadlight-accent transition-colors" title="Edit">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                                    </svg>
+                                                </button>
+                                                <button @click.stop="deleteMemoryType(memType.type_id)" class="p-1 text-threadlight-muted hover:text-red-400 transition-colors" :title="memType.is_builtin ? 'Hide' : 'Delete'">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path x-show="!memType.is_builtin" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                                        <path x-show="memType.is_builtin" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                                                    </svg>
+                                                </button>
+                                            </div>
                                         </div>
                                         <p class="text-sm text-threadlight-muted mb-3" x-text="memType.description || 'No description'"></p>
                                         <div class="flex flex-wrap gap-1">
@@ -1267,6 +1276,22 @@
                                 </template>
                                 <div x-show="memoryTypes.length === 0" class="text-center py-4 text-threadlight-muted text-sm">
                                     No memory types available.
+                                </div>
+                            </div>
+
+                            <!-- Hidden Built-in Types -->
+                            <div x-show="hiddenBuiltinTypes.length > 0" class="mb-4 p-3 bg-threadlight-surface/50 rounded-lg border border-threadlight-border/30">
+                                <h4 class="text-sm font-medium text-threadlight-muted mb-2">Hidden Types</h4>
+                                <div class="flex flex-wrap gap-2">
+                                    <template x-for="hiddenType in hiddenBuiltinTypes" :key="hiddenType.type_id">
+                                        <button @click="restoreMemoryType(hiddenType.type_id)"
+                                            class="px-3 py-1 text-xs bg-threadlight-border text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-border/80 rounded-lg transition-colors flex items-center gap-1">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                            </svg>
+                                            <span x-text="hiddenType.display_name || hiddenType.type_id"></span>
+                                        </button>
+                                    </template>
                                 </div>
                             </div>
 
@@ -2044,6 +2069,10 @@
                     <div class="flex items-center justify-between mb-6">
                         <h2 class="text-lg font-semibold">Profiles</h2>
                         <div class="flex gap-2">
+                            <button @click="openTemplatesModal()"
+                                class="px-4 py-2 bg-threadlight-elevated hover:bg-threadlight-border text-threadlight-text rounded-lg transition-colors">
+                                Start from Example
+                            </button>
                             <button @click="openProfileEditor()"
                                 class="px-4 py-2 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-lg transition-colors">
                                 Create Profile
@@ -2151,16 +2180,22 @@
                                         Profiles let you customize how the AI responds. Set different personalities,
                                         styles, and memory settings for different use cases - like work, creative writing, or casual chat.
                                     </p>
-                                    <button @click="openProfileEditor()"
-                                        class="px-6 py-3 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-xl font-medium transition-colors inline-flex items-center gap-2">
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                                        </svg>
-                                        Create Profile
-                                    </button>
-                                    <p class="text-xs text-threadlight-muted mt-4">
-                                        Or import an existing profile using the Import button above
-                                    </p>
+                                    <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                                        <button @click="openTemplatesModal()"
+                                            class="px-6 py-3 bg-threadlight-elevated hover:bg-threadlight-border text-threadlight-text rounded-xl font-medium transition-colors inline-flex items-center justify-center gap-2">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/>
+                                            </svg>
+                                            Start from Example
+                                        </button>
+                                        <button @click="openProfileEditor()"
+                                            class="px-6 py-3 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-xl font-medium transition-colors inline-flex items-center justify-center gap-2">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                            </svg>
+                                            Create from Scratch
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </template>
@@ -2852,7 +2887,9 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                     <div class="flex items-center justify-between mb-4">
                         <div class="flex items-center gap-2">
                             <span class="px-3 py-1 rounded bg-threadlight-memory/20 text-threadlight-memory">Memory Type</span>
-                            <span x-show="selectedMemoryType?.is_builtin" class="text-xs px-2 py-0.5 bg-threadlight-accent/10 text-threadlight-accent rounded">built-in</span>
+                            <span x-show="selectedMemoryType?.is_builtin && !selectedMemoryType?.is_customized" class="text-xs px-2 py-0.5 bg-threadlight-accent/10 text-threadlight-accent rounded">built-in</span>
+                            <span x-show="selectedMemoryType?.is_builtin && selectedMemoryType?.is_customized" class="text-xs px-2 py-0.5 bg-yellow-500/10 text-yellow-400 rounded">customized</span>
+                            <span x-show="!selectedMemoryType?.is_builtin" class="text-xs px-2 py-0.5 bg-threadlight-memory/10 text-threadlight-memory rounded">custom</span>
                         </div>
                         <button @click="selectedMemoryType = null" class="text-threadlight-muted hover:text-threadlight-text">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2905,10 +2942,20 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                             <code class="block p-2 bg-threadlight-bg rounded text-sm text-threadlight-accent" x-text="selectedMemoryType?.display_template"></code>
                         </div>
 
-                        <div x-show="!selectedMemoryType?.is_builtin" class="flex gap-2 pt-4 border-t border-threadlight-border">
-                            <button @click="deleteMemoryType(selectedMemoryType?.type_id)"
-                                class="px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors">
-                                Delete
+                        <!-- Action buttons for all types -->
+                        <div class="flex flex-wrap gap-2 pt-4 border-t border-threadlight-border">
+                            <button @click="openEditMemoryType(selectedMemoryType); selectedMemoryType = null"
+                                class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
+                                Edit
+                            </button>
+                            <button x-show="selectedMemoryType?.is_builtin && selectedMemoryType?.is_customized"
+                                @click="resetMemoryType(selectedMemoryType?.type_id); selectedMemoryType = null"
+                                class="px-4 py-2 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg transition-colors">
+                                Reset to Default
+                            </button>
+                            <button @click="deleteMemoryType(selectedMemoryType?.type_id); selectedMemoryType = null"
+                                class="px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors"
+                                x-text="selectedMemoryType?.is_builtin ? 'Hide' : 'Delete'">
                             </button>
                         </div>
                     </div>
@@ -2916,7 +2963,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
             </div>
         </div>
 
-        <!-- Memory Type Editor Modal -->
+        <!-- Memory Type Editor Modal (Create or Edit) -->
         <div x-show="showMemoryTypeEditor" x-cloak
             x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0"
@@ -2925,7 +2972,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
             x-transition:leave-start="opacity-100"
             x-transition:leave-end="opacity-0"
             class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-50"
-            @click.self="showMemoryTypeEditor = false">
+            @click.self="closeMemoryTypeEditor()">
             <div class="bg-threadlight-surface rounded-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto shadow-2xl"
                 x-transition:enter="transition ease-out duration-200"
                 x-transition:enter-start="opacity-0 scale-95"
@@ -2935,15 +2982,121 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                 x-transition:leave-end="opacity-0 scale-95">
                 <div class="p-6">
                     <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-lg font-medium">Create Memory Type</h3>
-                        <button @click="showMemoryTypeEditor = false" class="text-threadlight-muted hover:text-threadlight-text">
+                        <div class="flex items-center gap-2">
+                            <h3 class="text-lg font-medium" x-text="editingMemoryType ? 'Edit Memory Type' : 'Create Memory Type'"></h3>
+                            <span x-show="editingMemoryType?.is_builtin" class="text-xs px-2 py-0.5 bg-threadlight-accent/10 text-threadlight-accent rounded">built-in</span>
+                        </div>
+                        <button @click="closeMemoryTypeEditor()" class="text-threadlight-muted hover:text-threadlight-text">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                             </svg>
                         </button>
                     </div>
 
-                    <form @submit.prevent="createMemoryType()" class="space-y-4">
+                    <!-- Edit Mode -->
+                    <form x-show="editingMemoryType" @submit.prevent="saveMemoryType()" class="space-y-4">
+                        <div class="grid gap-4 sm:grid-cols-2">
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">Type ID</label>
+                                <input type="text" x-model="editingMemoryType.type_id" disabled
+                                    class="w-full bg-threadlight-bg border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-muted cursor-not-allowed">
+                                <p class="text-xs text-threadlight-muted mt-1">Type ID cannot be changed</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-threadlight-muted mb-1">Display Name</label>
+                                <input type="text" x-model="editingMemoryType.display_name" placeholder="My Custom Type"
+                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-memory">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Description</label>
+                            <textarea x-model="editingMemoryType.description" placeholder="Explain what this type is for..."
+                                rows="2"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-memory resize-none"></textarea>
+                        </div>
+
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block text-sm text-threadlight-muted">Fields</label>
+                                <button type="button" @click="addEditingField()"
+                                    class="text-xs px-2 py-1 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded transition-colors">
+                                    + Add Field
+                                </button>
+                            </div>
+                            <div class="space-y-3">
+                                <template x-for="(field, index) in editingMemoryType?.fields || []" :key="index">
+                                    <div class="p-4 bg-threadlight-bg rounded-lg border border-threadlight-border/50">
+                                        <div class="flex justify-between items-start mb-3">
+                                            <span class="text-sm font-medium text-threadlight-memory">Field <span x-text="index + 1"></span></span>
+                                            <button type="button" @click="removeEditingField(index)"
+                                                class="p-1 text-threadlight-muted hover:text-red-400 transition-colors">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                        <div class="grid gap-3">
+                                            <div class="grid gap-2 sm:grid-cols-3">
+                                                <div>
+                                                    <label class="block text-xs text-threadlight-muted mb-1">Field Name</label>
+                                                    <input type="text" x-model="field.name" placeholder="field_name"
+                                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded px-3 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none">
+                                                </div>
+                                                <div>
+                                                    <label class="block text-xs text-threadlight-muted mb-1">Type</label>
+                                                    <select x-model="field.field_type"
+                                                        class="w-full bg-threadlight-elevated border border-threadlight-border rounded px-3 py-1.5 text-sm text-threadlight-text focus:outline-none">
+                                                        <option value="string">String</option>
+                                                        <option value="text">Text (long)</option>
+                                                        <option value="number">Number</option>
+                                                        <option value="date">Date</option>
+                                                        <option value="list">List</option>
+                                                    </select>
+                                                </div>
+                                                <div class="flex items-end pb-1">
+                                                    <label class="flex items-center gap-2 text-sm text-threadlight-muted">
+                                                        <input type="checkbox" x-model="field.required" class="rounded">
+                                                        Required
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs text-threadlight-muted mb-1">Help Text</label>
+                                                <input type="text" x-model="field.help_text" placeholder="Describe what this field is for..."
+                                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded px-3 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none">
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs text-threadlight-muted mb-1">Output Format</label>
+                                                <input type="text" x-model="field.output_template" placeholder="e.g., There is {tone} in your tone."
+                                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded px-3 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Display Template (optional)</label>
+                            <input type="text" x-model="editingMemoryType.display_template" placeholder="{field_name} - {another_field}"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-memory font-mono text-sm">
+                        </div>
+
+                        <div class="flex gap-2 pt-4 border-t border-threadlight-border">
+                            <button type="submit"
+                                class="px-6 py-2 bg-threadlight-memory hover:bg-threadlight-memory/80 text-white rounded-lg transition-colors">
+                                Save Changes
+                            </button>
+                            <button type="button" @click="closeMemoryTypeEditor()"
+                                class="px-6 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Create Mode -->
+                    <form x-show="!editingMemoryType" @submit.prevent="createMemoryType()" class="space-y-4">
                         <div class="grid gap-4 sm:grid-cols-2">
                             <div>
                                 <label class="block text-sm text-threadlight-muted mb-1">Type ID</label>
@@ -3046,7 +3199,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                 class="px-6 py-2 bg-threadlight-memory hover:bg-threadlight-memory/80 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                                 Create Type
                             </button>
-                            <button type="button" @click="showMemoryTypeEditor = false"
+                            <button type="button" @click="closeMemoryTypeEditor()"
                                 class="px-6 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
                                 Cancel
                             </button>
@@ -3108,6 +3261,60 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                         <div x-show="exampleTypes.length === 0" class="text-center py-8 text-threadlight-muted">
                             No example types available.
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Profile Templates Modal -->
+        <div x-show="showTemplatesModal" x-cloak
+            x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0"
+            x-transition:enter-end="opacity-100"
+            x-transition:leave="transition ease-in duration-150"
+            x-transition:leave-start="opacity-100"
+            x-transition:leave-end="opacity-0"
+            class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-50"
+            @click.self="closeTemplatesModal()">
+            <div class="bg-threadlight-surface rounded-2xl max-w-xl w-full mx-4 shadow-2xl"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 scale-95"
+                x-transition:enter-end="opacity-100 scale-100"
+                x-transition:leave="transition ease-in duration-150"
+                x-transition:leave-start="opacity-100 scale-100"
+                x-transition:leave-end="opacity-0 scale-95">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-medium">Start from an Example</h3>
+                        <button @click="closeTemplatesModal()" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <p class="text-sm text-threadlight-muted mb-4">
+                        These are minimal examples to show you the structure. Feel free to change everything.
+                    </p>
+
+                    <div class="space-y-3">
+                        <template x-for="template in profileTemplates" :key="template.id">
+                            <button @click="applyTemplate(template)"
+                                class="w-full text-left p-4 bg-threadlight-elevated hover:bg-threadlight-border rounded-lg transition-colors">
+                                <div class="flex items-center justify-between mb-1">
+                                    <h4 class="font-medium text-threadlight-text" x-text="template.name"></h4>
+                                    <span class="text-xs text-threadlight-muted" x-text="template.description"></span>
+                                </div>
+                                <p class="text-sm text-threadlight-muted" x-text="template.philosophy"></p>
+                            </button>
+                        </template>
+                    </div>
+
+                    <div class="mt-6 pt-4 border-t border-threadlight-border text-center">
+                        <button @click="closeTemplatesModal(); openProfileEditor()"
+                            class="text-sm text-threadlight-accent hover:text-threadlight-accent/80">
+                            Or start from scratch
+                        </button>
                     </div>
                 </div>
             </div>

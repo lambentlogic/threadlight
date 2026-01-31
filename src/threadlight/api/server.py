@@ -3634,21 +3634,30 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     # ========================================================================
 
     @app.get("/api/memory-types")
-    async def list_memory_types(include_builtin: bool = True):
+    async def list_memory_types(include_builtin: bool = True, include_hidden: bool = False):
         """
         List all available memory types (built-in + custom).
 
         Returns both built-in types (relational, myth_seed, etc.) and
         user-defined custom types.
+
+        Args:
+            include_builtin: Whether to include built-in types
+            include_hidden: Whether to include hidden built-in types
         """
         tl = get_threadlight()
-        types = tl.list_memory_types(include_builtin=include_builtin)
+        types = tl.memory_types.list(include_builtin=include_builtin, include_hidden=include_hidden)
+
+        # Also get hidden built-ins separately for "restore" functionality
+        hidden_builtins = tl.memory_types.list_hidden_builtins() if not include_hidden else []
 
         return {
             "types": types,
             "count": len(types),
             "builtin_count": sum(1 for t in types if t.get("is_builtin", False)),
             "custom_count": sum(1 for t in types if not t.get("is_builtin", False)),
+            "hidden_builtins": hidden_builtins,
+            "hidden_count": len(hidden_builtins),
         }
 
     @app.get("/api/memory-types/examples")
@@ -3733,19 +3742,12 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     @app.put("/api/memory-types/{type_id}")
     async def update_memory_type(type_id: str, request: MemoryTypeUpdateRequest):
         """
-        Update an existing custom memory type.
+        Update an existing memory type.
 
-        Cannot update built-in types.
+        For built-in types, this creates a customization overlay.
+        For custom types, this updates the type directly.
         """
         tl = get_threadlight()
-
-        # Check if it's a built-in type (include "custom" for backward compatibility)
-        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "note", "custom"]
-        if type_id in builtin_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot modify built-in memory types"
-            )
 
         try:
             # Build updates dict
@@ -3769,8 +3771,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     detail=f"Memory type not found: {type_id}"
                 )
 
-            # Get updated type
-            updated = tl.get_memory_type(type_id)
+            # Get updated type (include hidden to get it if it was hidden)
+            updated = tl.memory_types.get(type_id, include_hidden=True)
 
             return {
                 "status": "updated",
@@ -3786,21 +3788,19 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     @app.delete("/api/memory-types/{type_id}")
     async def delete_memory_type(type_id: str):
         """
-        Delete a custom memory type.
+        Delete or hide a memory type.
 
-        Cannot delete built-in types. Note that existing memories
-        of this type will not be deleted.
+        For built-in types, this hides them (soft delete).
+        For custom types, this deletes them permanently.
+        Note: Existing memories of this type will not be deleted.
         """
         tl = get_threadlight()
+        from threadlight.managers.memory_types import BUILTIN_TYPE_IDS
 
-        # Check if it's a built-in type (include "custom" for backward compatibility)
-        builtin_ids = ["relational", "myth_seed", "ritual", "witness", "style", "note", "custom"]
-        if type_id in builtin_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot delete built-in memory types"
-            )
+        # Check how many memories exist of this type
+        memory_count = tl.memory_types.count_memories_by_type(type_id)
 
+        is_builtin = type_id in BUILTIN_TYPE_IDS
         success = tl.delete_memory_type(type_id)
 
         if not success:
@@ -3810,8 +3810,11 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             )
 
         return {
-            "status": "deleted",
+            "status": "hidden" if is_builtin else "deleted",
             "type_id": type_id,
+            "is_builtin": is_builtin,
+            "memory_count": memory_count,
+            "warning": f"Note: {memory_count} memories of this type still exist" if memory_count > 0 else None,
         }
 
     @app.post("/api/memory-types/import/{type_id}")
@@ -3834,6 +3837,79 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         return {
             "status": "imported",
             "type": type_def.to_dict(),
+        }
+
+    @app.post("/api/memory-types/{type_id}/restore")
+    async def restore_memory_type(type_id: str):
+        """
+        Restore a hidden built-in memory type.
+
+        Only works for built-in types that have been hidden.
+        """
+        tl = get_threadlight()
+        from threadlight.managers.memory_types import BUILTIN_TYPE_IDS
+
+        if type_id not in BUILTIN_TYPE_IDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot restore non-built-in type: {type_id}"
+            )
+
+        success = tl.memory_types.restore(type_id)
+
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Type is not hidden or does not exist: {type_id}"
+            )
+
+        # Get the restored type
+        restored = tl.memory_types.get(type_id)
+
+        return {
+            "status": "restored",
+            "type": restored,
+        }
+
+    @app.post("/api/memory-types/{type_id}/reset")
+    async def reset_memory_type(type_id: str):
+        """
+        Reset a built-in memory type to its default configuration.
+
+        This removes all customizations and un-hides the type.
+        """
+        tl = get_threadlight()
+        from threadlight.managers.memory_types import BUILTIN_TYPE_IDS
+
+        if type_id not in BUILTIN_TYPE_IDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot reset non-built-in type: {type_id}"
+            )
+
+        success = tl.memory_types.reset_builtin(type_id)
+
+        # Get the reset type (will have default values)
+        type_def = tl.memory_types.get(type_id)
+
+        return {
+            "status": "reset",
+            "type": type_def,
+            "was_customized": success,
+        }
+
+    @app.get("/api/memory-types/{type_id}/count")
+    async def get_memory_type_count(type_id: str):
+        """
+        Get the count of memories that use a specific type.
+        """
+        tl = get_threadlight()
+
+        count = tl.memory_types.count_memories_by_type(type_id)
+
+        return {
+            "type_id": type_id,
+            "memory_count": count,
         }
 
     # ========================================================================
@@ -4164,6 +4240,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         tl = get_threadlight()
         tl.clear_profile()
         return {"status": "cleared", "active_profile_id": None}
+
+    @app.get("/api/profile-templates")
+    async def list_profile_templates():
+        """List available profile templates for getting started."""
+        from ..profiles.templates import get_all_templates
+
+        templates = get_all_templates()
+        return {
+            "templates": [t.to_dict() for t in templates],
+        }
 
     @app.get("/api/profiles/{profile_id}/export")
     async def export_profile(profile_id: str):

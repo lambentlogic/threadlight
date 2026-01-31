@@ -179,9 +179,11 @@ function threadlightApp() {
         // Memory Types state
         memoryTypes: [],
         exampleTypes: [],
+        hiddenBuiltinTypes: [],
         selectedMemoryType: null,
         showMemoryTypeEditor: false,
         showExampleTypes: false,
+        editingMemoryType: null,  // For editing existing types
         newMemoryType: {
             type_id: '',
             description: '',
@@ -242,6 +244,10 @@ function threadlightApp() {
             priority: 50,
         },
         routingRuleValidationError: '',
+
+        // Profile templates state
+        profileTemplates: [],
+        showTemplatesModal: false,
 
         // Toast notifications
         toasts: [],
@@ -2965,6 +2971,7 @@ function threadlightApp() {
                 const response = await fetch('/api/memory-types');
                 const data = await response.json();
                 this.memoryTypes = data.types || [];
+                this.hiddenBuiltinTypes = data.hidden_builtins || [];
             } catch (error) {
                 console.error('Failed to load memory types:', error);
             }
@@ -3050,10 +3057,35 @@ function threadlightApp() {
 
         async deleteMemoryType(typeId) {
             if (!typeId) return;
+
+            // First check how many memories exist of this type
+            let memoryCount = 0;
+            try {
+                const countResponse = await fetch(`/api/memory-types/${typeId}/count`);
+                if (countResponse.ok) {
+                    const countData = await countResponse.json();
+                    memoryCount = countData.memory_count || 0;
+                }
+            } catch (e) {
+                console.error('Failed to get memory count:', e);
+            }
+
+            // Find if this is a built-in type
+            const memType = this.memoryTypes.find(t => t.type_id === typeId);
+            const isBuiltin = memType?.is_builtin;
+
+            let message = isBuiltin
+                ? 'Hide this built-in memory type? You can restore it later from the Hidden Types section.'
+                : 'Delete this custom memory type permanently?';
+
+            if (memoryCount > 0) {
+                message += `\n\nWarning: ${memoryCount} memories of this type exist. They will not be deleted but may display incorrectly.`;
+            }
+
             const confirmed = await this.showConfirm({
-                title: 'Delete Memory Type',
-                message: 'Delete this memory type? Existing memories of this type will become orphaned.',
-                confirmText: 'Delete',
+                title: isBuiltin ? 'Hide Memory Type' : 'Delete Memory Type',
+                message: message,
+                confirmText: isBuiltin ? 'Hide' : 'Delete',
             });
             if (!confirmed) return;
 
@@ -3067,12 +3099,161 @@ function threadlightApp() {
                     throw new Error(data.detail || 'Failed to delete memory type');
                 }
 
-                this.showToast('Memory type deleted');
+                const data = await response.json();
+                this.showToast(isBuiltin ? 'Memory type hidden' : 'Memory type deleted');
                 this.selectedMemoryType = null;
                 await this.loadMemoryTypes();
             } catch (error) {
                 this.showToast('Failed to delete memory type: ' + error.message, 'error');
             }
+        },
+
+        openEditMemoryType(memType) {
+            // Prepare the editing state with the type's current values
+            this.editingMemoryType = {
+                type_id: memType.type_id,
+                display_name: memType.display_name || memType.type_id,
+                description: memType.description || '',
+                display_template: memType.display_template || '',
+                icon: memType.icon || 'file-text',
+                is_builtin: memType.is_builtin,
+                is_customized: memType.is_customized,
+                fields: (memType.fields || []).map(f => ({
+                    name: f.name,
+                    field_type: f.type || f.field_type || 'string',
+                    required: f.required !== false,
+                    help_text: f.help_text || '',
+                    output_template: f.output_template || '',
+                    label: f.label || '',
+                })),
+            };
+            this.showMemoryTypeEditor = true;
+        },
+
+        addEditingField() {
+            if (!this.editingMemoryType) return;
+            this.editingMemoryType.fields.push({
+                name: '',
+                field_type: 'string',
+                required: false,
+                help_text: '',
+                output_template: '',
+                label: '',
+            });
+        },
+
+        removeEditingField(index) {
+            if (!this.editingMemoryType) return;
+            this.editingMemoryType.fields.splice(index, 1);
+        },
+
+        async saveMemoryType() {
+            const memType = this.editingMemoryType;
+            if (!memType || !memType.type_id) {
+                this.showToast('Invalid memory type data', 'error');
+                return;
+            }
+
+            // Filter out empty fields
+            const validFields = memType.fields.filter(f => f.name.trim());
+            if (validFields.length === 0) {
+                this.showToast('At least one field must have a name', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/memory-types/${memType.type_id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        display_name: memType.display_name,
+                        description: memType.description,
+                        display_template: memType.display_template,
+                        icon: memType.icon,
+                        fields: validFields.map(f => ({
+                            name: f.name.trim(),
+                            field_type: f.field_type,
+                            required: f.required,
+                            help_text: f.help_text || '',
+                            output_template: f.output_template || '',
+                            label: f.label || '',
+                        })),
+                    }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to update memory type');
+                }
+
+                this.showToast('Memory type updated successfully');
+                this.showMemoryTypeEditor = false;
+                this.editingMemoryType = null;
+                this.selectedMemoryType = null;
+                await this.loadMemoryTypes();
+            } catch (error) {
+                this.showToast('Failed to update memory type: ' + error.message, 'error');
+            }
+        },
+
+        async restoreMemoryType(typeId) {
+            if (!typeId) return;
+
+            try {
+                const response = await fetch(`/api/memory-types/${typeId}/restore`, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to restore memory type');
+                }
+
+                this.showToast('Memory type restored');
+                await this.loadMemoryTypes();
+            } catch (error) {
+                this.showToast('Failed to restore memory type: ' + error.message, 'error');
+            }
+        },
+
+        async resetMemoryType(typeId) {
+            if (!typeId) return;
+
+            const confirmed = await this.showConfirm({
+                title: 'Reset to Defaults',
+                message: 'Reset this built-in type to its default configuration? This will remove all customizations.',
+                confirmText: 'Reset',
+            });
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/memory-types/${typeId}/reset`, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to reset memory type');
+                }
+
+                this.showToast('Memory type reset to defaults');
+                this.selectedMemoryType = null;
+                await this.loadMemoryTypes();
+            } catch (error) {
+                this.showToast('Failed to reset memory type: ' + error.message, 'error');
+            }
+        },
+
+        closeMemoryTypeEditor() {
+            this.showMemoryTypeEditor = false;
+            this.editingMemoryType = null;
+            this.newMemoryType = {
+                type_id: '',
+                display_name: '',
+                description: '',
+                display_template: '',
+                fields: [{ name: '', field_type: 'string', required: false, help_text: '', output_template: '' }],
+            };
         },
 
         async importExampleType(typeId) {
@@ -3371,6 +3552,63 @@ function threadlightApp() {
 
         getActiveProfile() {
             return this.profiles.find(p => p.id === this.activeProfileId) || null;
+        },
+
+        // ============================================
+        // Profile Templates Functions
+        // ============================================
+
+        async loadProfileTemplates() {
+            try {
+                const response = await fetch('/api/profile-templates');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.profileTemplates = data.templates || [];
+                }
+            } catch (error) {
+                console.error('Failed to load profile templates:', error);
+            }
+        },
+
+        async openTemplatesModal() {
+            // Load templates if not already loaded
+            if (this.profileTemplates.length === 0) {
+                await this.loadProfileTemplates();
+            }
+            this.showTemplatesModal = true;
+        },
+
+        closeTemplatesModal() {
+            this.showTemplatesModal = false;
+        },
+
+        applyTemplate(template) {
+            // Pre-fill the profile editor with template values
+            this.newProfile = {
+                name: template.name,
+                description: template.description,
+                system_prompt: template.system_prompt || '',
+                style_profile_id: '',
+                model_strategy: 'single',
+                primary_model: this.config.provider.model || '',
+                model_pool: [],
+                model_pool_str: '',
+                memory_scope: 'isolated',
+                access_shared_memories: true,
+                tags: [],
+                tags_str: '',
+                philosophy: template.philosophy || '',
+                approach_to_rituals: template.approach_to_rituals || '',
+                routing_rules: [],
+                useManualModelInput: false,
+            };
+
+            // Close the templates modal and open the profile editor
+            this.showTemplatesModal = false;
+            this.editingProfileMode = false;
+            this.selectedProfile = null;
+            this.showProfileEditor = true;
+            this.loadProviderModels();
         },
 
         // ============================================

@@ -1029,3 +1029,63 @@ class TestPhilosophyFieldsSQLite:
         assert retrieved is not None
         assert retrieved.philosophy == ""
         assert retrieved.approach_to_rituals == ""
+
+
+# ============================================================================
+# Profile Templates Tests
+# ============================================================================
+
+
+class TestProfileTemplates:
+    """Tests for profile templates."""
+
+    def test_get_all_templates(self):
+        """Test getting all available templates."""
+        from threadlight.profiles.templates import get_all_templates
+
+        templates = get_all_templates()
+        assert len(templates) >= 3  # At least 3 starter templates
+        assert all(t.id for t in templates)
+        assert all(t.name for t in templates)
+        assert all(t.philosophy for t in templates)
+
+    def test_get_template_by_id(self):
+        """Test getting a specific template by ID."""
+        from threadlight.profiles.templates import get_template_by_id
+
+        template = get_template_by_id("casual-friend")
+        assert template is not None
+        assert template.name == "Casual Friend"
+        assert "warm" in template.philosophy.lower() or "friendly" in template.philosophy.lower()
+
+    def test_get_nonexistent_template(self):
+        """Test that getting a nonexistent template returns None."""
+        from threadlight.profiles.templates import get_template_by_id
+
+        template = get_template_by_id("nonexistent-template")
+        assert template is None
+
+    def test_template_to_dict(self):
+        """Test template serialization to dictionary."""
+        from threadlight.profiles.templates import get_template_by_id
+
+        template = get_template_by_id("coding-helper")
+        assert template is not None
+
+        data = template.to_dict()
+        assert data["id"] == "coding-helper"
+        assert data["name"] == "Coding Helper"
+        assert "philosophy" in data
+        assert "system_prompt" in data
+        assert "description" in data
+
+    def test_templates_are_minimal(self):
+        """Test that templates are intentionally minimal."""
+        from threadlight.profiles.templates import get_all_templates
+
+        templates = get_all_templates()
+        for template in templates:
+            # Philosophy should be brief (1-2 sentences)
+            assert len(template.philosophy) < 200, f"{template.name} philosophy is too long"
+            # System prompt should be brief or empty
+            assert len(template.system_prompt) < 100, f"{template.name} system prompt is too long"
