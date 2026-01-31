@@ -2448,6 +2448,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         # Handle API key updates
         # If a new api_key is provided, save it to .env and use env var
+        api_key_was_saved = False
         if request.api_key is not None and request.api_key:
             # Save the key to .env file
             save_api_key_to_env(provider_id, request.api_key)
@@ -2455,12 +2456,14 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             provider_def.api_key_env_var = f"{provider_id.upper()}_API_KEY"
             # Clear in-memory key
             provider_def.api_key = None
+            api_key_was_saved = True
         elif request.api_key == "":
             # Empty string means clear the key entirely
             provider_def.api_key = None
 
         # Allow explicit api_key_env_var override (for manual env var references)
-        if request.api_key_env_var is not None:
+        # BUT: Don't override if we just saved an API key to .env
+        if not api_key_was_saved and request.api_key_env_var is not None:
             provider_def.api_key_env_var = request.api_key_env_var if request.api_key_env_var else None
 
         if request.default_model is not None:
