@@ -106,16 +106,16 @@ Memories can fade over time unless reinforced. This is **disabled by default**. 
 
 ### Context Composition
 
-Memories aren't injected as raw data. They're composed into natural context cues:
+Memories aren't injected as raw data. They're composed into context cues using templates:
 
 ```
 Raw: {entity: "Jamie", tone: "warm", summary: "Loves hiking and photography"}
 
-Composed: "(You recall your friend Jamie - there is warmth in your
-tone when speaking of her hiking adventures.)"
+Composed: "(You recall Jamie. Loves hiking and photography. There is warm in
+your tone when speaking of them.)"
 ```
 
-This helps the companion reference memories naturally rather than reciting stored facts.
+The system uses templates to frame memories naturally. Different composition modes produce different framings (narrative, direct, whisper) but the content itself comes directly from what you stored.
 
 ### Why Profiles?
 
