@@ -223,6 +223,7 @@ function threadlightApp() {
             style_profile_id: '',
             model_strategy: 'single',
             primary_model: '',
+            selectedProviderId: '',  // Provider to filter models and associate on save
             model_pool: [],
             model_pool_str: '',  // For comma-separated input
             memory_scope: 'isolated',
@@ -1868,6 +1869,20 @@ function threadlightApp() {
             return providers.size;
         },
 
+        // Get models filtered by provider ID (for profile form)
+        getModelsForProvider(providerId) {
+            if (!providerId) {
+                // No provider selected - return all models
+                return this.providerModels;
+            }
+            // Filter to models from the selected provider
+            return this.providerModels.filter(m =>
+                m.provider_id === providerId ||
+                m.provider_name === providerId ||
+                m.provider === providerId
+            );
+        },
+
         // Named Provider Management Functions
         async loadNamedProviders() {
             try {
@@ -3368,8 +3383,9 @@ function threadlightApp() {
         },
 
         openProfileEditor(profile = null) {
-            // Load provider models when opening the editor
+            // Load provider models and providers when opening the editor
             this.loadProviderModels();
+            this.loadNamedProviders();
 
             if (profile) {
                 // Edit mode
@@ -3382,6 +3398,7 @@ function threadlightApp() {
                     style_profile_id: profile.style_profile_id || '',
                     model_strategy: profile.model_strategy || 'single',
                     primary_model: profile.primary_model || '',
+                    selectedProviderId: '',  // Will be set if user selects a provider
                     model_pool: profile.model_pool || [],
                     model_pool_str: (profile.model_pool || []).join(', '),
                     memory_scope: profile.memory_scope || 'isolated',
@@ -3406,6 +3423,7 @@ function threadlightApp() {
                     style_profile_id: '',
                     model_strategy: 'single',
                     primary_model: this.config.provider.model || '',
+                    selectedProviderId: '',  // Will be set if user selects a provider
                     model_pool: [],
                     model_pool_str: '',
                     memory_scope: 'isolated',
@@ -3493,6 +3511,27 @@ function threadlightApp() {
                 const data = await response.json();
                 console.log('[saveProfile] Response data:', data);
                 console.log('[saveProfile] Returned profile description:', data.profile?.description);
+
+                // Associate model with provider if both are selected
+                if (this.newProfile.primary_model && this.newProfile.selectedProviderId) {
+                    try {
+                        console.log('[saveProfile] Setting provider for model:', this.newProfile.primary_model, '->', this.newProfile.selectedProviderId);
+                        const providerResponse = await fetch(`/api/models/${encodeURIComponent(this.newProfile.primary_model)}/provider`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ provider_id: this.newProfile.selectedProviderId }),
+                        });
+                        if (providerResponse.ok) {
+                            console.log('[saveProfile] Model provider association saved');
+                        } else {
+                            console.warn('[saveProfile] Failed to set model provider, continuing anyway');
+                        }
+                    } catch (providerError) {
+                        console.warn('[saveProfile] Failed to set model provider:', providerError);
+                        // Don't fail the profile save if provider association fails
+                    }
+                }
+
                 this.showToast(this.editingProfileMode ? 'Profile updated' : 'Profile created');
 
                 // Trigger flash animation for the saved profile
