@@ -1918,41 +1918,43 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             tl.config.provider.update_endpoint_health(endpoint_url, False)
             return {"status": "error", "message": f"Error: {str(e)}", "url": endpoint_url}
 
-    @app.get("/api/provider/models")
-    async def get_provider_models():
-        """Fetch available models from the configured API provider.
+    async def _fetch_models_from_provider(
+        provider_type: str,
+        api_base: str,
+        api_key: Optional[str],
+        provider_id: Optional[str] = None,
+        provider_name: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Fetch available models from a provider configuration.
 
-        Queries the provider's /v1/models endpoint (OpenAI-compatible) and returns
-        a list of available models. Handles different provider types and API formats.
+        This helper function handles fetching models from either a legacy ProviderConfig
+        or a ProviderDefinition from the multi-provider system.
+
+        Args:
+            provider_type: Type of provider (openai, anthropic, nous, local, custom)
+            api_base: Base URL for the provider API
+            api_key: API key for authentication (optional for local providers)
+            provider_id: Unique identifier for the provider (for multi-provider tagging)
+            provider_name: Display name for the provider (for multi-provider tagging)
 
         Returns:
-            - models: List of model objects with id, name, and metadata
-            - status: "success" or "error"
-            - message: Error message if status is "error"
-            - cached: Whether the response is from cache (for future caching support)
+            Dict with status, models list, and optional error message
         """
         import httpx
-
-        tl = get_threadlight()
-        provider_type = tl.config.provider.type
-        api_base = tl.config.provider.api_base
-        api_key = tl.config.provider.api_key
 
         # Handle providers that don't support model listing
         if provider_type == "local" and not api_base:
             return {
                 "status": "error",
-                "message": "Local provider requires an API base URL (e.g., http://localhost:11434/v1 for Ollama)",
+                "message": "Local provider requires an API base URL",
                 "models": [],
-                "cached": False,
             }
 
         if not api_base:
             return {
                 "status": "error",
-                "message": "No API base URL configured. Please configure the provider first.",
+                "message": "No API base URL configured",
                 "models": [],
-                "cached": False,
             }
 
         # For non-local providers, API key is typically required
@@ -1961,7 +1963,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 "status": "error",
                 "message": "API key required but not configured",
                 "models": [],
-                "cached": False,
             }
 
         try:
@@ -1969,19 +1970,26 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 if provider_type == "anthropic":
                     # Anthropic doesn't have a public models endpoint
                     # Return a static list of known Anthropic models
+                    anthropic_models = [
+                        {"id": "claude-opus-4-20250514", "name": "Claude Opus 4"},
+                        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4"},
+                        {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet"},
+                        {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku"},
+                        {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
+                        {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
+                        {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
+                    ]
+                    # Tag models with provider info
+                    for model in anthropic_models:
+                        model["provider"] = provider_type
+                        if provider_id:
+                            model["provider_id"] = provider_id
+                        if provider_name:
+                            model["provider_name"] = provider_name
                     return {
                         "status": "success",
-                        "models": [
-                            {"id": "claude-opus-4-20250514", "name": "Claude Opus 4", "provider": "anthropic"},
-                            {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "provider": "anthropic"},
-                            {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "provider": "anthropic"},
-                            {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "provider": "anthropic"},
-                            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "provider": "anthropic"},
-                            {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "provider": "anthropic"},
-                            {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "provider": "anthropic"},
-                        ],
-                        "message": "Anthropic models (static list - API does not expose model listing)",
-                        "cached": False,
+                        "models": anthropic_models,
+                        "message": "Anthropic models (static list)",
                     }
 
                 # OpenAI-compatible endpoints (OpenAI, Nous, Ollama, custom)
@@ -1994,7 +2002,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     headers["Authorization"] = f"Bearer {api_key}"
 
                 # Build the models endpoint URL
-                # Handle both /v1 and non-/v1 base URLs
                 models_url = api_base.rstrip("/")
                 if not models_url.endswith("/v1"):
                     models_url = f"{models_url}/models"
@@ -2008,28 +2015,24 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                         "status": "error",
                         "message": "Invalid API key",
                         "models": [],
-                        "cached": False,
                     }
                 elif response.status_code == 403:
                     return {
                         "status": "error",
                         "message": "Access forbidden - check API key permissions",
                         "models": [],
-                        "cached": False,
                     }
                 elif response.status_code == 404:
                     return {
                         "status": "error",
-                        "message": "Models endpoint not found. This provider may not support model listing.",
+                        "message": "Models endpoint not found",
                         "models": [],
-                        "cached": False,
                     }
                 elif response.status_code != 200:
                     return {
                         "status": "error",
-                        "message": f"API error: {response.status_code} - {response.text[:200]}",
+                        "message": f"API error: {response.status_code}",
                         "models": [],
-                        "cached": False,
                     }
 
                 data = response.json()
@@ -2041,31 +2044,37 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 models = []
                 for model in raw_models:
                     if isinstance(model, str):
-                        # Some providers return just model IDs as strings
-                        models.append({
+                        model_dict = {
                             "id": model,
                             "name": model,
                             "provider": provider_type,
-                        })
+                        }
                     elif isinstance(model, dict):
                         model_id = model.get("id") or model.get("name") or model.get("model")
-                        if model_id:
-                            models.append({
-                                "id": model_id,
-                                "name": model.get("name") or model_id,
-                                "provider": provider_type,
-                                "owned_by": model.get("owned_by"),
-                                "created": model.get("created"),
-                            })
+                        if not model_id:
+                            continue
+                        model_dict = {
+                            "id": model_id,
+                            "name": model.get("name") or model_id,
+                            "provider": provider_type,
+                            "owned_by": model.get("owned_by"),
+                            "created": model.get("created"),
+                        }
+                    else:
+                        continue
 
-                # Sort models alphabetically by name
-                models.sort(key=lambda m: m.get("name", m.get("id", "")).lower())
+                    # Tag with provider info for multi-provider support
+                    if provider_id:
+                        model_dict["provider_id"] = provider_id
+                    if provider_name:
+                        model_dict["provider_name"] = provider_name
+
+                    models.append(model_dict)
 
                 return {
                     "status": "success",
                     "models": models,
                     "message": f"Found {len(models)} models",
-                    "cached": False,
                 }
 
         except httpx.ConnectError:
@@ -2073,23 +2082,124 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 "status": "error",
                 "message": "Could not connect to provider API",
                 "models": [],
-                "cached": False,
             }
         except httpx.TimeoutException:
             return {
                 "status": "error",
                 "message": "Connection timed out",
                 "models": [],
-                "cached": False,
             }
         except Exception as e:
-            logger.error(f"Error fetching models: {e}")
+            logger.error(f"Error fetching models from provider: {e}")
             return {
                 "status": "error",
                 "message": f"Error: {str(e)}",
                 "models": [],
-                "cached": False,
             }
+
+    @app.get("/api/provider/models")
+    async def get_provider_models():
+        """Fetch available models from all configured API providers.
+
+        If multi-provider system is configured (providers dict is populated),
+        aggregates models from ALL providers and tags each with its source.
+        Otherwise falls back to the legacy single provider configuration.
+
+        Returns:
+            - models: List of model objects with id, name, provider info, and metadata
+            - status: "success" or "error"
+            - message: Summary message
+            - cached: Whether the response is from cache (for future caching support)
+            - providers_queried: List of provider IDs that were queried (multi-provider only)
+        """
+        tl = get_threadlight()
+
+        # Check if multi-provider system is configured
+        if tl.config.providers:
+            # Aggregate models from ALL configured providers
+            all_models = []
+            providers_queried = []
+            errors = []
+
+            # Fetch models from each provider in parallel
+            async def fetch_from_provider(provider_id: str, provider_def):
+                result = await _fetch_models_from_provider(
+                    provider_type=provider_def.type,
+                    api_base=provider_def.api_base,
+                    api_key=provider_def.get_api_key(),
+                    provider_id=provider_id,
+                    provider_name=provider_def.name,
+                )
+                return provider_id, result
+
+            # Create tasks for all providers
+            tasks = [
+                fetch_from_provider(pid, pdef)
+                for pid, pdef in tl.config.providers.items()
+            ]
+
+            # Execute all fetches concurrently
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for result in results:
+                if isinstance(result, Exception):
+                    errors.append(str(result))
+                    continue
+
+                provider_id, fetch_result = result
+                providers_queried.append(provider_id)
+
+                if fetch_result["status"] == "success":
+                    all_models.extend(fetch_result["models"])
+                else:
+                    # Log but don't fail - other providers may succeed
+                    errors.append(f"{provider_id}: {fetch_result.get('message', 'Unknown error')}")
+
+            # Sort all models alphabetically by name
+            all_models.sort(key=lambda m: m.get("name", m.get("id", "")).lower())
+
+            if all_models:
+                message = f"Found {len(all_models)} models from {len(providers_queried)} providers"
+                if errors:
+                    message += f" ({len(errors)} provider(s) had errors)"
+                return {
+                    "status": "success",
+                    "models": all_models,
+                    "message": message,
+                    "cached": False,
+                    "providers_queried": providers_queried,
+                    "errors": errors if errors else None,
+                }
+            elif errors:
+                return {
+                    "status": "error",
+                    "message": f"Failed to fetch models: {'; '.join(errors)}",
+                    "models": [],
+                    "cached": False,
+                    "providers_queried": providers_queried,
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "No providers configured or all providers returned empty model lists",
+                    "models": [],
+                    "cached": False,
+                    "providers_queried": providers_queried,
+                }
+
+        # Fall back to legacy single provider
+        result = await _fetch_models_from_provider(
+            provider_type=tl.config.provider.type,
+            api_base=tl.config.provider.api_base,
+            api_key=tl.config.provider.api_key,
+        )
+
+        return {
+            "status": result["status"],
+            "models": result["models"],
+            "message": result.get("message", ""),
+            "cached": False,
+        }
 
     # ========================================================================
     # Environment Configuration Endpoints

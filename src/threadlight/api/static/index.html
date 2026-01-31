@@ -3328,8 +3328,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
             x-transition:leave="transition ease-in duration-150"
             x-transition:leave-start="opacity-100"
             x-transition:leave-end="opacity-0"
-            class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-50"
-            @click.self="cancelProfileEditor()">
+            class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-50">
             <div class="bg-threadlight-surface rounded-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto shadow-2xl"
                 x-transition:enter="transition ease-out duration-200"
                 x-transition:enter-start="opacity-0 scale-95"
@@ -3371,12 +3370,6 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                             <label class="block text-sm text-threadlight-muted mb-1">Description</label>
                             <input type="text" x-model="newProfile.description" placeholder="What this profile is for..."
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
-                        </div>
-
-                        <div>
-                            <label class="block text-sm text-threadlight-muted mb-1">System Prompt</label>
-                            <textarea x-model="newProfile.system_prompt" placeholder="Custom system prompt for this profile..." rows="4"
-                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-y"></textarea>
                         </div>
 
                         <!-- Model Configuration -->
@@ -3479,8 +3472,8 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                     <select x-model="newProfile.primary_model"
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
                                         <option value="">Select a model...</option>
-                                        <template x-for="model in providerModels" :key="model.id">
-                                            <option :value="model.id" x-text="model.name || model.id"></option>
+                                        <template x-for="model in providerModels" :key="model.id + (model.provider_id || '')">
+                                            <option :value="model.id" x-text="(model.name || model.id) + (model.provider_name ? ' (' + model.provider_name + ')' : '')"></option>
                                         </template>
                                     </select>
                                 </div>
@@ -3502,6 +3495,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                     </p>
                                     <p x-show="providerModels.length > 0 && !providerModelsLoading && !providerModelsError" class="text-xs text-threadlight-muted">
                                         <span x-text="providerModels.length"></span> models available
+                                        <span x-show="getUniqueProviderCount() > 1" x-text="' from ' + getUniqueProviderCount() + ' providers'"></span>
                                     </p>
                                 </div>
                             </div>
@@ -3549,7 +3543,8 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                             "
                                             class="px-2 py-0.5 text-xs bg-threadlight-bg hover:bg-threadlight-accent/20 text-threadlight-muted hover:text-threadlight-accent border border-threadlight-border rounded transition-colors"
                                             :class="{ 'bg-threadlight-accent/10 text-threadlight-accent border-threadlight-accent/30': newProfile.model_pool_str.includes(model.id) }"
-                                            x-text="model.name || model.id">
+                                            x-text="(model.name || model.id) + (model.provider_name ? ' (' + model.provider_name + ')' : '')"
+                                            :title="model.provider_name ? model.id + ' from ' + model.provider_name : model.id">
                                         </button>
                                     </template>
                                     <span x-show="providerModels.length > 10" class="text-xs text-threadlight-muted py-0.5">

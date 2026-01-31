@@ -1835,10 +1835,32 @@ function threadlightApp() {
             return this.providerModels.length > 0 || this.providerModelsLoading;
         },
 
-        // Get a display name for a model
-        getModelDisplayName(modelId) {
+        // Get a display name for a model (includes provider name if available)
+        getModelDisplayName(modelId, includeProvider = false) {
             const model = this.providerModels.find(m => m.id === modelId);
-            return model?.name || modelId;
+            if (!model) return modelId;
+
+            const baseName = model.name || modelId;
+            if (includeProvider && model.provider_name) {
+                return `${baseName} (${model.provider_name})`;
+            }
+            return baseName;
+        },
+
+        // Get just the provider name for a model
+        getModelProviderName(modelId) {
+            const model = this.providerModels.find(m => m.id === modelId);
+            return model?.provider_name || model?.provider || null;
+        },
+
+        // Get count of unique providers in the model list
+        getUniqueProviderCount() {
+            const providers = new Set(
+                this.providerModels
+                    .map(m => m.provider_id || m.provider_name || m.provider)
+                    .filter(p => p)
+            );
+            return providers.size;
         },
 
         // Named Provider Management Functions
