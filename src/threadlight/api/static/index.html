@@ -959,318 +959,47 @@
                             </div>
                         </div>
 
-                        <!-- API Configuration -->
-                        <div class="bg-threadlight-elevated rounded-xl p-6">
-                            <h3 class="font-medium mb-2">API Configuration</h3>
-                            <p class="text-sm text-threadlight-muted mb-4">Configure API keys and provider settings for inference.</p>
-
-                            <div class="space-y-4">
-                                <!-- Provider Selector -->
-                                <div>
-                                    <label class="block text-sm text-threadlight-muted mb-1">Provider</label>
-                                    <div class="flex gap-2">
-                                        <select x-model="providerConfig.provider_type" @change="onProviderTypeChange()"
-                                            class="flex-1 bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
-                                            <option value="local">Local (no API key needed)</option>
-                                            <option value="openai">OpenAI</option>
-                                            <option value="anthropic">Anthropic</option>
-                                            <option value="nous">Nous Research</option>
-                                            <option value="custom">Custom</option>
-                                        </select>
-                                        <!-- Status indicator -->
-                                        <div class="flex items-center px-3 rounded-lg"
-                                            :class="providerConfig.provider_type === 'local' || providerConfig.has_api_key ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'">
-                                            <svg x-show="providerConfig.provider_type === 'local' || providerConfig.has_api_key" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                            </svg>
-                                            <svg x-show="providerConfig.provider_type !== 'local' && !providerConfig.has_api_key" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                                            </svg>
-                                        </div>
-                                    </div>
-                                    <p class="text-xs text-threadlight-muted mt-2" x-text="getProviderHelpText(providerConfig.provider_type)"></p>
-                                </div>
-
-                                <!-- Provider-specific configuration -->
-                                <template x-if="providerConfig.provider_type !== 'local'">
-                                    <div class="space-y-4 pt-3 border-t border-threadlight-border/50">
-                                        <!-- API Key -->
-                                        <div>
-                                            <label class="block text-sm text-threadlight-muted mb-1">API Key</label>
-                                            <!-- Status indicator when API key is configured -->
-                                            <div x-show="providerConfig.has_api_key && !providerApiKeyChanged" class="flex items-center gap-2 mb-2 text-green-400 text-sm">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                                </svg>
-                                                <span>API key configured</span>
-                                            </div>
-                                            <div class="flex gap-2">
-                                                <div class="flex-1">
-                                                    <input type="password"
-                                                        x-model="providerApiKey"
-                                                        @input="onProviderApiKeyInput()"
-                                                        :placeholder="providerConfig.has_api_key ? 'Enter new key to replace existing' : 'Enter your API key'"
-                                                        class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent font-mono text-sm">
-                                                </div>
-                                            </div>
-                                            <p class="text-xs text-threadlight-muted mt-1" x-show="providerApiKeyChanged">
-                                                API key will be updated when you save.
-                                            </p>
-                                        </div>
-
-                                        <!-- API Endpoints -->
-                                        <div>
-                                            <div class="flex items-center justify-between mb-2">
-                                                <label class="block text-sm text-threadlight-muted">API Endpoints</label>
-                                                <button @click="addEndpoint()"
-                                                    class="text-xs px-2 py-1 bg-threadlight-surface border border-threadlight-border rounded hover:border-threadlight-accent/50 text-threadlight-muted hover:text-threadlight-text transition-colors">
-                                                    + Add Endpoint
-                                                </button>
-                                            </div>
-
-                                            <!-- Endpoint List -->
-                                            <div class="space-y-2">
-                                                <template x-for="(endpoint, index) in providerConfig.endpoints" :key="index">
-                                                    <div class="bg-threadlight-surface border border-threadlight-border rounded-lg p-3">
-                                                        <div class="flex items-start gap-2">
-                                                            <!-- Priority indicator and reorder buttons -->
-                                                            <div class="flex flex-col items-center gap-1 pt-2">
-                                                                <button @click="moveEndpointUp(index)"
-                                                                    :disabled="index === 0"
-                                                                    class="p-1 text-threadlight-muted hover:text-threadlight-text disabled:opacity-30 disabled:cursor-not-allowed">
-                                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
-                                                                    </svg>
-                                                                </button>
-                                                                <span class="text-xs font-mono" :class="index === 0 ? 'text-threadlight-accent' : 'text-threadlight-muted'" x-text="index + 1"></span>
-                                                                <button @click="moveEndpointDown(index)"
-                                                                    :disabled="index === providerConfig.endpoints.length - 1"
-                                                                    class="p-1 text-threadlight-muted hover:text-threadlight-text disabled:opacity-30 disabled:cursor-not-allowed">
-                                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                                                                    </svg>
-                                                                </button>
-                                                            </div>
-
-                                                            <!-- Endpoint fields -->
-                                                            <div class="flex-1 space-y-2">
-                                                                <!-- Name and URL row -->
-                                                                <div class="flex gap-2">
-                                                                    <input type="text" x-model="endpoint.name"
-                                                                        :placeholder="index === 0 ? 'Primary' : 'Fallback ' + index"
-                                                                        class="w-28 bg-threadlight-bg border border-threadlight-border rounded px-2 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
-                                                                    <input type="text" x-model="endpoint.url"
-                                                                        @input="onEndpointUrlChange(index)"
-                                                                        :placeholder="getDefaultApiBase(providerConfig.provider_type)"
-                                                                        class="flex-1 bg-threadlight-bg border border-threadlight-border rounded px-2 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent font-mono">
-                                                                </div>
-
-                                                                <!-- Purpose and health status -->
-                                                                <div class="flex items-center justify-between">
-                                                                    <div class="flex items-center gap-2">
-                                                                        <select x-model="endpoint.purpose"
-                                                                            class="bg-threadlight-bg border border-threadlight-border rounded px-2 py-1 text-xs text-threadlight-muted focus:outline-none focus:border-threadlight-accent">
-                                                                            <option value="">Purpose...</option>
-                                                                            <option value="main">Main</option>
-                                                                            <option value="fallback">Fallback</option>
-                                                                            <option value="fast">Fast/Low Latency</option>
-                                                                            <option value="cheap">Cost Effective</option>
-                                                                        </select>
-
-                                                                        <!-- Health indicator -->
-                                                                        <div class="flex items-center gap-1" :class="getEndpointHealthClass(endpoint)">
-                                                                            <template x-if="endpoint.is_healthy === true">
-                                                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                                                                </svg>
-                                                                            </template>
-                                                                            <template x-if="endpoint.is_healthy === false">
-                                                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                                                                </svg>
-                                                                            </template>
-                                                                            <template x-if="endpoint.is_healthy === null">
-                                                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                                                                </svg>
-                                                                            </template>
-                                                                            <span class="text-xs" x-text="endpoint.is_healthy === true ? 'Healthy' : endpoint.is_healthy === false ? 'Unhealthy' : 'Not tested'"></span>
-                                                                        </div>
-                                                                    </div>
-
-                                                                    <!-- Test and Delete buttons -->
-                                                                    <div class="flex items-center gap-1">
-                                                                        <button @click="testEndpoint(index)"
-                                                                            :disabled="testingEndpointIndex === index || !endpoint.url"
-                                                                            class="p-1.5 text-threadlight-muted hover:text-threadlight-text disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                            title="Test endpoint">
-                                                                            <template x-if="testingEndpointIndex === index">
-                                                                                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                                                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                                                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                                                </svg>
-                                                                            </template>
-                                                                            <template x-if="testingEndpointIndex !== index">
-                                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-                                                                                </svg>
-                                                                            </template>
-                                                                        </button>
-                                                                        <button @click="removeEndpoint(index)"
-                                                                            :disabled="providerConfig.endpoints.length <= 1"
-                                                                            class="p-1.5 text-threadlight-muted hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
-                                                                            title="Remove endpoint">
-                                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                                                            </svg>
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <!-- Primary badge -->
-                                                        <div x-show="index === 0" class="mt-2 pt-2 border-t border-threadlight-border/50">
-                                                            <span class="text-xs text-threadlight-accent">Primary endpoint - requests go here first</span>
-                                                        </div>
-                                                    </div>
-                                                </template>
-
-                                                <!-- Empty state -->
-                                                <div x-show="providerConfig.endpoints.length === 0" class="text-center py-4 text-threadlight-muted text-sm">
-                                                    No endpoints configured. Click "Add Endpoint" to add one.
-                                                </div>
-                                            </div>
-
-                                            <p class="text-xs text-threadlight-muted mt-2">
-                                                Requests use endpoints in order. If the primary fails, fallbacks are tried automatically.
-                                            </p>
-                                        </div>
-
-                                        <!-- Custom provider name (only for custom) -->
-                                        <template x-if="providerConfig.provider_type === 'custom'">
-                                            <div>
-                                                <label class="block text-sm text-threadlight-muted mb-1">Provider Name (optional)</label>
-                                                <input type="text" x-model="providerConfig.provider_name"
-                                                    placeholder="My Custom API"
-                                                    class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
-                                            </div>
-                                        </template>
-
-                                        <!-- Test All Endpoints -->
-                                        <div class="pt-3 border-t border-threadlight-border/50">
-                                            <div class="flex items-center gap-4">
-                                                <button @click="testAllEndpoints()"
-                                                    :disabled="testingEndpointIndex !== null || providerConfig.endpoints.length === 0"
-                                                    class="px-4 py-2 bg-threadlight-surface border border-threadlight-border text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait">
-                                                    <span x-show="testingEndpointIndex === null">Test All Endpoints</span>
-                                                    <span x-show="testingEndpointIndex !== null" class="flex items-center gap-2">
-                                                        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                        </svg>
-                                                        Testing...
-                                                    </span>
-                                                </button>
-
-                                                <!-- Endpoint health summary -->
-                                                <div x-show="providerConfig.endpoints.some(e => e.is_healthy !== null)" class="flex items-center gap-3 text-sm">
-                                                    <span class="flex items-center gap-1 text-green-400">
-                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                                        </svg>
-                                                        <span x-text="providerConfig.endpoints.filter(e => e.is_healthy === true).length"></span> healthy
-                                                    </span>
-                                                    <span x-show="providerConfig.endpoints.some(e => e.is_healthy === false)" class="flex items-center gap-1 text-red-400">
-                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                                        </svg>
-                                                        <span x-text="providerConfig.endpoints.filter(e => e.is_healthy === false).length"></span> unhealthy
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </template>
-
-                                <!-- Local provider info -->
-                                <template x-if="providerConfig.provider_type === 'local'">
-                                    <div class="p-4 bg-threadlight-surface border border-threadlight-border/50 rounded-lg">
-                                        <div class="flex items-center gap-3">
-                                            <svg class="w-8 h-8 text-threadlight-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                                            </svg>
-                                            <div>
-                                                <p class="text-sm text-threadlight-text font-medium">Local Models</p>
-                                                <p class="text-xs text-threadlight-muted">Using local models via sentence-transformers, llama.cpp, or Ollama. No API key required.</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </template>
-
-                                <!-- Save Button -->
-                                <div class="pt-4 border-t border-threadlight-border">
-                                    <button @click="saveProviderConfig()"
-                                        :disabled="savingProviderConfig"
-                                        class="px-4 py-2 bg-threadlight-accent text-white hover:bg-threadlight-accent/80 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait">
-                                        <span x-show="!savingProviderConfig">Save API Configuration</span>
-                                        <span x-show="savingProviderConfig" class="flex items-center gap-2">
-                                            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                            </svg>
-                                            Saving...
-                                        </span>
-                                    </button>
-                                </div>
-
-                                <!-- Quick Setup Presets -->
-                                <details class="pt-2">
-                                    <summary class="text-sm text-threadlight-muted hover:text-threadlight-text cursor-pointer">Quick Setup Presets</summary>
-                                    <div class="mt-3 grid grid-cols-2 gap-2">
-                                        <button @click="providerConfig.provider_type = 'openai'; providerConfig.api_base = 'https://api.openai.com/v1'; providerConfig.model = 'gpt-4o';"
-                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-sm text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 transition-colors text-left">
-                                            <span class="font-medium">OpenAI (GPT-4)</span>
-                                            <span class="block text-xs opacity-75">gpt-4o model</span>
-                                        </button>
-                                        <button @click="providerConfig.provider_type = 'anthropic'; providerConfig.api_base = 'https://api.anthropic.com'; providerConfig.model = 'claude-3-5-sonnet-20241022';"
-                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-sm text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 transition-colors text-left">
-                                            <span class="font-medium">Anthropic (Claude)</span>
-                                            <span class="block text-xs opacity-75">Claude 3.5 Sonnet</span>
-                                        </button>
-                                        <button @click="providerConfig.provider_type = 'nous'; providerConfig.api_base = 'https://inference-api.nousresearch.com/v1'; providerConfig.model = 'Hermes-4.3-36B';"
-                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-sm text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 transition-colors text-left">
-                                            <span class="font-medium">Nous Research</span>
-                                            <span class="block text-xs opacity-75">Hermes 4.3</span>
-                                        </button>
-                                        <button @click="providerConfig.provider_type = 'local'; providerConfig.api_base = ''; providerConfig.model = '';"
-                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border rounded-lg text-sm text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent/50 transition-colors text-left">
-                                            <span class="font-medium">Local Models</span>
-                                            <span class="block text-xs opacity-75">No API required</span>
-                                        </button>
-                                    </div>
-                                </details>
-                            </div>
-                        </div>
-
-                        <!-- Multi-Provider Configuration -->
+                        <!-- Providers Configuration -->
                         <div class="bg-threadlight-elevated rounded-xl p-6">
                             <div class="flex items-center justify-between mb-2">
-                                <h3 class="font-medium">Named Providers</h3>
+                                <h3 class="font-medium">Providers</h3>
                                 <button @click="showAddProviderModal = true"
                                     class="text-sm px-3 py-1 bg-threadlight-accent/10 text-threadlight-accent hover:bg-threadlight-accent/20 rounded-lg transition-colors">
                                     + Add Provider
                                 </button>
                             </div>
-                            <p class="text-sm text-threadlight-muted mb-4">Configure multiple providers to use different APIs (Anthropic, OpenAI, Ollama, etc.) for different models.</p>
+                            <p class="text-sm text-threadlight-muted mb-4">Configure your inference providers (Anthropic, OpenAI, Ollama, etc.) to use with your models.</p>
 
-                            <!-- Migrate Button (shown only when no named providers exist) -->
-                            <template x-if="namedProviders.length === 0">
-                                <div class="bg-threadlight-surface border border-threadlight-border/50 rounded-lg p-4 mb-4">
-                                    <p class="text-sm text-threadlight-muted mb-3">No named providers configured yet. You can continue using the default provider above, or migrate your settings to the multi-provider system.</p>
-                                    <button @click="migrateToMultiProvider()"
+                            <!-- Legacy Migration Banner (shown when legacy config exists but no named providers) -->
+                            <template x-if="hasLegacyProviderConfig && namedProviders.length === 0">
+                                <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-4">
+                                    <div class="flex items-start gap-3">
+                                        <svg class="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                        </svg>
+                                        <div class="flex-1">
+                                            <p class="text-sm text-yellow-200 font-medium">Legacy Configuration Detected</p>
+                                            <p class="text-sm text-yellow-200/80 mt-1">You're using the legacy single-provider configuration. Migrate to the multi-provider system to use multiple inference providers and better organize your API connections.</p>
+                                            <button @click="migrateToMultiProvider()"
+                                                class="mt-3 px-4 py-2 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-200 border border-yellow-500/30 rounded-lg transition-colors text-sm font-medium">
+                                                Migrate to Multi-Provider
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Empty state (shown when no providers and no legacy config) -->
+                            <template x-if="!hasLegacyProviderConfig && namedProviders.length === 0">
+                                <div class="bg-threadlight-surface border border-threadlight-border/50 rounded-lg p-6 mb-4 text-center">
+                                    <svg class="w-12 h-12 text-threadlight-muted mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M12 5l7 7-7 7"/>
+                                    </svg>
+                                    <p class="text-sm text-threadlight-text font-medium mb-1">No providers configured</p>
+                                    <p class="text-sm text-threadlight-muted mb-4">Add a provider to connect to AI inference APIs like Anthropic, OpenAI, or local models via Ollama.</p>
+                                    <button @click="showAddProviderModal = true"
                                         class="px-4 py-2 bg-threadlight-accent text-white hover:bg-threadlight-accent/80 rounded-lg transition-colors text-sm">
-                                        Migrate Current Config to Named Provider
+                                        Add Your First Provider
                                     </button>
                                 </div>
                             </template>
@@ -1336,7 +1065,7 @@
                             <!-- Info about model-provider mapping -->
                             <template x-if="namedProviders.length > 0">
                                 <div class="mt-4 text-xs text-threadlight-muted">
-                                    <p>To use a named provider with a model, configure the model's "provider_id" in the model's settings or in profile model pools.</p>
+                                    <p>To use a provider with a model, set the provider_id in Profile model pools or model settings.</p>
                                 </div>
                             </template>
                         </div>

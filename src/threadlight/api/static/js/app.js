@@ -87,22 +87,21 @@ function threadlightApp() {
             memory: { decay_enabled: true, per_profile_isolation: false, default_shared: false },
         },
 
-        // Provider configuration state
-        providerConfig: {
-            provider_type: 'nous',
+        // Legacy provider configuration state (for migration detection)
+        legacyProviderConfig: {
+            provider_type: 'local',
             api_base: '',
-            endpoints: [],  // List of {url, name, priority, purpose, is_healthy, last_checked}
             has_api_key: false,
-            model: '',
         },
-        providerApiKey: '',  // Separate field for API key input
-        providerApiKeyChanged: false,  // Track if key was modified
-        showProviderApiKey: false,  // Toggle visibility
-        testingProviderConnection: false,
-        providerConnectionStatus: null,  // 'success', 'error', or null
-        providerConnectionMessage: '',
-        savingProviderConfig: false,
-        testingEndpointIndex: null,  // Index of endpoint being tested
+
+        // Computed property to check if legacy config exists
+        get hasLegacyProviderConfig() {
+            // Legacy config exists if there's a non-local provider type with an API base or API key
+            const cfg = this.legacyProviderConfig;
+            if (!cfg) return false;
+            if (cfg.provider_type === 'local') return false;
+            return cfg.has_api_key || (cfg.api_base && cfg.api_base.length > 0);
+        },
 
         // Provider models state (fetched from API)
         providerModels: [],  // List of available models from provider
@@ -1740,47 +1739,21 @@ function threadlightApp() {
             await this.updateConfig({ enable_decay: newValue });
         },
 
-        // Provider configuration functions
+        // Legacy provider configuration functions (for migration detection)
         async loadProviderConfig() {
             try {
                 const response = await fetch('/api/provider/config');
                 if (!response.ok) throw new Error('Failed to load provider config');
                 const data = await response.json();
-                this.providerConfig = data;
-
-                // Ensure endpoints array exists (backward compatibility)
-                if (!this.providerConfig.endpoints || !Array.isArray(this.providerConfig.endpoints)) {
-                    // Create from legacy api_base if present
-                    if (this.providerConfig.api_base) {
-                        this.providerConfig.endpoints = [{
-                            url: this.providerConfig.api_base,
-                            name: 'Primary',
-                            priority: 0,
-                            purpose: '',
-                            is_healthy: null,
-                            last_checked: null,
-                        }];
-                    } else {
-                        this.providerConfig.endpoints = [];
-                    }
-                }
-
-                // Reset API key state when loading
-                // Don't show a fake placeholder - just leave empty and show status via has_api_key
-                this.providerApiKey = '';
-                this.providerApiKeyChanged = false;
-                this.showProviderApiKey = false;
-                this.providerConnectionStatus = null;
-                this.providerConnectionMessage = '';
-                this.testingEndpointIndex = null;
+                // Store legacy config for migration detection
+                this.legacyProviderConfig = {
+                    provider_type: data.provider_type || 'local',
+                    api_base: data.api_base || '',
+                    has_api_key: data.has_api_key || false,
+                };
             } catch (error) {
                 console.error('Failed to load provider config:', error);
             }
-        },
-
-        onProviderApiKeyInput() {
-            // Mark the key as changed when user types anything
-            this.providerApiKeyChanged = true;
         },
 
         getDefaultApiBase(providerType) {
@@ -1792,252 +1765,6 @@ function threadlightApp() {
                 'custom': '',
             };
             return defaults[providerType] || '';
-        },
-
-        onProviderTypeChange() {
-            // Update default API base when provider type changes
-            const defaultUrl = this.getDefaultApiBase(this.providerConfig.provider_type);
-            this.providerConfig.api_base = defaultUrl;
-
-            // Also update endpoints - reset to single default endpoint
-            if (defaultUrl) {
-                this.providerConfig.endpoints = [{
-                    url: defaultUrl,
-                    name: 'Primary',
-                    priority: 0,
-                    purpose: '',
-                    is_healthy: null,
-                    last_checked: null,
-                }];
-            } else {
-                this.providerConfig.endpoints = [];
-            }
-
-            // Clear connection status
-            this.providerConnectionStatus = null;
-            this.providerConnectionMessage = '';
-            this.testingEndpointIndex = null;
-            // Clear cached models since provider changed
-            this.clearProviderModelsCache();
-        },
-
-        async testProviderConnection() {
-            this.testingProviderConnection = true;
-            this.providerConnectionStatus = null;
-            this.providerConnectionMessage = '';
-
-            try {
-                const payload = {
-                    provider_type: this.providerConfig.provider_type,
-                    api_base: this.providerConfig.api_base,
-                    model: this.providerConfig.model,
-                };
-
-                // Only include API key if it was changed and has a value
-                if (this.providerApiKeyChanged && this.providerApiKey) {
-                    payload.api_key = this.providerApiKey;
-                }
-
-                const response = await fetch('/api/provider/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-
-                const data = await response.json();
-                this.providerConnectionStatus = data.status;
-                this.providerConnectionMessage = data.message;
-            } catch (error) {
-                this.providerConnectionStatus = 'error';
-                this.providerConnectionMessage = 'Connection test failed: ' + error.message;
-            } finally {
-                this.testingProviderConnection = false;
-            }
-        },
-
-        async saveProviderConfig() {
-            this.savingProviderConfig = true;
-
-            try {
-                const payload = {
-                    provider_type: this.providerConfig.provider_type,
-                    model: this.providerConfig.model,
-                };
-
-                // Send endpoints if we have any configured
-                if (this.providerConfig.endpoints && this.providerConfig.endpoints.length > 0) {
-                    payload.endpoints = this.providerConfig.endpoints.map((ep, idx) => ({
-                        url: ep.url,
-                        name: ep.name || `Endpoint ${idx + 1}`,
-                        priority: ep.priority ?? idx,
-                        purpose: ep.purpose || '',
-                    }));
-                } else {
-                    // Fallback to legacy api_base
-                    payload.api_base = this.providerConfig.api_base;
-                }
-
-                // Only include API key if it was changed and has a value
-                if (this.providerApiKeyChanged && this.providerApiKey) {
-                    payload.api_key = this.providerApiKey;
-                }
-
-                const response = await fetch('/api/provider/config', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.detail || 'Failed to save provider config');
-                }
-
-                // Reload config to get updated state
-                await this.loadProviderConfig();
-                // Clear cached models since config may have changed
-                this.clearProviderModelsCache();
-                this.showToast('API configuration saved');
-            } catch (error) {
-                this.showToast('Failed to save API config: ' + error.message, 'error');
-            } finally {
-                this.savingProviderConfig = false;
-            }
-        },
-
-        getProviderStatusIcon(providerType) {
-            // Check if the provider is configured (has API key or is local)
-            if (providerType === 'local') {
-                return 'check';
-            }
-            if (this.providerConfig.provider_type === providerType && this.providerConfig.has_api_key) {
-                return 'check';
-            }
-            return 'warning';
-        },
-
-        getProviderHelpText(providerType) {
-            const helpTexts = {
-                'openai': 'Get your API key from platform.openai.com/api-keys',
-                'anthropic': 'Get your API key from console.anthropic.com/settings/keys',
-                'nous': 'Get your API key from nous.dev/api-keys or use Hermes inference API',
-                'local': 'Using local models via sentence-transformers or llama.cpp',
-                'custom': 'Configure a custom OpenAI-compatible API endpoint',
-            };
-            return helpTexts[providerType] || '';
-        },
-
-        // Endpoint management functions
-        addEndpoint() {
-            const newPriority = this.providerConfig.endpoints.length;
-            this.providerConfig.endpoints.push({
-                url: '',
-                name: newPriority === 0 ? 'Primary' : `Fallback ${newPriority}`,
-                priority: newPriority,
-                purpose: newPriority === 0 ? 'main' : 'fallback',
-                is_healthy: null,
-                last_checked: null,
-            });
-        },
-
-        removeEndpoint(index) {
-            if (this.providerConfig.endpoints.length <= 1) {
-                this.showToast('At least one endpoint is required', 'error');
-                return;
-            }
-            this.providerConfig.endpoints.splice(index, 1);
-            // Re-assign priorities
-            this.providerConfig.endpoints.forEach((ep, idx) => {
-                ep.priority = idx;
-            });
-            // Update api_base to match primary endpoint
-            if (this.providerConfig.endpoints.length > 0) {
-                this.providerConfig.api_base = this.providerConfig.endpoints[0].url;
-            }
-        },
-
-        moveEndpointUp(index) {
-            if (index <= 0) return;
-            const endpoints = this.providerConfig.endpoints;
-            [endpoints[index], endpoints[index - 1]] = [endpoints[index - 1], endpoints[index]];
-            // Update priorities
-            endpoints.forEach((ep, idx) => {
-                ep.priority = idx;
-            });
-            // Update api_base to match primary endpoint
-            this.providerConfig.api_base = endpoints[0].url;
-        },
-
-        moveEndpointDown(index) {
-            const endpoints = this.providerConfig.endpoints;
-            if (index >= endpoints.length - 1) return;
-            [endpoints[index], endpoints[index + 1]] = [endpoints[index + 1], endpoints[index]];
-            // Update priorities
-            endpoints.forEach((ep, idx) => {
-                ep.priority = idx;
-            });
-            // Update api_base to match primary endpoint
-            this.providerConfig.api_base = endpoints[0].url;
-        },
-
-        onEndpointUrlChange(index) {
-            // Update api_base if this is the primary endpoint
-            if (index === 0) {
-                this.providerConfig.api_base = this.providerConfig.endpoints[0].url;
-            }
-            // Clear health status when URL changes
-            this.providerConfig.endpoints[index].is_healthy = null;
-            this.providerConfig.endpoints[index].last_checked = null;
-        },
-
-        async testEndpoint(index) {
-            const endpoint = this.providerConfig.endpoints[index];
-            if (!endpoint.url) {
-                this.showToast('Endpoint URL is required', 'error');
-                return;
-            }
-
-            this.testingEndpointIndex = index;
-
-            try {
-                const response = await fetch(`/api/provider/endpoints/test?endpoint_url=${encodeURIComponent(endpoint.url)}&provider_type=${encodeURIComponent(this.providerConfig.provider_type)}`, {
-                    method: 'POST',
-                });
-
-                const data = await response.json();
-
-                // Update endpoint health status
-                endpoint.is_healthy = data.status === 'success';
-                endpoint.last_checked = new Date().toISOString();
-
-                if (data.status === 'success') {
-                    this.showToast(`Endpoint "${endpoint.name || 'Unnamed'}" is healthy`);
-                } else {
-                    this.showToast(`Endpoint test failed: ${data.message}`, 'error');
-                }
-            } catch (error) {
-                endpoint.is_healthy = false;
-                endpoint.last_checked = new Date().toISOString();
-                this.showToast('Endpoint test failed: ' + error.message, 'error');
-            } finally {
-                this.testingEndpointIndex = null;
-            }
-        },
-
-        async testAllEndpoints() {
-            for (let i = 0; i < this.providerConfig.endpoints.length; i++) {
-                await this.testEndpoint(i);
-            }
-        },
-
-        getEndpointHealthIcon(endpoint) {
-            if (endpoint.is_healthy === null) return 'unknown';
-            return endpoint.is_healthy ? 'healthy' : 'unhealthy';
-        },
-
-        getEndpointHealthClass(endpoint) {
-            if (endpoint.is_healthy === null) return 'text-threadlight-muted';
-            return endpoint.is_healthy ? 'text-green-400' : 'text-red-400';
         },
 
         // Provider models functions
@@ -2126,6 +1853,7 @@ function threadlightApp() {
 
                 if (data.status === 'migrated') {
                     await this.loadNamedProviders();
+                    await this.loadProviderConfig();  // Reload legacy config to update banner state
                     this.showToast('Provider configuration migrated successfully');
                 } else if (data.status === 'skipped') {
                     this.showToast(data.message, 'warning');
