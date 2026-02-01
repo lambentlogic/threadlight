@@ -153,26 +153,30 @@ class ImportedMemory(MemoryCapsule):
         text = self.get_text()
 
         # Build context info from either schema
-        context_info = ""
+        about_info = ""
+        source_info = ""
         if self.about:
             # New "note" schema with "about" field
-            context_info = f" about {self.about}"
-        elif self.source:
-            # Legacy "imported" schema with source
-            context_info = f" (from {self.source}"
-            if self.line_number is not None:
-                context_info += f", line {self.line_number}"
-            context_info += ")"
+            about_info = f" about {self.about}"
+        if self.source:
+            # Track source separately for natural phrasing
+            source_info = self.source
 
         tag_info = ""
         if self.tags:
             tag_info = f" [tags: {', '.join(self.tags)}]"
 
         if mode == ContextMode.DIRECT:
-            return f"[Note{context_info}] {text}{tag_info}"
+            context_suffix = about_info if about_info else (f" ({source_info})" if source_info else "")
+            return f"[Note{context_suffix}] {text}{tag_info}"
 
         elif mode == ContextMode.NARRATIVE:
-            return f'(You remember{context_info}: "{text}")'
+            # Natural phrasing that doesn't awkwardly mention the import source
+            if about_info:
+                return f'(You noted{about_info}: "{text}")'
+            else:
+                # For imported memories, the content speaks for itself
+                return f'(From your notes: "{text}")'
 
         elif mode == ContextMode.WHISPER:
             # For whisper mode, just the essence
@@ -180,7 +184,10 @@ class ImportedMemory(MemoryCapsule):
 
         elif mode == ContextMode.RITUAL:
             # In ritual mode, memories carry context
-            return f'(A memory surfaces{context_info}: "{text}")'
+            if about_info:
+                return f'(A note surfaces{about_info}: "{text}")'
+            else:
+                return f'(A memory surfaces: "{text}")'
 
         return text
 
