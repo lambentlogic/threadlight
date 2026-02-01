@@ -11,6 +11,7 @@ from threadlight.capsules.base import (
     MemoryCapsule,
     CapsuleType,
     RetentionPolicy,
+    MemoryTier,
     CustomTypeCapsule,
     is_custom_type,
 )
@@ -111,6 +112,13 @@ def create_capsule(data: dict[str, Any]) -> MemoryCapsule:
             kwargs["retention"] = RetentionPolicy(data["retention"])
         else:
             kwargs["retention"] = data["retention"]
+
+    # Memory tier
+    if "memory_tier" in data:
+        if isinstance(data["memory_tier"], str):
+            kwargs["memory_tier"] = MemoryTier(data["memory_tier"])
+        else:
+            kwargs["memory_tier"] = data["memory_tier"]
 
     # Consent
     if "consent_origin" in data:
@@ -264,6 +272,13 @@ def _create_custom_type_capsule(data: dict[str, Any], custom_type_id: str) -> Cu
             kwargs["retention"] = RetentionPolicy(data["retention"])
         else:
             kwargs["retention"] = data["retention"]
+
+    # Memory tier
+    if "memory_tier" in data:
+        if isinstance(data["memory_tier"], str):
+            kwargs["memory_tier"] = MemoryTier(data["memory_tier"])
+        else:
+            kwargs["memory_tier"] = data["memory_tier"]
 
     # Consent
     if "consent_origin" in data:

@@ -35,6 +35,14 @@ class RetentionPolicy(str, Enum):
     EPHEMERAL = "ephemeral"  # Rapid decay, session-scoped
 
 
+class MemoryTier(str, Enum):
+    """Memory tier for recall strategy."""
+
+    STRICTLY_ANCHORED = "strictly_anchored"  # Always included, never decays
+    ANCHORED_DECAYING = "anchored_decaying"  # Always included, can decay
+    SEMANTIC = "semantic"  # Recalled by relevance (default)
+
+
 class ContextMode(str, Enum):
     """How memory should be composed into context."""
 
@@ -70,6 +78,7 @@ class MemoryCapsule(ABC):
 
     # Decay mechanics
     retention: RetentionPolicy = RetentionPolicy.NORMAL
+    memory_tier: MemoryTier = MemoryTier.SEMANTIC
     decay_rate: float = 0.1  # 0.0 (permanent) to 1.0 (rapid)
     presence_score: float = 1.0  # Current "aliveness" of memory
 
@@ -86,6 +95,9 @@ class MemoryCapsule(ABC):
 
     # Deprecated: Use profile_scope instead (kept for backward compatibility)
     model_scope: Optional[str] = None  # NULL = shared across all models
+
+    # Archive status (for hiding memories without deleting them)
+    archived: bool = False
 
     def touch(self) -> None:
         """Record an access to this capsule."""
@@ -126,6 +138,7 @@ class MemoryCapsule(ABC):
             "last_accessed": self.last_accessed.isoformat(),
             "access_count": self.access_count,
             "retention": self.retention.value,
+            "memory_tier": self.memory_tier.value,
             "decay_rate": self.decay_rate,
             "presence_score": self.presence_score,
             "consent_origin": self.consent_origin,
@@ -134,6 +147,7 @@ class MemoryCapsule(ABC):
             "embedding": self.embedding,
             "profile_scope": self.profile_scope,
             "model_scope": self.model_scope,  # Deprecated, kept for backward compatibility
+            "archived": self.archived,
         }
 
     @classmethod

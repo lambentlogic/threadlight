@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 import uuid
 
-from threadlight.capsules.base import MemoryCapsule, CapsuleType, RetentionPolicy
+from threadlight.capsules.base import MemoryCapsule, CapsuleType, MemoryTier, RetentionPolicy
 from threadlight.capsules.factory import create_capsule
 from threadlight.storage.base import (
     StorageBackend,
@@ -59,6 +59,7 @@ class SQLiteStorage(StorageBackend):
                 last_accessed TEXT,
                 access_count INTEGER DEFAULT 0,
                 retention TEXT DEFAULT 'normal',
+                memory_tier TEXT DEFAULT 'semantic',
                 decay_rate REAL DEFAULT 0.1,
                 presence_score REAL DEFAULT 1.0,
                 consent_origin TEXT,
@@ -73,7 +74,7 @@ class SQLiteStorage(StorageBackend):
             CREATE INDEX IF NOT EXISTS idx_capsules_presence ON capsules(presence_score);
             CREATE INDEX IF NOT EXISTS idx_capsules_last_accessed ON capsules(last_accessed);
             CREATE INDEX IF NOT EXISTS idx_capsules_consent ON capsules(consent_confirmed);
-            -- model_scope and profile_scope indexes created in migrations for backward compat
+            -- model_scope, profile_scope, and memory_tier indexes created in migrations for backward compat
 
             CREATE TABLE IF NOT EXISTS memory_proposals (
                 id TEXT PRIMARY KEY,
@@ -237,6 +238,18 @@ class SQLiteStorage(StorageBackend):
             """)
             self.conn.commit()
 
+        # Add memory_tier column to capsules table (defaults to 'semantic' for existing rows)
+        if "memory_tier" not in capsule_columns:
+            self.conn.execute("ALTER TABLE capsules ADD COLUMN memory_tier TEXT DEFAULT 'semantic'")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_tier ON capsules(memory_tier)")
+            self.conn.commit()
+
+        # Add archived column to capsules table (defaults to 0/false for existing rows)
+        if "archived" not in capsule_columns:
+            self.conn.execute("ALTER TABLE capsules ADD COLUMN archived INTEGER DEFAULT 0")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_archived ON capsules(archived)")
+            self.conn.commit()
+
         # Check if model_scope column exists in conversations table
         cursor = self.conn.execute("PRAGMA table_info(conversations)")
         conv_columns = [row[1] for row in cursor.fetchall()]
@@ -313,6 +326,7 @@ class SQLiteStorage(StorageBackend):
         try:
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_model_scope ON capsules(model_scope)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_profile_scope ON capsules(profile_scope)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_capsules_tier ON capsules(memory_tier)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_model_scope ON conversations(model_scope)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_profile_scope ON conversations(profile_scope)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_profile_id ON messages(profile_id)")
@@ -390,9 +404,9 @@ class SQLiteStorage(StorageBackend):
         conn.execute("""
             INSERT OR REPLACE INTO capsules
             (id, type, content, created_at, updated_at, last_accessed,
-             access_count, retention, decay_rate, presence_score,
-             consent_origin, consent_confirmed, cue_phrases, embedding, model_scope, profile_scope)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             access_count, retention, memory_tier, decay_rate, presence_score,
+             consent_origin, consent_confirmed, cue_phrases, embedding, model_scope, profile_scope, archived)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             data["id"],
             data["type"],
@@ -402,6 +416,7 @@ class SQLiteStorage(StorageBackend):
             data["last_accessed"],
             data["access_count"],
             data["retention"],
+            data.get("memory_tier", "semantic"),
             data["decay_rate"],
             data["presence_score"],
             data["consent_origin"],
@@ -410,6 +425,7 @@ class SQLiteStorage(StorageBackend):
             json.dumps(data["embedding"]) if data["embedding"] else None,
             data.get("model_scope"),
             profile_scope,
+            1 if data.get("archived", False) else 0,
         ))
         conn.commit()
 
@@ -448,13 +464,15 @@ class SQLiteStorage(StorageBackend):
                 last_accessed = ?,
                 access_count = ?,
                 retention = ?,
+                memory_tier = ?,
                 decay_rate = ?,
                 presence_score = ?,
                 consent_confirmed = ?,
                 cue_phrases = ?,
                 embedding = ?,
                 model_scope = ?,
-                profile_scope = ?
+                profile_scope = ?,
+                archived = ?
             WHERE id = ?
         """, (
             json.dumps(data["content"]),
@@ -462,6 +480,7 @@ class SQLiteStorage(StorageBackend):
             data["last_accessed"],
             data["access_count"],
             data["retention"],
+            data.get("memory_tier", "semantic"),
             data["decay_rate"],
             data["presence_score"],
             1 if data["consent_confirmed"] else 0,
@@ -469,6 +488,7 @@ class SQLiteStorage(StorageBackend):
             json.dumps(data["embedding"]) if data["embedding"] else None,
             data.get("model_scope"),
             profile_scope,
+            1 if data.get("archived", False) else 0,
             data["id"],
         ))
         conn.commit()
@@ -542,6 +562,15 @@ class SQLiteStorage(StorageBackend):
                     query += " AND profile_scope = ?"
                     params.append(filter.profile_scope)
 
+            # Memory tier filtering
+            if filter.memory_tier is not None:
+                query += " AND memory_tier = ?"
+                params.append(filter.memory_tier.value)
+
+            # Archive filtering (default: exclude archived)
+            if not filter.include_archived:
+                query += " AND (archived = 0 OR archived IS NULL)"
+
             # Sorting
             order_column = filter.order_by
             if order_column not in ("last_accessed", "created_at", "presence_score"):
@@ -553,7 +582,8 @@ class SQLiteStorage(StorageBackend):
             query += " LIMIT ? OFFSET ?"
             params.extend([filter.limit, filter.offset])
         else:
-            query += " ORDER BY last_accessed DESC LIMIT 100"
+            # Default: exclude archived memories
+            query += " AND (archived = 0 OR archived IS NULL) ORDER BY last_accessed DESC LIMIT 100"
 
         rows = conn.execute(query, params).fetchall()
 
@@ -753,15 +783,26 @@ class SQLiteStorage(StorageBackend):
 
     def _row_to_capsule(self, row: sqlite3.Row) -> MemoryCapsule:
         """Convert a database row to a capsule."""
-        # Handle model_scope and profile_scope fields which may not exist in older databases
+        # Handle model_scope, profile_scope, memory_tier, and archived fields which may not exist in older databases
         model_scope = None
         profile_scope = None
+        memory_tier = MemoryTier.SEMANTIC.value  # Default for existing/migrated rows
+        archived = False  # Default for existing/migrated rows
         try:
             model_scope = row["model_scope"]
         except (IndexError, KeyError):
             pass
         try:
             profile_scope = row["profile_scope"]
+        except (IndexError, KeyError):
+            pass
+        try:
+            # Handle NULL values (from migration) by defaulting to SEMANTIC
+            memory_tier = row["memory_tier"] if row["memory_tier"] else MemoryTier.SEMANTIC.value
+        except (IndexError, KeyError):
+            pass
+        try:
+            archived = bool(row["archived"])
         except (IndexError, KeyError):
             pass
 
@@ -774,6 +815,7 @@ class SQLiteStorage(StorageBackend):
             "last_accessed": row["last_accessed"],
             "access_count": row["access_count"],
             "retention": row["retention"],
+            "memory_tier": memory_tier,
             "decay_rate": row["decay_rate"],
             "presence_score": row["presence_score"],
             "consent_origin": row["consent_origin"],
@@ -782,6 +824,7 @@ class SQLiteStorage(StorageBackend):
             "embedding": json.loads(row["embedding"]) if row["embedding"] else None,
             "model_scope": model_scope,
             "profile_scope": profile_scope,
+            "archived": archived,
         }
 
         return create_capsule(data)

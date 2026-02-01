@@ -20,7 +20,7 @@ from typing import Any, Optional
 import logging
 import uuid
 
-from threadlight.capsules.base import MemoryCapsule, CapsuleType, RetentionPolicy
+from threadlight.capsules.base import MemoryCapsule, CapsuleType, RetentionPolicy, MemoryTier
 from threadlight.capsules.factory import create_capsule, capsule_from_simple
 from threadlight.storage.base import (
     StorageBackend,
@@ -31,6 +31,7 @@ from threadlight.storage.base import (
     MessageSearchResult,
 )
 from threadlight.decay.engine import DecayEngine
+from threadlight.memory.stopwords import extract_meaningful_terms
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +311,7 @@ class MemoryOrchestrator:
         content: dict[str, Any],
         cue_phrases: Optional[list[str]] = None,
         retention: str = "normal",
+        memory_tier: str = "semantic",
         consent_confirmed: bool = False,
         shared: Optional[bool] = None,
         model_scope: Optional[str] = None,
@@ -324,6 +326,8 @@ class MemoryOrchestrator:
             content: Type-specific content dictionary
             cue_phrases: Phrases that trigger retrieval
             retention: Retention policy (sacred, normal, ephemeral)
+            memory_tier: Memory tier for recall strategy (strictly_anchored,
+                        anchored_decaying, semantic). Defaults to "semantic".
             consent_confirmed: Whether user has confirmed this memory
             shared: Whether this memory should be shared across all profiles
                    (None = use default behavior based on config)
@@ -334,6 +338,15 @@ class MemoryOrchestrator:
         Returns:
             The created MemoryCapsule
         """
+        # Validate memory_tier
+        try:
+            tier = MemoryTier(memory_tier)
+        except ValueError:
+            raise ValueError(
+                f"Invalid memory_tier '{memory_tier}'. "
+                f"Must be one of: {', '.join(t.value for t in MemoryTier)}"
+            )
+
         # Determine profile scope (prefer profile_scope, fall back to model_scope)
         effective_profile_scope = profile_scope or model_scope
         if effective_profile_scope is None:
@@ -344,6 +357,7 @@ class MemoryOrchestrator:
             content=content,
             cue_phrases=cue_phrases or [],
             retention=RetentionPolicy(retention),
+            memory_tier=tier,
             consent_confirmed=consent_confirmed,
             profile_scope=effective_profile_scope,
             model_scope=effective_profile_scope,  # Keep model_scope synced for backward compat
@@ -574,12 +588,15 @@ class MemoryOrchestrator:
         include_style: bool = True,
         limit: int = 5,
         include_shared: bool = True,
+        max_anchored: int = 10,
     ) -> list[MemoryCapsule]:
         """
         Recall all relevant memories for a user message.
 
-        Searches across all capsule types and combines results.
-        This is the main method for retrieving context-relevant memories.
+        Implements tiered recall:
+        1. Always include anchored memories first (strictly_anchored + anchored_decaying)
+        2. Then add semantic memories to fill remaining slots
+        3. Respect total limit but allow separate limit for anchored memories
 
         Args:
             message: The user message to find relevant memories for
@@ -588,33 +605,69 @@ class MemoryOrchestrator:
             limit: Maximum capsules to return
             include_shared: Whether to include shared (profile_scope=NULL) memories.
                            Set to False for profiles with access_shared_memories=False.
+            max_anchored: Maximum anchored memories per tier to include
 
         Returns:
-            List of relevant capsules sorted by presence score
+            List of relevant capsules with anchored first, then semantic by presence score
         """
-        results = []
-
         # Track interaction
         self.record_interaction()
 
-        # Extract potential cues from message
-        words = message.lower().split()
-        cues = [w for w in words if len(w) > 3]
-
-        # Search each cue
-        seen_ids = set()
-        for cue in cues[:5]:  # Limit cue searches
-            matches = self.recall(cue, limit=3, include_shared=include_shared)
-            for m in matches:
-                if m.id not in seen_ids:
-                    results.append(m)
-                    seen_ids.add(m.id)
-
-        # Determine effective profile scope for ritual/style filtering
+        # Determine effective profile scope for filtering
         isolation_enabled = self._per_profile_isolation or self._per_model_isolation
         effective_scope = None
         if isolation_enabled:
             effective_scope = self._current_profile or self._current_model
+
+        seen_ids: set[str] = set()
+        results: list[MemoryCapsule] = []
+
+        # Step 1: Get strictly anchored memories (always included first)
+        strictly_anchored = self.storage.list_capsules(CapsuleFilter(
+            memory_tier=MemoryTier.STRICTLY_ANCHORED,
+            profile_scope=effective_scope if isolation_enabled else None,
+            include_shared=include_shared,
+            limit=max_anchored,
+        ))
+        for capsule in strictly_anchored:
+            if capsule.id not in seen_ids:
+                results.append(capsule)
+                seen_ids.add(capsule.id)
+
+        # Step 2: Get anchored decaying memories (always included)
+        anchored_decaying = self.storage.list_capsules(CapsuleFilter(
+            memory_tier=MemoryTier.ANCHORED_DECAYING,
+            profile_scope=effective_scope if isolation_enabled else None,
+            include_shared=include_shared,
+            limit=max_anchored,
+        ))
+        for capsule in anchored_decaying:
+            if capsule.id not in seen_ids:
+                results.append(capsule)
+                seen_ids.add(capsule.id)
+
+        # Step 3: Calculate remaining budget for semantic search
+        anchored_count = len(results)
+        semantic_limit = max(0, limit - anchored_count)
+
+        # Step 4: Get semantic memories via cue-based search (if budget allows)
+        if semantic_limit > 0:
+            # Extract meaningful terms from message (filters stop words and short words)
+            meaningful_terms = extract_meaningful_terms(message)
+            logger.debug(f"Semantic recall: extracted terms {meaningful_terms[:10]} from message")
+
+            # Search each meaningful term for semantic matches
+            semantic_capsules: list[MemoryCapsule] = []
+            for term in meaningful_terms[:5]:  # Limit term searches
+                matches = self.recall(term, limit=3, include_shared=include_shared)
+                for m in matches:
+                    if m.id not in seen_ids:
+                        semantic_capsules.append(m)
+                        seen_ids.add(m.id)
+
+            # Sort semantic capsules by presence score and take top semantic_limit
+            semantic_capsules.sort(key=lambda c: c.presence_score, reverse=True)
+            results.extend(semantic_capsules[:semantic_limit])
 
         # Check for ritual triggers
         if include_rituals:
@@ -650,10 +703,16 @@ class MemoryOrchestrator:
                     results.append(style)
                     seen_ids.add(style.id)
 
-        # Sort by presence score
-        results.sort(key=lambda c: c.presence_score, reverse=True)
+        # Touch all recalled capsules to update access time
+        for capsule in results:
+            capsule.touch()
+            self.storage.update_capsule(capsule)
 
-        return results[:limit]
+            # Track in session
+            if self._current_session:
+                self._current_session.record_access(capsule.id)
+
+        return results
 
     # === Proposal Management ===
 

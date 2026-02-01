@@ -1943,7 +1943,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         },
         "identity": {
             "name": args.name or "Assistant",
-            "system_prompt": "You are a helpful AI assistant."
+            "system_prompt": ""
         }
     }
 

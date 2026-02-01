@@ -12,7 +12,7 @@ import json
 import logging
 
 from threadlight.tools.definitions import ToolName
-from threadlight.capsules.base import CapsuleType
+from threadlight.capsules.base import CapsuleType, MemoryTier
 
 if TYPE_CHECKING:
     from threadlight.memory.orchestrator import MemoryOrchestrator
@@ -110,6 +110,8 @@ class ToolExecutor:
                 return self._execute_recall_memory(arguments)
             elif tool_name == ToolName.INVOKE_RITUAL.value:
                 return self._execute_invoke_ritual(arguments)
+            elif tool_name == ToolName.REVIEW_MEMORY_TIERS.value:
+                return self._execute_review_memory_tiers(arguments)
             else:
                 return ToolResult(
                     tool_name=tool_name,
@@ -296,6 +298,190 @@ class ToolExecutor:
             success=True,
             result=result,
             display_message=invocation.response_template or f"Ritual invoked: {ritual_name}",
+        )
+
+    def _execute_review_memory_tiers(self, arguments: dict[str, Any]) -> ToolResult:
+        """Execute review_memory_tiers tool call."""
+        action = arguments.get("action")
+        tier_assignments = arguments.get("tier_assignments", {})
+
+        if not action:
+            return ToolResult(
+                tool_name=ToolName.REVIEW_MEMORY_TIERS.value,
+                success=False,
+                error="action is required ('list' or 'update')",
+            )
+
+        if action == "list":
+            return self._list_memories_for_tier_review()
+        elif action == "update":
+            return self._apply_tier_assignments(tier_assignments)
+        else:
+            return ToolResult(
+                tool_name=ToolName.REVIEW_MEMORY_TIERS.value,
+                success=False,
+                error=f"Invalid action '{action}'. Must be 'list' or 'update'.",
+            )
+
+    def _list_memories_for_tier_review(self) -> ToolResult:
+        """List all memories organized by tier for review."""
+        from threadlight.storage.base import CapsuleFilter
+
+        # Get memories respecting profile isolation
+        # If per-profile isolation is enabled, only get memories for active profile + shared
+        profile_scope = None
+        include_shared = True
+
+        if hasattr(self.memory, 'threadlight') and self.memory.threadlight:
+            tl = self.memory.threadlight
+            if tl.config.memory.per_profile_isolation and tl.active_profile:
+                profile_scope = tl.active_profile.id
+                # Check if this profile can access shared memories
+                include_shared = tl.active_profile.access_shared_memories
+
+        all_filter = CapsuleFilter(
+            limit=10000,
+            profile_scope=profile_scope,
+            include_shared=include_shared
+        )
+        memories = self.memory.storage.list_capsules(all_filter)
+
+        # Group by current tier
+        by_tier: dict[str, list[dict[str, Any]]] = {
+            "strictly_anchored": [],
+            "anchored_decaying": [],
+            "semantic": [],
+        }
+
+        for m in memories:
+            tier = m.memory_tier.value if hasattr(m, 'memory_tier') else 'semantic'
+
+            # Extract content preview
+            if isinstance(m.content, str):
+                content_preview = m.content
+            elif isinstance(m.content, dict):
+                # Try common content keys
+                content_preview = m.content.get('content') or m.content.get('summary') or \
+                                  m.content.get('seed') or m.content.get('moment') or \
+                                  m.content.get('entity') or str(m.content)
+            else:
+                content_preview = str(m.content)
+
+            # Truncate if too long
+            if len(content_preview) > 150:
+                content_preview = content_preview[:150] + "..."
+
+            memory_info = {
+                "id": m.id,
+                "type": m.type.value,
+                "content": content_preview,
+                "current_tier": tier,
+                "access_count": m.access_count,
+                "presence_score": round(m.presence_score, 2),
+            }
+            by_tier.get(tier, by_tier["semantic"]).append(memory_info)
+
+        # Build result with summary and full data
+        result = {
+            "summary": {
+                "strictly_anchored": len(by_tier["strictly_anchored"]),
+                "anchored_decaying": len(by_tier["anchored_decaying"]),
+                "semantic": len(by_tier["semantic"]),
+                "total": len(memories),
+            },
+            "memories_by_tier": by_tier,
+            "instructions": (
+                "Review these memories and think through which should be anchored based on how "
+                "foundational and unchanging they are to core identity. When ready, call this tool "
+                "again with action='update' and tier_assignments containing a map of memory IDs to "
+                "their new tiers (e.g., {'memory-id-1': 'strictly_anchored', 'memory-id-2': 'anchored_decaying'}). "
+                "Only include memories you want to change from their current tier."
+            ),
+        }
+
+        return ToolResult(
+            tool_name=ToolName.REVIEW_MEMORY_TIERS.value,
+            success=True,
+            result=result,
+            display_message=f"Retrieved {len(memories)} memories for tier review",
+        )
+
+    def _apply_tier_assignments(self, tier_assignments: dict[str, str]) -> ToolResult:
+        """Apply tier assignments to memories."""
+        if not tier_assignments:
+            return ToolResult(
+                tool_name=ToolName.REVIEW_MEMORY_TIERS.value,
+                success=False,
+                error="tier_assignments is required for 'update' action",
+            )
+
+        from threadlight.storage.base import CapsuleFilter
+
+        # Get memories respecting profile isolation (same as list method)
+        profile_scope = None
+        include_shared = True
+
+        if hasattr(self.memory, 'threadlight') and self.memory.threadlight:
+            tl = self.memory.threadlight
+            if tl.config.memory.per_profile_isolation and tl.active_profile:
+                profile_scope = tl.active_profile.id
+                include_shared = tl.active_profile.access_shared_memories
+
+        all_filter = CapsuleFilter(
+            limit=10000,
+            profile_scope=profile_scope,
+            include_shared=include_shared
+        )
+        memories = self.memory.storage.list_capsules(all_filter)
+        memory_map = {m.id: m for m in memories}
+
+        updated_count = 0
+        errors = []
+
+        for memory_id, new_tier_str in tier_assignments.items():
+            # Find the memory
+            memory = memory_map.get(memory_id)
+            if not memory:
+                # Memory either doesn't exist or doesn't belong to this profile
+                errors.append(f"Memory {memory_id[:8]}... not found or not accessible")
+                continue
+
+            # Validate tier
+            try:
+                new_tier = MemoryTier(new_tier_str)
+            except ValueError:
+                errors.append(f"Invalid tier '{new_tier_str}' for memory {memory_id[:8]}...")
+                continue
+
+            # Skip if tier is unchanged
+            if memory.memory_tier == new_tier:
+                continue
+
+            # Update tier
+            old_tier = memory.memory_tier.value
+            memory.memory_tier = new_tier
+            if self.memory.storage.update_capsule(memory):
+                updated_count += 1
+                logger.info(f"Updated memory {memory_id[:8]}... tier: {old_tier} -> {new_tier_str}")
+            else:
+                errors.append(f"Failed to update memory {memory_id[:8]}...")
+
+        # Build result message
+        result = {
+            "updated": updated_count,
+            "requested": len(tier_assignments),
+            "errors": errors if errors else None,
+        }
+
+        display_msg = f"Updated {updated_count} memory tier(s)"
+        if errors:
+            display_msg += f" ({len(errors)} error(s))"
+
+        return ToolResult(
+            tool_name=ToolName.REVIEW_MEMORY_TIERS.value,
+            success=True,
+            result=result,
+            display_message=display_msg,
         )
 
 

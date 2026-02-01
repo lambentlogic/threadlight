@@ -627,11 +627,12 @@ class Threadlight:
         tools = self.tool_definitions if (use_tools and self.tool_executor) else None
 
         # Send to provider with tool calling loop
-        # Pass selected_model for multi-provider routing
+        # Use explicitly passed model_id if provided, otherwise use profile's selected model
+        final_model_id = kwargs.pop('model_id', None) or selected_model
         try:
             response = self._complete_with_tools(
                 messages, tools,
-                model_id=selected_model,  # For multi-provider routing
+                model_id=final_model_id,
                 **kwargs
             )
         finally:
@@ -711,6 +712,33 @@ class Threadlight:
         """
         yield from self._chat_manager.stream(
             message, history, context_mode, model_id=model_id, **kwargs
+        )
+
+    def stream_with_tools(
+        self,
+        message: str,
+        history: Optional[list[dict[str, str]]] = None,
+        context_mode: Optional[ContextMode] = None,
+        model_id: Optional[str] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
+        **kwargs: Any
+    ) -> Iterator[str]:
+        """Stream a response with tool calling support.
+
+        When tools are provided and the model requests a tool call, this method
+        executes the tool(s) and continues the conversation until a text response
+        is generated.
+
+        Args:
+            message: User message
+            history: Conversation history
+            context_mode: Context composition mode
+            model_id: Model ID for multi-provider routing
+            tools: Tool definitions (None disables tool calling)
+            **kwargs: Additional provider options
+        """
+        yield from self._chat_manager.stream_with_tools(
+            message, history, context_mode, model_id=model_id, tools=tools, **kwargs
         )
 
     def _build_context(

@@ -21,6 +21,7 @@ class ToolName(str, Enum):
     CREATE_MEMORY = "create_memory"
     RECALL_MEMORY = "recall_memory"
     INVOKE_RITUAL = "invoke_ritual"
+    REVIEW_MEMORY_TIERS = "review_memory_tiers"
 
 
 # Tool definitions in OpenAI function calling format
@@ -119,6 +120,47 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["ritual_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "review_memory_tiers",
+            "description": (
+                "Review and update memory tiers in batch. Call with action='list' to see all memories "
+                "organized by tier for review. Call with action='update' and tier_assignments to apply changes.\n\n"
+                "Memory tiers control how memories are recalled:\n"
+                "- strictly_anchored: Core identity, always included in context, never decays "
+                "(e.g., name, fundamental traits)\n"
+                "- anchored_decaying: Important but may evolve over time, always included but can decay "
+                "(e.g., current interests, relationships)\n"
+                "- semantic: Context-dependent, recalled by relevance to conversation (default tier)"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "update"],
+                        "description": (
+                            "Action to perform: 'list' returns all memories for review, "
+                            "'update' applies tier_assignments."
+                        ),
+                    },
+                    "tier_assignments": {
+                        "type": "object",
+                        "description": (
+                            "Map of memory_id to new tier. Only include memories you want to change. "
+                            "Format: {\"memory-uuid\": \"strictly_anchored\", \"other-uuid\": \"anchored_decaying\", ...}"
+                        ),
+                        "additionalProperties": {
+                            "type": "string",
+                            "enum": ["strictly_anchored", "anchored_decaying", "semantic"],
+                        },
+                    },
+                },
+                "required": ["action"],
             },
         },
     },

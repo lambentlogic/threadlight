@@ -85,11 +85,15 @@ class ChatManager:
             self.tl.config.providers
         )
 
+        # DEBUG: Log routing decision
+        logger.info(f"[ROUTING DEBUG] model_id={model_id}, use_provider_manager={use_provider_manager}, providers={list(self.tl.config.providers.keys()) if self.tl.config.providers else None}")
+
         while iteration < MAX_TOOL_ITERATIONS:
             iteration += 1
 
             # Make the API call - route to appropriate provider
             if use_provider_manager:
+                logger.info(f"[ROUTING DEBUG] Using ProviderManager for model: {model_id}")
                 response = self.tl.provider_manager.complete(
                     model_id=model_id,
                     messages=messages,
@@ -97,6 +101,7 @@ class ChatManager:
                     **kwargs
                 )
             else:
+                logger.info(f"[ROUTING DEBUG] Using legacy provider: {self.tl.provider}")
                 response = self.tl.provider.complete(messages, tools=tools, **kwargs)
 
             # If no tool calls, we're done
@@ -179,12 +184,32 @@ class ChatManager:
         # Get active ritual if any
         active_ritual = self.tl.memory.get_active_ritual()
 
+        # Get profile-specific prompt settings
+        profile = self.tl.active_profile
+        system_prompt_sections = None
+        use_freeform_prompt = False
+        freeform_system_prompt = None
+        profile_philosophy = None
+        approach_to_rituals = None
+
+        if profile:
+            system_prompt_sections = profile.system_prompt_sections
+            use_freeform_prompt = profile.use_freeform_prompt
+            freeform_system_prompt = profile.system_prompt  # Profile uses system_prompt for freeform
+            profile_philosophy = profile.philosophy
+            approach_to_rituals = profile.approach_to_rituals
+
         # Compose context
         return self.tl.composer.compose(
             capsules=capsules,
             style_profile=self.tl.style_profile,
             mode=context_mode,
             active_ritual=active_ritual,
+            system_prompt_sections=system_prompt_sections,
+            use_freeform_prompt=use_freeform_prompt,
+            freeform_system_prompt=freeform_system_prompt,
+            profile_philosophy=profile_philosophy,
+            approach_to_rituals=approach_to_rituals,
         )
 
     def build_soft_memory_context(
@@ -336,3 +361,117 @@ class ChatManager:
             yield from self.tl.provider_manager.stream(model_id=model_id, messages=messages, **kwargs)
         else:
             yield from self.tl.provider.stream(messages, **kwargs)
+
+    def stream_with_tools(
+        self,
+        message: str,
+        history: Optional[list[dict[str, str]]] = None,
+        context_mode: Optional['ContextMode'] = None,
+        model_id: Optional[str] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
+        **kwargs: Any
+    ) -> Iterator[str]:
+        """
+        Stream a response with tool calling support.
+
+        When tools are provided and the model requests a tool call, this method
+        executes the tool(s) and continues the conversation until a text response
+        is generated. Tool execution results are yielded as status messages.
+
+        Args:
+            message: User message
+            history: Conversation history
+            context_mode: Context composition mode
+            model_id: Model to use (for multi-provider routing)
+            tools: Tool definitions (None disables tool calling)
+            **kwargs: Additional provider options
+
+        Yields:
+            Text chunks as they arrive, including tool execution status.
+        """
+        from threadlight.providers.base import ProviderMessage
+
+        # If no tools provided, fall back to regular streaming
+        if not tools:
+            yield from self.stream(message, history, context_mode, model_id, **kwargs)
+            return
+
+        messages = []
+
+        # Build context
+        if self.tl.enable_memory:
+            context = self.build_context(message, context_mode=context_mode)
+            if context.system_message:
+                messages.append(ProviderMessage(role="system", content=context.system_message))
+
+        if history:
+            for msg in history:
+                messages.append(ProviderMessage(role=msg["role"], content=msg["content"]))
+
+        messages.append(ProviderMessage(role="user", content=message))
+
+        # Determine which provider to use
+        use_provider_manager = (
+            model_id is not None and
+            hasattr(self.tl, 'provider_manager') and
+            self.tl.config.providers
+        )
+
+        iteration = 0
+        while iteration < MAX_TOOL_ITERATIONS:
+            iteration += 1
+
+            # Make the API call with tools (non-streaming to detect tool calls)
+            if use_provider_manager:
+                response = self.tl.provider_manager.complete(
+                    model_id=model_id,
+                    messages=messages,
+                    tools=tools,
+                    **kwargs
+                )
+            else:
+                response = self.tl.provider.complete(messages, tools=tools, **kwargs)
+
+            # If no tool calls, yield the response content and we're done
+            if not response.has_tool_calls:
+                if response.content:
+                    yield response.content
+                return
+
+            # Handle tool calls
+            logger.info(f"[stream_with_tools] Model requested {len(response.tool_calls)} tool call(s)")
+
+            # Add the assistant message with tool calls to context
+            messages.append(ProviderMessage.assistant_with_tool_calls(
+                content=response.content,
+                tool_calls=response.tool_calls,
+            ))
+
+            # Execute each tool call
+            for tool_call in response.tool_calls:
+                logger.info(f"[stream_with_tools] Executing tool: {tool_call.name}")
+
+                # Yield status message so user sees progress
+                yield f"\n[Executing {tool_call.name}...]\n"
+
+                # Parse arguments
+                try:
+                    arguments = json.loads(tool_call.arguments)
+                except json.JSONDecodeError as e:
+                    arguments = {}
+                    logger.warning(f"Failed to parse tool arguments: {e}")
+
+                # Execute the tool
+                result = self.tl.tool_executor.execute(tool_call.name, arguments)
+
+                logger.info(f"[stream_with_tools] Tool result: success={result.success}")
+
+                # Add tool response to messages
+                messages.append(ProviderMessage.tool_response(
+                    tool_call_id=tool_call.id,
+                    content=result.to_tool_response(),
+                ))
+
+        # If we hit max iterations, yield warning
+        logger.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
+        yield "\n[Warning: Maximum tool iterations reached]\n"

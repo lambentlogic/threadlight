@@ -448,6 +448,14 @@ class MemoryConfig:
     # Deprecated: kept for backward compatibility, mapped to per_profile_isolation
     per_model_isolation: bool = False
 
+    # Anchored memory settings
+    # max_anchored_memories: Maximum number of anchored memories to include per request
+    max_anchored_memories: int = 10
+    # anchored_demotion_threshold: Presence score below which anchored_decaying memories can be demoted to semantic
+    anchored_demotion_threshold: float = 0.3
+    # anchored_demotion_days: Days of inactivity (with low access count) before demotion consideration
+    anchored_demotion_days: int = 90
+
     def __post_init__(self) -> None:
         # Migrate per_model_isolation to per_profile_isolation for backward compatibility
         if self.per_model_isolation and not self.per_profile_isolation:
@@ -481,7 +489,7 @@ class IdentityConfig:
 
     name: str = "Assistant"  # Neutral default
     seed_dream_path: Optional[str] = None
-    system_prompt: str = "You are a helpful AI assistant."  # Minimal neutral default
+    system_prompt: str = ""  # Minimal neutral default
 
 
 @dataclass
@@ -494,7 +502,7 @@ class ModelConfig:
     """
 
     model_id: str
-    system_prompt: str = "You are a helpful AI assistant."
+    system_prompt: str = ""
     style_profile: Optional[str] = None
     memory_enabled: bool = True
     decay_enabled: bool = False
@@ -528,7 +536,7 @@ class ModelConfig:
         memory_data = data.get("memory", {})
         return cls(
             model_id=data.get("model_id", "unknown"),
-            system_prompt=data.get("system_prompt", "You are a helpful AI assistant."),
+            system_prompt=data.get("system_prompt", ""),
             style_profile=data.get("style_profile"),
             memory_enabled=memory_data.get("enabled", True) if isinstance(memory_data, dict) else True,
             decay_enabled=memory_data.get("decay_enabled", False) if isinstance(memory_data, dict) else False,
@@ -632,7 +640,7 @@ class ThreadlightConfig:
             ),
             identity=IdentityConfig(
                 name=os.getenv("THREADLIGHT_IDENTITY_NAME", "Assistant"),
-                system_prompt=os.getenv("THREADLIGHT_SYSTEM_PROMPT", "You are a helpful AI assistant."),
+                system_prompt=os.getenv("THREADLIGHT_SYSTEM_PROMPT", ""),
             ),
         )
 
@@ -766,6 +774,16 @@ class ThreadlightConfig:
             config.memory.default_shared = m.get(
                 "default_shared", config.memory.default_shared
             )
+            # Anchored memory settings
+            config.memory.max_anchored_memories = m.get(
+                "max_anchored_memories", config.memory.max_anchored_memories
+            )
+            config.memory.anchored_demotion_threshold = m.get(
+                "anchored_demotion_threshold", config.memory.anchored_demotion_threshold
+            )
+            config.memory.anchored_demotion_days = m.get(
+                "anchored_demotion_days", config.memory.anchored_demotion_days
+            )
 
         if "style" in data:
             st = data["style"]
@@ -859,6 +877,10 @@ class ThreadlightConfig:
                 "max_capsules": self.memory.max_capsules_per_request,
                 "per_profile_isolation": self.memory.per_profile_isolation,
                 "default_shared": self.memory.default_shared,
+                # Anchored memory settings
+                "max_anchored_memories": self.memory.max_anchored_memories,
+                "anchored_demotion_threshold": self.memory.anchored_demotion_threshold,
+                "anchored_demotion_days": self.memory.anchored_demotion_days,
             },
             "style": {
                 "default_profile": self.style.default_profile,
@@ -1304,7 +1326,7 @@ class ThreadlightConfig:
         if "default" not in self.model_configs:
             self.model_configs["default"] = ModelConfig(
                 model_id="default",
-                system_prompt="You are a helpful AI assistant.",
+                system_prompt="",
                 style_profile=None,
                 memory_enabled=True,
                 decay_enabled=False,

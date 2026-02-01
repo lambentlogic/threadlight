@@ -1,6 +1,10 @@
 /**
  * Threadlight Web UI - Alpine.js Application
+ * Version: 2026-01-31-model-fix
  */
+
+// Log when script loads to verify we're running the updated version
+console.log('[app.js] Loading Threadlight app version 2026-01-31-model-fix-v2');
 
 function threadlightApp() {
     return {
@@ -49,6 +53,18 @@ function threadlightApp() {
             content: {},
             cuePhrasesStr: '',
         },
+
+        // Tier review state
+        showTierReviewModal: false,
+        tierReviewMemories: [],
+        tierReviewChanges: [],
+        isTierReviewConversation: false,
+
+        // Bulk delete state
+        selectedMemoryIds: [],
+
+        // Archive state
+        showArchived: false,
 
         // Embeddings state
         embeddingsEnabled: false,
@@ -146,7 +162,7 @@ function threadlightApp() {
         showAddModelModal: false,
         newModelData: {
             model_id: '',
-            system_prompt: 'You are a helpful AI assistant.',
+            system_prompt: '',
             style_profile: '',
             memory_enabled: true,
             decay_enabled: false,
@@ -324,6 +340,32 @@ function threadlightApp() {
                     this.openConversationMenu = null;
                 }
             });
+
+            // Watch currentModelId and force select element to sync
+            // This fixes Alpine.js x-model desync with dynamically-populated select options
+            this.$watch('currentModelId', (newValue) => {
+                this.$nextTick(() => {
+                    this.syncModelSelectElement();
+                });
+            });
+
+            // Also do an initial sync after all data is loaded
+            // Use a small delay to ensure x-for has finished rendering all options
+            this.$nextTick(() => {
+                setTimeout(() => {
+                    this.syncModelSelectElement();
+                }, 50);
+            });
+        },
+
+        // Helper to force the model select dropdown to match currentModelId
+        // Needed because Alpine.js x-model can desync with dynamically-populated options
+        syncModelSelectElement() {
+            const selectEl = document.querySelector('select[x-model="currentModelId"]');
+            if (selectEl && selectEl.value !== this.currentModelId) {
+                console.log('[model-select-sync] Forcing select sync from', selectEl.value, 'to', this.currentModelId);
+                selectEl.value = this.currentModelId;
+            }
         },
 
         // WebSocket connection
@@ -366,33 +408,23 @@ function threadlightApp() {
                     this.isTyping = data.status;
                     break;
 
-                case 'chunk':
-                    // Streaming response
-                    if (this.messages.length > 0 && this.messages[this.messages.length - 1].role === 'assistant') {
-                        this.messages[this.messages.length - 1].content += data.content;
-                    } else {
-                        this.messages.push({
-                            role: 'assistant',
-                            content: data.content,
-                            memories: [],
-                        });
-                    }
+                case 'complete':
+                    // Add complete response as a new message
+                    this.messages = [...this.messages, {
+                        role: 'assistant',
+                        content: data.content,
+                        memories: data.memories_recalled || [],
+                    }];
+                    this.isTyping = false;
                     this.scrollToBottom();
                     break;
 
-                case 'complete':
-                    if (this.messages.length > 0 && this.messages[this.messages.length - 1].role === 'assistant') {
-                        this.messages[this.messages.length - 1].memories = data.memories_recalled || [];
-                    }
-                    this.isTyping = false;
-                    break;
-
                 case 'ritual_response':
-                    this.messages.push({
+                    this.messages = [...this.messages, {
                         role: 'assistant',
                         type: 'ritual',
                         content: data.content,
-                    });
+                    }];
                     this.scrollToBottom();
                     break;
 
@@ -408,7 +440,7 @@ function threadlightApp() {
         },
 
         // Chat functions
-        async sendMessage() {
+        async sendMessage(options = {}) {
             const message = this.inputMessage.trim();
             if (!message) return;
 
@@ -425,21 +457,52 @@ function threadlightApp() {
                 return;
             }
 
-            // Add user message to display
-            this.messages.push({
+            // Add user message to display - use immutable update for Alpine reactivity
+            this.messages = [...this.messages, {
                 role: 'user',
                 content: message,
-            });
+            }];
             this.inputMessage = '';
             this.scrollToBottom();
 
             // Send via WebSocket if connected
+            console.log('[sendMessage] WebSocket state check:', {
+                wsConnected: this.wsConnected,
+                readyState: this.ws?.readyState,
+                hasWs: !!this.ws,
+                OPEN: WebSocket.OPEN
+            });
+
             if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({
-                    type: 'chat',
-                    message: message,
-                }));
+                console.log('[sendMessage] Sending via WebSocket with profile_id:', this.activeProfileId);
+                try {
+                    const payload = {
+                        type: 'chat',
+                        message: message,
+                        profile_id: this.activeProfileId,
+                        conversation_id: this.currentConversationId,
+                    };
+                    // Conditionally enable tools when explicitly requested
+                    if (options.enableTools) {
+                        payload.enable_tools = options.enableTools;
+                        console.log('[sendMessage] Tools enabled:', options.enableTools);
+                    }
+                    // Auto-call a tool and include results in context
+                    if (options.autoTool) {
+                        payload.auto_tool = options.autoTool;
+                        console.log('[sendMessage] Auto-tool:', options.autoTool);
+                    }
+                    console.log('[sendMessage] Payload:', payload);
+                    console.log('[sendMessage] Calling ws.send() now...');
+                    this.ws.send(JSON.stringify(payload));
+                    console.log('[sendMessage] ws.send() completed');
+                } catch (error) {
+                    console.error('[sendMessage] WebSocket send failed:', error);
+                    // Fall back to HTTP
+                    await this.sendMessageHTTP(message);
+                }
             } else {
+                console.log('[sendMessage] WebSocket not ready, using HTTP');
                 // Fall back to HTTP
                 await this.sendMessageHTTP(message);
             }
@@ -455,17 +518,17 @@ function threadlightApp() {
                     body: JSON.stringify({
                         message: message,
                         history: this.chatHistory,
-                        profile_id: this.currentProfileId,
+                        profile_id: this.activeProfileId,
                     }),
                 });
 
                 const data = await response.json();
 
-                this.messages.push({
+                this.messages = [...this.messages, {
                     role: 'assistant',
                     content: data.content,
                     memories: data.memories_recalled || [],
-                });
+                }];
 
                 // Update history
                 this.chatHistory.push({ role: 'user', content: message });
@@ -485,10 +548,10 @@ function threadlightApp() {
         },
 
         async invokeRitual(name) {
-            this.messages.push({
+            this.messages = [...this.messages, {
                 role: 'user',
                 content: name,
-            });
+            }];
             this.scrollToBottom();
 
             if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
@@ -506,11 +569,11 @@ function threadlightApp() {
 
                     const data = await response.json();
 
-                    this.messages.push({
+                    this.messages = [...this.messages, {
                         role: 'assistant',
                         type: 'ritual',
                         content: data.response,
-                    });
+                    }];
                 } catch (error) {
                     this.showToast('Failed to invoke ritual: ' + error.message, 'error');
                 }
@@ -585,6 +648,7 @@ function threadlightApp() {
                 this.messages = [];
                 this.chatHistory = [];
                 this.isGroupChat = false;
+                this.isTierReviewConversation = false;  // Reset tier review state
                 await this.loadConversations();
             } catch (error) {
                 this.showToast('Failed to create conversation: ' + error.message, 'error');
@@ -646,16 +710,23 @@ function threadlightApp() {
 
         async loadConversation(conversationId) {
             try {
+                console.log('[loadConversation] Loading conversation:', conversationId, 'currentModelId before:', this.currentModelId);
                 // First get conversation details to check if it's a group chat
                 const convResponse = await fetch(`/api/conversations/${conversationId}`);
                 if (convResponse.ok) {
                     const convData = await convResponse.json();
+                    console.log('[loadConversation] Conversation data:', { id: convData.id, model: convData.model, name: convData.name });
                     this.isGroupChat = convData.participant_profiles && convData.participant_profiles.length > 1;
+
+                    // Detect tier review conversations to show Apply button
+                    this.isTierReviewConversation = convData.name === 'Memory Tier Review';
 
                     // Update current model to match conversation's model
                     if (convData.model && convData.model !== this.currentModelId) {
+                        console.log('[loadConversation] Updating currentModelId from', this.currentModelId, 'to', convData.model);
                         this.currentModelId = convData.model;
                     }
+                    console.log('[loadConversation] currentModelId after update:', this.currentModelId);
                 }
 
                 const response = await fetch(`/api/conversations/${conversationId}/messages`);
@@ -680,6 +751,12 @@ function threadlightApp() {
                 }));
 
                 this.scrollToBottom();
+
+                // Sync the model dropdown after loading conversation
+                // This ensures the select element matches currentModelId
+                this.$nextTick(() => {
+                    this.syncModelSelectElement();
+                });
             } catch (error) {
                 this.showToast('Failed to load conversation: ' + error.message, 'error');
             }
@@ -716,11 +793,11 @@ function threadlightApp() {
             const message = this.inputMessage.trim();
             if (!message || !this.currentConversationId || !this.isGroupChat) return;
 
-            // Add user message to display
-            this.messages.push({
+            // Add user message to display - use immutable update for Alpine reactivity
+            this.messages = [...this.messages, {
                 role: 'user',
                 content: message,
-            });
+            }];
             this.inputMessage = '';
             this.scrollToBottom();
 
@@ -743,17 +820,16 @@ function threadlightApp() {
 
                 const data = await response.json();
 
-                // Add each profile's response
-                for (const resp of data.responses) {
-                    this.messages.push({
-                        role: 'assistant',
-                        content: resp.content,
-                        profile_id: resp.profile_id,
-                        profile_name: this.getProfileNameById(resp.profile_id),
-                        memories: resp.memories_recalled || [],
-                    });
-                    this.scrollToBottom();
-                }
+                // Add each profile's response - use immutable update for Alpine reactivity
+                const newMessages = data.responses.map(resp => ({
+                    role: 'assistant',
+                    content: resp.content,
+                    profile_id: resp.profile_id,
+                    profile_name: this.getProfileNameById(resp.profile_id),
+                    memories: resp.memories_recalled || [],
+                }));
+                this.messages = [...this.messages, ...newMessages];
+                this.scrollToBottom();
 
                 // Update history
                 this.chatHistory.push({ role: 'user', content: message });
@@ -1046,10 +1122,11 @@ function threadlightApp() {
 
                 if (!response.ok) throw new Error('Failed to update message');
 
-                // Update local state
+                // Update local state - use immutable update for Alpine reactivity
                 const msgIndex = this.messages.findIndex(m => m.id === this.editingMessageId);
                 if (msgIndex !== -1) {
-                    this.messages[msgIndex].content = this.editedMessageContent;
+                    const updated = { ...this.messages[msgIndex], content: this.editedMessageContent };
+                    this.messages = [...this.messages.slice(0, msgIndex), updated, ...this.messages.slice(msgIndex + 1)];
                 }
 
                 this.editingMessageId = null;
@@ -1128,6 +1205,8 @@ function threadlightApp() {
                 this.ws.send(JSON.stringify({
                     type: 'chat',
                     message: userMessage,
+                    profile_id: this.activeProfileId,
+                    conversation_id: this.currentConversationId,
                 }));
             } else {
                 await this.sendMessageHTTP(userMessage);
@@ -1161,6 +1240,7 @@ function threadlightApp() {
                 const params = new URLSearchParams();
                 if (this.memoryTypeFilter) params.append('type', this.memoryTypeFilter);
                 if (this.memorySearch) params.append('search', this.memorySearch);
+                if (this.showArchived) params.append('include_archived', 'true');
                 params.append('limit', '100');
 
                 const response = await fetch(`/api/memories?${params}`);
@@ -1541,6 +1621,115 @@ function threadlightApp() {
             }
         },
 
+        toggleMemorySelection(memoryId) {
+            const index = this.selectedMemoryIds.indexOf(memoryId);
+            if (index > -1) {
+                this.selectedMemoryIds.splice(index, 1);
+            } else {
+                this.selectedMemoryIds.push(memoryId);
+            }
+        },
+
+        toggleSelectAll() {
+            if (this.selectedMemoryIds.length === this.memories.length) {
+                // Deselect all
+                this.selectedMemoryIds = [];
+            } else {
+                // Select all
+                this.selectedMemoryIds = this.memories.map(m => m.id);
+            }
+        },
+
+        async bulkDeleteMemories() {
+            if (this.selectedMemoryIds.length === 0) return;
+
+            const confirmed = await this.showConfirm({
+                title: 'Delete Memories',
+                message: `Delete ${this.selectedMemoryIds.length} selected memories? This cannot be undone.`,
+                confirmText: 'Delete All',
+            });
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch('/api/memories/batch-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        capsule_ids: this.selectedMemoryIds,
+                        force: true
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) throw new Error(result.detail || 'Failed to delete memories');
+
+                this.showToast(`Deleted ${result.summary.successful} memories successfully`);
+                if (result.summary.failed > 0) {
+                    this.showToast(`${result.summary.failed} memories failed to delete`, 'error');
+                }
+
+                this.selectedMemoryIds = [];
+                await this.loadMemories();
+                await this.loadStats();
+            } catch (error) {
+                this.showToast('Failed to delete memories: ' + error.message, 'error');
+            }
+        },
+
+        async bulkArchiveMemories() {
+            if (this.selectedMemoryIds.length === 0) return;
+
+            try {
+                const response = await fetch('/api/memories/batch-archive', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        capsule_ids: this.selectedMemoryIds,
+                        archived: true
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) throw new Error(result.detail || 'Failed to archive memories');
+
+                this.showToast(`Archived ${result.summary.successful} memories successfully`);
+                if (result.summary.failed > 0) {
+                    this.showToast(`${result.summary.failed} memories failed to archive`, 'error');
+                }
+
+                this.selectedMemoryIds = [];
+                await this.loadMemories();
+                await this.loadStats();
+            } catch (error) {
+                this.showToast('Failed to archive memories: ' + error.message, 'error');
+            }
+        },
+
+        async archiveMemory(memoryId, archived = true) {
+            try {
+                const response = await fetch('/api/memories/batch-archive', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        capsule_ids: [memoryId],
+                        archived: archived
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) throw new Error(result.detail || 'Failed to archive memory');
+
+                this.showToast(archived ? 'Memory archived' : 'Memory restored');
+                await this.loadMemories();
+                await this.loadStats();
+            } catch (error) {
+                this.showToast('Failed to update memory: ' + error.message, 'error');
+            }
+        },
+
         async reinforceMemory(id) {
             try {
                 await fetch(`/api/memories/${id}/reinforce?strength=0.3`, {
@@ -1550,6 +1739,241 @@ function threadlightApp() {
                 await this.loadMemories();
             } catch (error) {
                 this.showToast('Failed to reinforce memory: ' + error.message, 'error');
+            }
+        },
+
+        async loadMemoriesForTierReview() {
+            try {
+                // Build query parameters to filter by active profile
+                let url = '/api/memories?limit=1000';
+                if (this.activeProfileId) {
+                    url += `&profile_id=${this.activeProfileId}`;
+                }
+
+                const response = await fetch(url);
+                const data = await response.json();
+                this.tierReviewMemories = data.memories || [];
+                this.tierReviewChanges = [];
+            } catch (error) {
+                this.showToast('Failed to load memories: ' + error.message, 'error');
+            }
+        },
+
+        updateMemoryTierInReview(capsuleId, newTier) {
+            // Find the memory in the review list
+            const memory = this.tierReviewMemories.find(m => m.id === capsuleId);
+            if (!memory) return;
+
+            const oldTier = memory.memory_tier || 'semantic';
+
+            // If tier actually changed
+            if (oldTier !== newTier) {
+                // Update the memory in the UI
+                memory.memory_tier = newTier;
+
+                // Track the change
+                const existingChange = this.tierReviewChanges.find(c => c.capsule_id === capsuleId);
+                if (existingChange) {
+                    existingChange.tier = newTier;
+                } else {
+                    this.tierReviewChanges.push({
+                        capsule_id: capsuleId,
+                        tier: newTier
+                    });
+                }
+            }
+        },
+
+        async submitTierReviewChanges() {
+            if (this.tierReviewChanges.length === 0) return;
+
+            try {
+                const response = await fetch('/api/memories/batch-tier-update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        updates: this.tierReviewChanges
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.detail || 'Failed to update tiers');
+                }
+
+                // Show success message
+                this.showToast(`Updated ${result.summary.successful} memories successfully`);
+
+                // Show errors if any
+                if (result.summary.failed > 0) {
+                    this.showToast(`${result.summary.failed} memories failed to update`, 'error');
+                }
+
+                // Close modal and reload memories
+                this.showTierReviewModal = false;
+                this.tierReviewChanges = [];
+                await this.loadMemories();
+
+            } catch (error) {
+                this.showToast('Failed to update tiers: ' + error.message, 'error');
+            }
+        },
+
+        async haveAIReviewTiers() {
+            if (!this.activeProfileId) {
+                this.showToast('Please select a profile first', 'error');
+                return;
+            }
+
+            // Close the modal
+            this.showTierReviewModal = false;
+
+            // Create a new conversation for this task
+            try {
+                const activeProfile = this.getActiveProfile();
+                console.log('[haveAIReviewTiers] Starting. activeProfile:', activeProfile?.name, 'primary_model:', activeProfile?.primary_model);
+                console.log('[haveAIReviewTiers] currentModelId BEFORE:', this.currentModelId);
+
+                const response = await fetch('/api/conversations', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: 'Memory Tier Review',
+                        participant_profiles: [this.activeProfileId],
+                        model: activeProfile?.primary_model || null,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('Failed to create conversation');
+
+                const conversation = await response.json();
+                console.log('[haveAIReviewTiers] Created conversation:', conversation.id, 'model:', conversation.model);
+
+                // IMPORTANT: Set currentConversationId BEFORE loadConversations() to prevent
+                // it from auto-loading a different conversation (which would override our model)
+                this.currentConversationId = conversation.id;
+                console.log('[haveAIReviewTiers] Set currentConversationId:', this.currentConversationId);
+
+                // Update model to match the new conversation
+                if (conversation.model) {
+                    console.log('[haveAIReviewTiers] Setting model to:', conversation.model);
+                    this.currentModelId = conversation.model;
+                }
+                console.log('[haveAIReviewTiers] currentModelId after set:', this.currentModelId);
+
+                // Refresh conversations list (won't auto-load since currentConversationId is set)
+                await this.loadConversations();
+                console.log('[haveAIReviewTiers] After loadConversations, currentModelId:', this.currentModelId);
+
+                // Load the full conversation to populate messages
+                await this.loadConversation(conversation.id);
+                console.log('[haveAIReviewTiers] After loadConversation, currentModelId:', this.currentModelId);
+
+                // Switch to chat view
+                this.currentView = 'chat';
+
+                // Send explicit message to use the tool with tool enabled
+                const message = `Please review your memories (listed below) and suggest how to organize them into tiers. These are *your* memories - things you know and remember. Consider what matters to *you* when deciding what to anchor:
+
+- **strictly_anchored**: Central to who *you* are - your identity, your relationships with those who matter to you, things you never want to forget
+- **anchored_decaying**: Important to you but may evolve over time
+- **semantic**: Context-dependent, recalled by relevance (default)
+
+For each memory you want to re-tier, provide your suggestion as a JSON code block like this:
+\`\`\`json
+{"memory-uuid-here": "new_tier_name"}
+\`\`\`
+
+You can include multiple assignments in one block. After I click "Apply Suggestions", I'll parse these JSON blocks to update the tiers. Please explain your reasoning for each change.`;
+
+                this.inputMessage = message;
+                // Auto-call the list action and include results in context
+                await this.sendMessage({ autoTool: { name: 'review_memory_tiers', action: 'list' } });
+                console.log('[haveAIReviewTiers] After sendMessage, currentModelId:', this.currentModelId);
+
+                this.showToast('Created new conversation for tier review');
+                this.isTierReviewConversation = true;
+
+            } catch (error) {
+                console.error('[haveAIReviewTiers] Error:', error);
+                this.showToast('Failed to start AI review: ' + error.message, 'error');
+            }
+        },
+
+        async applyTierSuggestions() {
+            // Parse JSON blocks from the last assistant message
+            const assistantMessages = this.messages.filter(m => m.role === 'assistant');
+            if (assistantMessages.length === 0) {
+                this.showToast('No suggestions to apply', 'error');
+                return;
+            }
+
+            const lastMessage = assistantMessages[assistantMessages.length - 1].content;
+
+            // Find all JSON blocks in the message
+            const jsonRegex = /```json\s*([\s\S]*?)```/g;
+            const allAssignments = {};
+            let match;
+
+            while ((match = jsonRegex.exec(lastMessage)) !== null) {
+                try {
+                    // Clean up the JSON - remove comments
+                    let jsonStr = match[1].replace(/\/\/.*$/gm, '').trim();
+                    // Remove trailing commas before closing braces
+                    jsonStr = jsonStr.replace(/,(\s*})/g, '$1');
+                    const parsed = JSON.parse(jsonStr);
+                    Object.assign(allAssignments, parsed);
+                } catch (e) {
+                    console.warn('Failed to parse JSON block:', e);
+                }
+            }
+
+            if (Object.keys(allAssignments).length === 0) {
+                this.showToast('No valid tier assignments found in response', 'error');
+                return;
+            }
+
+            console.log('[applyTierSuggestions] Parsed assignments:', allAssignments);
+
+            // Convert to the expected format: [{capsule_id: "...", tier: "..."}, ...]
+            const updates = Object.entries(allAssignments).map(([capsule_id, tier]) => ({
+                capsule_id,
+                tier
+            }));
+
+            try {
+                const response = await fetch('/api/memories/batch-tier-update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ updates }),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to update tiers');
+                }
+
+                const result = await response.json();
+                const updateCount = result.summary?.successful || result.updated?.length || 0;
+                this.showToast(`Updated ${updateCount} memory tiers`);
+
+                // Refresh memories list
+                await this.loadMemories();
+
+                // Auto-refresh context for Fable - send updated memory list so she can continue
+                this.inputMessage = `Applied ${updateCount} tier changes. Here's the updated memory list:`;
+                await this.sendMessage({ autoTool: { name: 'review_memory_tiers', action: 'list' } });
+
+                // Keep tier review mode active so button stays visible
+                this.isTierReviewConversation = true;
+            } catch (error) {
+                console.error('[applyTierSuggestions] Error:', error);
+                this.showToast('Failed to apply suggestions: ' + error.message, 'error');
             }
         },
 
@@ -2348,15 +2772,34 @@ function threadlightApp() {
         },
 
         // Model configuration functions
-        async loadModels() {
+        async loadModels(preserveCurrentModel = false) {
             try {
+                console.log('[loadModels] Called. currentModelId before:', this.currentModelId, 'preserveCurrentModel:', preserveCurrentModel);
                 const response = await fetch('/api/models');
                 const data = await response.json();
                 this.availableModels = data.models || [];
-                this.currentModelId = data.current_model;
+
+                // Only update currentModelId if:
+                // 1. Not preserving (explicit request to use server's model)
+                // 2. currentModelId is empty/unset
+                // 3. currentModelId doesn't exist in available models
+                const currentModelExists = this.availableModels.some(m => m.model_id === this.currentModelId);
+                if (!preserveCurrentModel && (!this.currentModelId || !currentModelExists)) {
+                    const oldModelId = this.currentModelId;
+                    this.currentModelId = data.current_model;
+                    console.log('[loadModels] Set currentModelId from', oldModelId, 'to', data.current_model);
+                } else {
+                    console.log('[loadModels] Preserved currentModelId:', this.currentModelId);
+                }
 
                 // Load current model config
                 await this.loadCurrentModelConfig();
+
+                // Sync the model dropdown after loading models
+                // This ensures the select element matches currentModelId after options are populated
+                this.$nextTick(() => {
+                    this.syncModelSelectElement();
+                });
             } catch (error) {
                 console.error('Failed to load models:', error);
             }
@@ -2364,9 +2807,12 @@ function threadlightApp() {
 
         async loadCurrentModelConfig() {
             try {
+                console.log('[loadCurrentModelConfig] Called. currentModelId before:', this.currentModelId);
                 const response = await fetch('/api/models/current');
                 const data = await response.json();
-                this.currentModelId = data.model_id;
+                // Don't override currentModelId here - it should be managed by loadModels() or loadConversation()
+                // Only load the config for whichever model is currently selected
+                console.log('[loadCurrentModelConfig] Server current model:', data.model_id, 'keeping currentModelId:', this.currentModelId);
                 this.currentModelConfig = data.config?.config || data.config || {
                     system_prompt: '',
                     style_profile: null,
@@ -2416,9 +2862,9 @@ function threadlightApp() {
                 // Also load provider_id from config if present
                 this.currentModelProviderId = this.currentModelConfig.provider_id || '';
 
-                // Reload config and models
+                // Reload config and models (preserve our selection)
                 await this.loadConfig();
-                await this.loadModels();
+                await this.loadModels(true);  // Preserve currentModelId since we just set it
                 // Reload provider info for the new model
                 await this.loadModelProvider();
 
@@ -2547,7 +2993,7 @@ function threadlightApp() {
                 this.showAddModelModal = false;
                 this.newModelData = {
                     model_id: '',
-                    system_prompt: 'You are a helpful AI assistant.',
+                    system_prompt: '',
                     style_profile: '',
                     memory_enabled: true,
                     decay_enabled: false,

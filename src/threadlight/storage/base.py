@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
 
-from threadlight.capsules.base import MemoryCapsule, CapsuleType, RetentionPolicy
+from threadlight.capsules.base import MemoryCapsule, CapsuleType, MemoryTier, RetentionPolicy
 
 if TYPE_CHECKING:
     from threadlight.profiles.profile import Profile
@@ -185,6 +185,7 @@ class CapsuleFilter:
     min_presence_score: Optional[float] = None
     consent_confirmed: Optional[bool] = None
     retention: Optional[RetentionPolicy] = None
+    memory_tier: Optional[MemoryTier] = None
 
     # Time filters
     created_after: Optional[datetime] = None
@@ -195,6 +196,9 @@ class CapsuleFilter:
     # Profile scope filters (for per-profile memory isolation)
     profile_scope: Optional[str] = None  # Filter by specific profile
     include_shared: bool = True  # Whether to include profile_scope=NULL (shared) capsules
+
+    # Archive filter
+    include_archived: bool = False  # Whether to include archived memories (default: hidden)
 
     # Deprecated: Use profile_scope instead (kept for backward compatibility)
     model_scope: Optional[str] = None  # Filter by specific model (deprecated)

@@ -468,7 +468,7 @@
 
             <!-- Chat View -->
             <template x-if="currentView === 'chat'">
-                <div class="flex-1 flex flex-col">
+                <div class="flex-1 flex flex-col overflow-hidden">
                     <!-- Chat Header with Profile Selector and Model Selector -->
                     <header class="px-6 py-3 border-b border-threadlight-border bg-threadlight-surface/50">
                         <div class="flex items-center justify-between flex-wrap gap-3">
@@ -580,10 +580,11 @@
                                 <div class="flex items-center gap-2">
                                     <label class="text-xs text-threadlight-muted hidden sm:block" title="Select AI Model">Model:</label>
                                     <select x-model="currentModelId" @change="switchModel($event.target.value)"
+                                        x-init="$nextTick(() => syncModelSelectElement())"
                                         title="Select AI Model"
                                         class="bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-1.5 text-sm text-threadlight-text focus:outline-none focus:border-threadlight-accent">
                                         <template x-for="model in availableModels" :key="model.model_id">
-                                            <option :value="model.model_id" x-text="model.model_id" :selected="model.is_current"></option>
+                                            <option :value="model.model_id" x-text="model.model_id"></option>
                                         </template>
                                     </select>
                                 </div>
@@ -623,7 +624,7 @@
 
                     <!-- Messages -->
                     <div class="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin" id="chat-messages">
-                            <template x-for="(msg, index) in messages" :key="index">
+                            <template x-for="(msg, index) in messages" :key="msg.id || 'streaming-' + index">
                                 <div class="fade-in group" :class="msg.role === 'user' ? 'flex justify-end' : ''">
                                     <div class="relative">
                                         <!-- Message Actions (hover) -->
@@ -728,6 +729,13 @@
 
                     <!-- Input -->
                     <div class="p-4 border-t border-threadlight-border">
+                        <!-- Apply Tier Suggestions button -->
+                        <div x-show="isTierReviewConversation && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant'" class="mb-3">
+                            <button @click="applyTierSuggestions()"
+                                class="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors">
+                                Apply Tier Suggestions
+                            </button>
+                        </div>
                         <form @submit.prevent="sendMessage()" class="flex gap-4">
                             <input type="text"
                                 x-model="inputMessage"
@@ -753,13 +761,32 @@
                                 <h2 class="text-lg font-semibold">Memory Browser</h2>
                                 <p class="text-sm text-threadlight-muted">View and manage memories</p>
                             </div>
-                            <button @click="showCreateMemory = true" class="px-4 py-2 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded-lg transition-colors">
-                                + New Memory
-                            </button>
+                            <div class="flex gap-2">
+                                <button x-show="selectedMemoryIds.length > 0" @click="bulkArchiveMemories()" class="px-4 py-2 bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 rounded-lg transition-colors">
+                                    Archive Selected (<span x-text="selectedMemoryIds.length"></span>)
+                                </button>
+                                <button x-show="selectedMemoryIds.length > 0" @click="bulkDeleteMemories()" class="px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors">
+                                    Delete Selected (<span x-text="selectedMemoryIds.length"></span>)
+                                </button>
+                                <button @click="showTierReviewModal = true; loadMemoriesForTierReview()" class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
+                                    Review Tiers
+                                </button>
+                                <button @click="showCreateMemory = true" class="px-4 py-2 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded-lg transition-colors">
+                                    + New Memory
+                                </button>
+                            </div>
                         </div>
 
                         <!-- Filters -->
                         <div class="mt-4 flex gap-4">
+                            <label class="flex items-center gap-2 px-4 py-2 bg-threadlight-elevated border border-threadlight-border rounded-lg cursor-pointer hover:bg-threadlight-elevated/80 transition-colors">
+                                <input type="checkbox"
+                                    @change="toggleSelectAll()"
+                                    :checked="selectedMemoryIds.length > 0 && selectedMemoryIds.length === memories.length"
+                                    :indeterminate="selectedMemoryIds.length > 0 && selectedMemoryIds.length < memories.length"
+                                    class="w-4 h-4 text-threadlight-accent border-threadlight-border rounded focus:ring-threadlight-accent">
+                                <span class="text-sm text-threadlight-muted whitespace-nowrap">Select All</span>
+                            </label>
                             <input type="text"
                                 x-model="memorySearch"
                                 @input.debounce.300ms="searchMemories()"
@@ -787,6 +814,18 @@
                                         class="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                 </button>
                             </div>
+                            <!-- Show Archived Toggle -->
+                            <div class="flex items-center gap-2">
+                                <label class="text-sm text-threadlight-muted cursor-pointer" @click="showArchived = !showArchived; loadMemories()">Show Archived</label>
+                                <button @click="showArchived = !showArchived; loadMemories()"
+                                    :class="showArchived ? 'bg-orange-500' : 'bg-threadlight-border'"
+                                    class="w-10 h-5 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                    :aria-checked="showArchived"
+                                    role="switch">
+                                    <span :class="showArchived ? 'translate-x-5' : 'translate-x-1'"
+                                        class="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                </button>
+                            </div>
                         </div>
                     </header>
 
@@ -796,13 +835,19 @@
                             <template x-for="memory in memories" :key="memory.id">
                                 <div class="bg-threadlight-elevated rounded-xl p-4 hover:bg-threadlight-elevated/80 transition-colors cursor-pointer"
                                     @click="selectedMemory = memory">
-                                    <div class="flex items-start justify-between">
+                                    <div class="flex items-start gap-3 justify-between">
+                                        <input type="checkbox"
+                                            @click.stop="toggleMemorySelection(memory.id)"
+                                            :checked="selectedMemoryIds.includes(memory.id)"
+                                            class="mt-1 w-4 h-4 text-threadlight-accent border-threadlight-border rounded focus:ring-threadlight-accent cursor-pointer">
                                         <div class="flex-1">
                                             <div class="flex items-center gap-2 mb-2 flex-wrap">
                                                 <span class="px-2 py-0.5 text-xs rounded"
                                                     :class="getTypeColor(memory.type)"
                                                     x-text="getTypeDisplayName(memory.type)"></span>
                                                 <span class="text-xs text-threadlight-muted" x-text="'Presence: ' + ((memory.presence_score || 0) * 100).toFixed(0) + '%'"></span>
+                                                <!-- Archived badge -->
+                                                <span x-show="memory.archived" class="px-2 py-0.5 text-xs rounded bg-orange-500/20 text-orange-400">Archived</span>
                                                 <!-- Profile scope badge (when per-profile isolation enabled) -->
                                                 <template x-if="perProfileIsolation && getProfileScopeBadge(memory)">
                                                     <span class="px-2 py-0.5 text-xs rounded"
@@ -826,11 +871,23 @@
                                                 </template>
                                             </div>
                                         </div>
-                                        <button @click.stop="deleteMemory(memory.id)" class="p-2 text-threadlight-muted hover:text-red-400 transition-colors">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                            </svg>
-                                        </button>
+                                        <div class="flex gap-1">
+                                            <!-- Archive/Restore button -->
+                                            <button @click.stop="archiveMemory(memory.id, !memory.archived)"
+                                                :title="memory.archived ? 'Restore from archive' : 'Archive memory'"
+                                                class="p-2 text-threadlight-muted transition-colors"
+                                                :class="memory.archived ? 'hover:text-green-400' : 'hover:text-orange-400'">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>
+                                                </svg>
+                                            </button>
+                                            <!-- Delete button -->
+                                            <button @click.stop="deleteMemory(memory.id)" class="p-2 text-threadlight-muted hover:text-red-400 transition-colors">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                                </svg>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </template>
@@ -1904,7 +1961,7 @@
                                 <h3 class="font-medium">Import Memories</h3>
                             </div>
 
-                            <p class="text-sm text-threadlight-muted mb-4">Add text files or paste content to create new memories (one per line).</p>
+                            <p class="text-sm text-threadlight-muted mb-4">Add text files or paste content to create new memories. Separate each memory with a blank line.</p>
 
                             <!-- File Drop Zone for Memories -->
                             <div class="border-2 border-dashed rounded-xl p-6 text-center transition-colors mb-4"
@@ -2430,6 +2487,112 @@
                             </button>
                         </div>
                     </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tier Review Modal -->
+        <div x-show="showTierReviewModal" x-cloak
+            x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0"
+            x-transition:enter-end="opacity-100"
+            x-transition:leave="transition ease-in duration-150"
+            x-transition:leave-start="opacity-100"
+            x-transition:leave-end="opacity-0"
+            class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-50"
+            @click.self="showTierReviewModal = false">
+            <div class="bg-threadlight-surface rounded-2xl max-w-4xl w-full mx-4 max-h-[85vh] overflow-hidden shadow-2xl flex flex-col"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 scale-95"
+                x-transition:enter-end="opacity-100 scale-100"
+                x-transition:leave="transition ease-in duration-150"
+                x-transition:leave-start="opacity-100 scale-100"
+                x-transition:leave-end="opacity-0 scale-95">
+                <div class="p-6 border-b border-threadlight-border">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-lg font-medium">Review Memory Tiers</h3>
+                        <button @click="showTierReviewModal = false" class="p-2 text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="text-sm text-threadlight-muted">Organize memories into tiers for context recall.</p>
+                    <div class="mt-3 flex gap-2 text-xs">
+                        <div class="px-2 py-1 bg-purple-500/20 text-purple-400 rounded">
+                            Strictly Anchored: Always included, never decays
+                        </div>
+                        <div class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded">
+                            Anchored Decaying: Always included, can decay to semantic
+                        </div>
+                        <div class="px-2 py-1 bg-threadlight-border text-threadlight-muted rounded">
+                            Semantic: Recalled by relevance (default)
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
+                    <div x-show="tierReviewMemories.length === 0" class="text-center text-threadlight-muted py-12">
+                        <p>Loading memories...</p>
+                    </div>
+
+                    <div class="space-y-3">
+                        <template x-for="memory in tierReviewMemories" :key="memory.id">
+                            <div class="bg-threadlight-elevated rounded-lg p-4">
+                                <div class="flex items-start gap-4">
+                                    <div class="flex-1">
+                                        <div class="flex items-center gap-2 mb-2 flex-wrap">
+                                            <span class="px-2 py-0.5 text-xs rounded"
+                                                :class="getTypeColor(memory.type)"
+                                                x-text="getTypeDisplayName(memory.type)"></span>
+                                            <span class="text-xs text-threadlight-muted" x-text="'Presence: ' + ((memory.presence_score || 0) * 100).toFixed(0) + '%'"></span>
+                                        </div>
+                                        <p class="text-threadlight-text text-sm mb-2" x-text="memory.preview"></p>
+                                        <div class="flex flex-wrap gap-1">
+                                            <template x-for="(phrase, index) in (memory.cue_phrases || []).slice(0, 5)" :key="memory.id + '-' + index">
+                                                <span class="px-2 py-0.5 text-xs bg-threadlight-surface rounded text-threadlight-muted" x-text="phrase"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="flex-shrink-0">
+                                        <select :value="memory.memory_tier || 'semantic'"
+                                            @change="updateMemoryTierInReview(memory.id, $event.target.value)"
+                                            class="bg-threadlight-surface border border-threadlight-border rounded px-3 py-1.5 text-sm text-threadlight-text focus:outline-none focus:border-threadlight-accent">
+                                            <option value="strictly_anchored">Strictly Anchored</option>
+                                            <option value="anchored_decaying">Anchored Decaying</option>
+                                            <option value="semantic">Semantic</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="p-6 border-t border-threadlight-border bg-threadlight-elevated/50">
+                    <div class="flex items-center justify-between">
+                        <div class="text-sm text-threadlight-muted">
+                            <span x-text="tierReviewChanges.length"></span> changes pending
+                        </div>
+                        <div class="flex gap-2">
+                            <button @click="haveAIReviewTiers()"
+                                :disabled="!getActiveProfile()"
+                                class="px-4 py-2 bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 rounded-lg transition-colors border border-purple-500/30 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <span x-show="getActiveProfile()" x-text="'Have ' + (getActiveProfile()?.name || 'AI') + ' Review'"></span>
+                                <span x-show="!getActiveProfile()">Select Profile First</span>
+                            </button>
+                            <button @click="showTierReviewModal = false"
+                                class="px-4 py-2 bg-threadlight-border text-threadlight-text rounded-lg transition-colors hover:bg-threadlight-border/80">
+                                Cancel
+                            </button>
+                            <button @click="submitTierReviewChanges()"
+                                :disabled="tierReviewChanges.length === 0"
+                                :class="tierReviewChanges.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-threadlight-accent/80'"
+                                class="px-6 py-2 bg-threadlight-accent text-white rounded-lg transition-colors">
+                                Apply Manual Changes
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -4152,6 +4315,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=20260201-5"></script>
 </body>
 </html>

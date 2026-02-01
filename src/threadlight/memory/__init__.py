@@ -17,9 +17,17 @@ from threadlight.memory.orchestrator import (
     Session,
     RitualInvocation,
 )
+from threadlight.memory.stopwords import (
+    STOP_WORDS,
+    filter_stop_words,
+    extract_meaningful_terms,
+)
 
 __all__ = [
     "MemoryOrchestrator",
     "Session",
     "RitualInvocation",
+    "STOP_WORDS",
+    "filter_stop_words",
+    "extract_meaningful_terms",
 ]

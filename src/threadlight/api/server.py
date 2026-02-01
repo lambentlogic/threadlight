@@ -12,6 +12,7 @@ from pathlib import Path
 import asyncio
 import json
 import logging
+import sys
 import time
 import uuid
 
@@ -96,10 +97,34 @@ class CapsuleUpdateRequest(BaseModel):
     retention: Optional[str] = None
     profile_scope: Optional[str] = None  # Update profile scope (set to "" to make shared)
     model_scope: Optional[str] = None  # Deprecated: use profile_scope instead
+    memory_tier: Optional[str] = None  # Update memory tier
 
 
 class ProposalAction(BaseModel):
     action: str  # confirm or reject
+
+
+class MemoryTierUpdate(BaseModel):
+    """Single memory tier update."""
+    capsule_id: str
+    tier: str  # strictly_anchored, anchored_decaying, or semantic
+
+
+class BatchTierUpdateRequest(BaseModel):
+    """Batch memory tier update request."""
+    updates: list[MemoryTierUpdate]
+
+
+class BatchDeleteRequest(BaseModel):
+    """Batch memory delete request."""
+    capsule_ids: list[str]
+    force: bool = False  # Whether to force delete protected memories
+
+
+class BatchArchiveRequest(BaseModel):
+    """Batch memory archive request."""
+    capsule_ids: list[str]
+    archived: bool = True  # True to archive, False to unarchive
 
 
 class RitualInvokeRequest(BaseModel):
@@ -381,6 +406,20 @@ async def broadcast_message(message: dict[str, Any]) -> None:
 def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     """Create the FastAPI application."""
 
+    # Configure logging for the threadlight namespace
+    # This ensures logger.info() calls throughout the codebase produce output
+    threadlight_logger = logging.getLogger("threadlight")
+    if not threadlight_logger.handlers:
+        # Only add handler if none exist (avoid duplicates on reload)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(
+            "%(levelname)s:%(name)s:%(message)s"
+        ))
+        threadlight_logger.addHandler(handler)
+        threadlight_logger.setLevel(logging.INFO)
+        # Prevent propagation to root logger (avoid duplicate output)
+        threadlight_logger.propagate = False
+
     app = FastAPI(
         title="Threadlight API",
         description="Presence-centered memory framework for AI models",
@@ -606,9 +645,41 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         try:
             while True:
                 data = await websocket.receive_json()
+                logger.info(f"[WebSocket] Received data: type={data.get('type')}")
 
                 if data.get("type") == "chat":
                     message = data.get("message", "")
+                    profile_id = data.get("profile_id")
+                    conversation_id = data.get("conversation_id")
+
+                    logger.info(f"[WebSocket] Chat message received. profile_id={profile_id}, conv_id={conversation_id}, msg_len={len(message)}")
+
+                    # Activate profile if specified
+                    if profile_id:
+                        try:
+                            current_profile_id = tl.active_profile.id if tl.active_profile else None
+                            if profile_id != current_profile_id:
+                                tl.switch_profile(profile_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to switch profile: {e}")
+
+                    # Determine model_id from active profile
+                    model_id = None
+                    if tl.active_profile and tl.active_profile.primary_model:
+                        model_id = tl.active_profile.primary_model
+
+                    logger.info(f"[WebSocket] Using model_id={model_id}, active_profile={tl.active_profile.name if tl.active_profile else None}")
+
+                    # Load conversation history from database if we have a conversation_id
+                    # This ensures context is preserved across page refreshes
+                    if conversation_id and not history:
+                        try:
+                            conv_messages = tl.storage.get_conversation_messages(conversation_id)
+                            for msg in conv_messages:
+                                history.append({"role": msg.role, "content": msg.content})
+                            logger.info(f"[WebSocket] Loaded {len(history)} messages from conversation {conversation_id}")
+                        except Exception as e:
+                            logger.warning(f"[WebSocket] Failed to load conversation history: {e}")
 
                     # Send typing indicator
                     await websocket.send_json({"type": "typing", "status": True})
@@ -616,15 +687,31 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     # Get recalled memories
                     recalled = tl.memory.recall_for_message(message, limit=5)
 
-                    # Stream response
-                    full_response = ""
+                    # Check for auto_tool - automatically call a tool and include results in context
+                    auto_tool = data.get("auto_tool")  # e.g., {"name": "review_memory_tiers", "action": "list"}
+                    tool_context = ""
+                    if auto_tool:
+                        tool_name = auto_tool.get("name")
+                        tool_args = {k: v for k, v in auto_tool.items() if k != "name"}
+                        logger.info(f"[WebSocket] Auto-calling tool: {tool_name} with args: {tool_args}")
+
+                        # Execute the tool directly
+                        result = tl.tool_executor.execute(tool_name, tool_args)
+                        if result.success:
+                            # result.result is a dict with 'memories' and 'instructions'
+                            instructions = result.result.get('instructions', '') if isinstance(result.result, dict) else ''
+                            tool_context = f"\n\n---\n## Tool Results\n{instructions}\n\n{result.to_tool_response()}"
+                            logger.info(f"[WebSocket] Auto-tool succeeded, adding context")
+                        else:
+                            tool_context = f"\n\n---\n## Tool Error\n{result.error}"
+                            logger.warning(f"[WebSocket] Auto-tool failed: {result.error}")
+
+                        # Append tool context to the message
+                        message = message + tool_context
+
+                    # Get complete response (no streaming - simpler and avoids UI reactivity issues)
                     try:
-                        for chunk in tl.stream(message, history=history):
-                            full_response += chunk
-                            await websocket.send_json({
-                                "type": "chunk",
-                                "content": chunk,
-                            })
+                        full_response = tl.chat(message, history=history, model_id=model_id)
 
                         # Update history
                         history.append({"role": "user", "content": message})
@@ -634,18 +721,20 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                         if len(history) > 20:
                             history = history[-20:]
 
+                        # Save messages to database
+                        if conversation_id:
+                            # Save to the specified conversation
+                            tl.memory.save_message_pair(
+                                user_message=message,
+                                assistant_response=full_response,
+                                conversation_id=conversation_id
+                            )
+
                         # Send completion with metadata
                         await websocket.send_json({
                             "type": "complete",
                             "content": full_response,
-                            "memories_recalled": [
-                                {
-                                    "id": c.id,
-                                    "type": c.type.value,
-                                    "preview": _get_capsule_preview(c),
-                                }
-                                for c in recalled
-                            ],
+                            # Note: memories are used internally for context, not shown to user
                         })
                     except Exception as e:
                         await websocket.send_json({
@@ -706,7 +795,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                         })
 
         except WebSocketDisconnect:
-            pass
+            logger.info("WebSocket disconnected")
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}", exc_info=True)
+            try:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Server error: {str(e)}"
+                })
+            except:
+                pass
         finally:
             if websocket in _active_connections:
                 _active_connections.remove(websocket)
@@ -723,6 +821,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         search: Optional[str] = None,
         profile_scope: Optional[str] = None,
         include_shared: bool = True,
+        include_archived: bool = False,
     ):
         """List memory capsules with optional filtering.
 
@@ -733,6 +832,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             search: Text search in content
             profile_scope: Filter by profile scope (uses active profile if per_profile_isolation enabled)
             include_shared: Include memories with no profile_scope (shared)
+            include_archived: Include archived memories (default: hidden)
         """
         tl = get_threadlight()
 
@@ -752,6 +852,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             offset=offset,
             profile_scope=effective_scope if tl.config.memory.per_profile_isolation else None,
             include_shared=include_shared,
+            include_archived=include_archived,
         )
 
         capsules = tl.storage.list_capsules(filter)
@@ -832,6 +933,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         if scope_update is not None:
             # Empty string means make it shared (None)
             capsule.profile_scope = scope_update if scope_update else None
+        if request.memory_tier:
+            from threadlight.capsules.base import MemoryTier
+            capsule.memory_tier = MemoryTier(request.memory_tier)
 
         tl.storage.update_capsule(capsule)
 
@@ -851,6 +955,162 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             )
 
         return {"status": "deleted", "id": capsule_id}
+
+    @app.post("/api/memories/batch-tier-update")
+    async def batch_tier_update(request: BatchTierUpdateRequest):
+        """
+        Batch update memory tiers.
+
+        Updates multiple memory capsules with new tier assignments in a single transaction.
+        Returns summary of successful updates and any errors encountered.
+        """
+        tl = get_threadlight()
+        from threadlight.capsules.base import MemoryTier
+
+        results = {
+            "updated": [],
+            "errors": [],
+            "summary": {
+                "total": len(request.updates),
+                "successful": 0,
+                "failed": 0
+            }
+        }
+
+        for update in request.updates:
+            try:
+                # Validate tier value
+                tier = MemoryTier(update.tier)
+
+                # Get capsule
+                capsule = tl.storage.get_capsule(update.capsule_id)
+                if not capsule:
+                    results["errors"].append({
+                        "capsule_id": update.capsule_id,
+                        "error": "Memory not found"
+                    })
+                    results["summary"]["failed"] += 1
+                    continue
+
+                # Update tier
+                old_tier = capsule.memory_tier.value
+                capsule.memory_tier = tier
+                tl.storage.update_capsule(capsule)
+
+                results["updated"].append({
+                    "capsule_id": update.capsule_id,
+                    "old_tier": old_tier,
+                    "new_tier": tier.value
+                })
+                results["summary"]["successful"] += 1
+
+            except ValueError as e:
+                results["errors"].append({
+                    "capsule_id": update.capsule_id,
+                    "error": f"Invalid tier value: {update.tier}"
+                })
+                results["summary"]["failed"] += 1
+            except Exception as e:
+                results["errors"].append({
+                    "capsule_id": update.capsule_id,
+                    "error": str(e)
+                })
+                results["summary"]["failed"] += 1
+
+        return results
+
+    @app.post("/api/memories/batch-delete")
+    async def batch_delete_memories(request: BatchDeleteRequest):
+        """
+        Batch delete memory capsules.
+
+        Deletes multiple memory capsules in a single operation.
+        Returns summary of successful deletions and any errors encountered.
+        """
+        tl = get_threadlight()
+
+        results = {
+            "deleted": [],
+            "errors": [],
+            "summary": {
+                "total": len(request.capsule_ids),
+                "successful": 0,
+                "failed": 0
+            }
+        }
+
+        for capsule_id in request.capsule_ids:
+            try:
+                success = tl.memory.delete(capsule_id, force=request.force)
+
+                if success:
+                    results["deleted"].append({"capsule_id": capsule_id})
+                    results["summary"]["successful"] += 1
+                else:
+                    results["errors"].append({
+                        "capsule_id": capsule_id,
+                        "error": "Memory not found or protected (use force=true)"
+                    })
+                    results["summary"]["failed"] += 1
+
+            except Exception as e:
+                results["errors"].append({
+                    "capsule_id": capsule_id,
+                    "error": str(e)
+                })
+                results["summary"]["failed"] += 1
+
+        return results
+
+    @app.post("/api/memories/batch-archive")
+    async def batch_archive_memories(request: BatchArchiveRequest):
+        """
+        Batch archive or unarchive memory capsules.
+
+        Archives or unarchives multiple memory capsules in a single operation.
+        Archived memories are hidden from default views but not deleted.
+        Returns summary of successful updates and any errors encountered.
+        """
+        tl = get_threadlight()
+
+        results = {
+            "updated": [],
+            "errors": [],
+            "summary": {
+                "total": len(request.capsule_ids),
+                "successful": 0,
+                "failed": 0
+            }
+        }
+
+        for capsule_id in request.capsule_ids:
+            try:
+                capsule = tl.storage.get_capsule(capsule_id)
+                if not capsule:
+                    results["errors"].append({
+                        "capsule_id": capsule_id,
+                        "error": "Memory not found"
+                    })
+                    results["summary"]["failed"] += 1
+                    continue
+
+                capsule.archived = request.archived
+                tl.storage.update_capsule(capsule)
+
+                results["updated"].append({
+                    "capsule_id": capsule_id,
+                    "archived": request.archived
+                })
+                results["summary"]["successful"] += 1
+
+            except Exception as e:
+                results["errors"].append({
+                    "capsule_id": capsule_id,
+                    "error": str(e)
+                })
+                results["summary"]["failed"] += 1
+
+        return results
 
     @app.get("/api/memories/search/{query}")
     async def search_memories(query: str, limit: int = 10):
@@ -2796,13 +3056,14 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         from threadlight.import_.text_importer import ImportedMemory
 
-        lines = request.content.strip().split('\n')
+        # Split on double newlines to support multi-line memories
+        memories = request.content.strip().split('\n\n')
         imported = 0
         errors = 0
 
-        for i, line in enumerate(lines, 1):
-            line = line.strip()
-            if not line:
+        for i, memory_text in enumerate(memories, 1):
+            memory_text = memory_text.strip()
+            if not memory_text:
                 continue
 
             try:
@@ -2810,22 +3071,22 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 capsule = tl.memory.create(
                     type="note",
                     content={
-                        "content": line,
-                        "about": request.source_name,
+                        "content": memory_text,
+                        "source": request.source_name,
                     },
-                    cue_phrases=_extract_cue_phrases(line),
+                    cue_phrases=_extract_cue_phrases(memory_text),
                     retention="normal",
                     consent_confirmed=True,
                 )
                 imported += 1
             except Exception as e:
-                logger.warning(f"Failed to import line {i}: {e}")
+                logger.warning(f"Failed to import memory {i}: {e}")
                 errors += 1
 
         return {
             "imported": imported,
             "errors": errors,
-            "total_lines": len(lines),
+            "total_memories": len(memories),
         }
 
     @app.post("/api/import/file")

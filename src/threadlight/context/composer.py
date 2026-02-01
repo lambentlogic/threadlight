@@ -432,20 +432,20 @@ class ContextComposer:
         """Compose the full system message from parts."""
         parts = []
 
-        # Base identity
-        if context.identity_prompt:
-            parts.append(context.identity_prompt)
-
         # Handle system prompt based on mode
+        # When using sections or freeform, those replace the base identity prompt
         if use_freeform_prompt and freeform_system_prompt:
-            # Freeform mode: use raw system prompt directly
-            parts.append("---\n" + freeform_system_prompt)
+            # Freeform mode: use raw system prompt directly (replaces base identity)
+            parts.append(freeform_system_prompt)
         elif system_prompt_sections:
-            # Section-based mode: compose from sections
+            # Section-based mode: compose from sections (replaces base identity)
             section_text = self._compose_sections(system_prompt_sections)
             if section_text:
-                parts.append("---\n" + section_text)
+                parts.append(section_text)
         else:
+            # No sections/freeform: use base identity
+            if context.identity_prompt:
+                parts.append(context.identity_prompt)
             # Backward compat: use deprecated philosophy fields
             if profile_philosophy:
                 parts.append(f"---\n## Your Approach\n{profile_philosophy}")

@@ -197,7 +197,7 @@ class ModelConfigManager:
 
         config = ModelConfig(
             model_id=model_id,
-            system_prompt=system_prompt or "You are a helpful AI assistant.",
+            system_prompt=system_prompt or "",
             style_profile=style_profile,
             memory_enabled=memory_enabled,
             decay_enabled=decay_enabled,
