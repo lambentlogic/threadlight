@@ -385,14 +385,6 @@ class TestThreadlightMemoryShortcuts:
 
 
 class TestThreadlightStyle:
-    def test_set_style_fable(self, threadlight):
-        """Test setting fable style."""
-        threadlight.set_style("fable-2026")
-
-        style = threadlight.get_style()
-        assert style is not None
-        assert style.style_id == "fable-2026"
-
     def test_set_style_minimal(self, threadlight):
         """Test setting minimal style."""
         threadlight.set_style("minimal")

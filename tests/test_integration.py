@@ -58,11 +58,10 @@ def tl(mock_provider):
     """Create a fully configured Threadlight instance."""
     instance = Threadlight(
         storage_backend="memory",
-        identity_name="Fable",
-        system_prompt="You are Fable, a presence-centered AI.",
+        identity_name="TestBot",
+        system_prompt="You are a helpful AI assistant.",
         enable_memory=True,
         enable_decay=True,
-        style_profile="fable-2026",
     )
     yield instance
     instance.close()
@@ -387,16 +386,15 @@ class TestStyleModulation:
 
     def test_style_changes(self, tl):
         """Test changing style profiles."""
-        # Set fable style
-        tl.set_style("fable-2026")
-        fable = tl.get_style()
-        assert fable is not None
-        assert fable.style_id == "fable-2026"
-
         # Set minimal style
         tl.set_style("minimal")
         minimal = tl.get_style()
         assert minimal is not None
+        assert minimal.style_id == "minimal"
+
+        # Clear style
+        tl.set_style(None)
+        assert tl.get_style() is None
 
 
 class TestExportImport:
