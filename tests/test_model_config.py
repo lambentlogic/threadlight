@@ -52,7 +52,7 @@ class TestModelConfig:
         config = ModelConfig(model_id="test-model")
 
         assert config.model_id == "test-model"
-        assert config.system_prompt == "You are a helpful AI assistant."
+        assert config.system_prompt == ""  # Default is empty string
         assert config.style_profile is None
         assert config.memory_enabled is True
         assert config.decay_enabled is False

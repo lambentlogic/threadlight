@@ -24,7 +24,10 @@ from threadlight.providers.base import ProviderResponse
 @pytest.fixture
 def mock_provider():
     """Create a mock provider that returns canned responses."""
-    with patch("threadlight.core.create_provider") as mock_create:
+    # Patch create_provider in both threadlight.core and threadlight.providers
+    # The ProviderManager imports from threadlight.providers at runtime
+    with patch("threadlight.core.create_provider") as mock_create_core, \
+         patch("threadlight.providers.create_provider") as mock_create_providers:
         mock_prov = MagicMock()
         mock_prov.complete.return_value = ProviderResponse(
             content="Mock response",
@@ -37,7 +40,8 @@ def mock_provider():
         mock_prov.stream.return_value = iter(["Hello", " from", " profile"])
         mock_prov.health_check.return_value = True
         mock_prov.model = "test-model"
-        mock_create.return_value = mock_prov
+        mock_create_core.return_value = mock_prov
+        mock_create_providers.return_value = mock_prov
         yield mock_prov
 
 
@@ -51,6 +55,8 @@ def threadlight(mock_provider):
         enable_memory=True,
         enable_decay=False,
     )
+    # Directly set the mock provider to ensure it's used regardless of user config
+    tl.provider = mock_provider
     yield tl
     tl.close()
 
