@@ -2236,7 +2236,7 @@ After I click "Apply Classifications", I'll parse these JSON blocks to convert t
             }
         },
 
-        async applyTypeClassifications() {
+        async applyTypeClassifications(continueClassification = true) {
             // Parse JSON blocks from the last assistant message
             const assistantMessages = this.messages.filter(m => m.role === 'assistant');
             if (assistantMessages.length === 0) {
@@ -2297,12 +2297,17 @@ After I click "Apply Classifications", I'll parse these JSON blocks to convert t
                 // Refresh memories list
                 await this.loadMemories();
 
-                // Auto-refresh context - send updated memory list so they can continue
-                this.inputMessage = `Applied ${convertCount} type conversions. Here's the updated list of remaining note memories:`;
-                await this.sendMessage({ autoTool: { name: 'classify_memory_types', action: 'list' } });
-
-                // Keep classification mode active so button stays visible
-                this.isTypeClassificationConversation = true;
+                if (continueClassification) {
+                    // Auto-refresh context - send updated memory list so they can continue
+                    this.inputMessage = `Applied ${convertCount} type conversions. Here's the updated list of remaining note memories:`;
+                    await this.sendMessage({ autoTool: { name: 'classify_memory_types', action: 'list' } });
+                    // Keep classification mode active so button stays visible
+                    this.isTypeClassificationConversation = true;
+                } else {
+                    // Exit classification mode
+                    this.isTypeClassificationConversation = false;
+                    this.showToast(`Classification complete! Converted ${convertCount} memory types.`);
+                }
             } catch (error) {
                 console.error('[applyTypeClassifications] Error:', error);
                 this.showToast('Failed to apply classifications: ' + error.message, 'error');

@@ -795,11 +795,15 @@
                                 Apply Tier Suggestions
                             </button>
                         </div>
-                        <!-- Apply Type Classifications button -->
-                        <div x-show="isTypeClassificationConversation && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant'" class="mb-3">
+                        <!-- Apply Type Classifications buttons -->
+                        <div x-show="isTypeClassificationConversation && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant'" class="mb-3 flex gap-2">
                             <button @click="applyTypeClassifications()"
-                                class="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors">
-                                Apply Type Classifications
+                                class="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors">
+                                Apply & Continue
+                            </button>
+                            <button @click="applyTypeClassifications(false)"
+                                class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors">
+                                Apply & Finish
                             </button>
                         </div>
                         <form @submit.prevent="sendMessage()" class="flex gap-4">
