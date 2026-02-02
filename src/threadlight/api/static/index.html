@@ -769,6 +769,19 @@
                                                         </div>
                                                     </div>
                                                 </template>
+
+                                                <!-- Token Usage -->
+                                                <template x-if="msg.usage && msg.role === 'assistant'">
+                                                    <div class="mt-2 pt-2 border-t border-threadlight-border/30">
+                                                        <p class="text-xs text-threadlight-muted">
+                                                            <span class="font-mono" x-text="msg.usage.total_tokens.toLocaleString()"></span> tokens
+                                                            <span class="opacity-60">
+                                                                (<span x-text="msg.usage.prompt_tokens.toLocaleString()"></span> prompt +
+                                                                <span x-text="msg.usage.completion_tokens.toLocaleString()"></span> completion)
+                                                            </span>
+                                                        </p>
+                                                    </div>
+                                                </template>
                                             </div>
                                         </template>
                                     </div>

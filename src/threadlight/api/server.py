@@ -784,11 +784,21 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                         if response.raw and "tool_results" in response.raw:
                             tool_results = response.raw["tool_results"]
 
+                        # Extract token usage
+                        usage = None
+                        if hasattr(response, 'prompt_tokens') and hasattr(response, 'completion_tokens'):
+                            usage = {
+                                "prompt_tokens": response.prompt_tokens,
+                                "completion_tokens": response.completion_tokens,
+                                "total_tokens": response.total_tokens,
+                            }
+
                         # Send completion with metadata
                         await websocket.send_json({
                             "type": "complete",
                             "content": full_response,
                             "tool_results": tool_results,
+                            "usage": usage,
                         })
                     except Exception as e:
                         error_msg = str(e)

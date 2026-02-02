@@ -423,6 +423,7 @@ function threadlightApp() {
                         content: data.content,
                         memories: data.memories_recalled || [],
                         tool_results: data.tool_results || null,
+                        usage: data.usage || null,
                     }];
                     this.isTyping = false;
                     this.scrollToBottom();
