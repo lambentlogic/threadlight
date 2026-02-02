@@ -116,7 +116,21 @@ class OpenAIProvider(BaseProvider):
                     logger.debug(f"Request succeeded on endpoint: {endpoint_url}")
                     return (response, endpoint_url)
 
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                # Special handling for rate limits (429)
+                if e.response.status_code == 429:
+                    logger.warning(f"Rate limit hit on {endpoint_url}: {e}")
+                    # For rate limits, don't try other endpoints - they'll likely hit the same limit
+                    # Re-raise with a clearer message
+                    raise httpx.HTTPStatusError(
+                        f"Rate limit exceeded. Please wait before making more requests.",
+                        request=e.request,
+                        response=e.response,
+                    )
+                logger.warning(f"Endpoint {endpoint_url} failed: {e}. Trying next endpoint...")
+                continue
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_error = e
                 logger.warning(f"Endpoint {endpoint_url} failed: {e}. Trying next endpoint...")
                 continue

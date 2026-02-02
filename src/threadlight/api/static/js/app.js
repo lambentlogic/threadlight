@@ -438,7 +438,11 @@ function threadlightApp() {
                     break;
 
                 case 'error':
-                    this.showToast(data.message, 'error');
+                    if (data.is_rate_limit) {
+                        this.showToast('⏱️ Rate limit reached. Please wait a moment before continuing.', 'error');
+                    } else {
+                        this.showToast(data.message, 'error');
+                    }
                     this.isTyping = false;
                     break;
 

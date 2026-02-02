@@ -791,9 +791,12 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                             "tool_results": tool_results,
                         })
                     except Exception as e:
+                        error_msg = str(e)
+                        is_rate_limit = "rate limit" in error_msg.lower() or "429" in error_msg
                         await websocket.send_json({
                             "type": "error",
-                            "message": str(e),
+                            "message": error_msg,
+                            "is_rate_limit": is_rate_limit,
                         })
                     finally:
                         await websocket.send_json({"type": "typing", "status": False})
