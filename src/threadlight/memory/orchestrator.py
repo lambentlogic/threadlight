@@ -858,6 +858,11 @@ class MemoryOrchestrator:
 
                 # Touch the ritual capsule (reinforces it)
                 ritual.touch()
+
+                # Track resonance if enabled
+                if hasattr(ritual, 'record_invocation'):
+                    ritual.record_invocation(meaningful=False)
+
                 self.storage.update_capsule(ritual)
 
                 # Track in session
