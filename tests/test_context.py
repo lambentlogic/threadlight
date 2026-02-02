@@ -382,3 +382,153 @@ class TestPhilosophyComposition:
 
         # Should still include basic ritual info
         assert "/snuggle" in ctx.memory_context or "Command:" in ctx.memory_context
+
+
+class TestTextFirstContextComposition:
+    """Tests for text-first memory architecture context composition.
+
+    Verifies that the text field flows through properly without redundant
+    framing. Capsules handle their own framing via to_context(), so the
+    composer should not add additional prefixes.
+    """
+
+    def test_witness_text_flows_through_all_modes(self):
+        """Test that witness text appears appropriately in all composition modes."""
+        from threadlight.capsules.witness import create_witness_moment
+
+        # Create witness with explicit text
+        witness = create_witness_moment(
+            text="They shared something vulnerable. I felt honored to hold that space. It deepened our trust.",
+            entity="Ann"
+        )
+
+        composer = ContextComposer(identity_name="Test", max_memory_tokens=500)
+
+        # Test DIRECT mode - should have bracket framing from capsule, not prefix
+        ctx_direct = composer.compose([witness], mode=ContextMode.DIRECT)
+        # Should NOT have "You witnessed: [Witness]" (double framing)
+        assert "You witnessed: [Witness]" not in ctx_direct.memory_context
+        # Should have clean bracket framing
+        assert "[Witness" in ctx_direct.memory_context
+        assert "vulnerable" in ctx_direct.memory_context
+
+        # Test NARRATIVE mode
+        ctx_narrative = composer.compose([witness], mode=ContextMode.NARRATIVE)
+        # Should wrap in narrative framing
+        assert "remember" in ctx_narrative.memory_context.lower()
+        assert "vulnerable" in ctx_narrative.memory_context
+        # Should NOT have "You remember witnessing" prefix followed by "(You remember:"
+        assert "You remember witnessing (You remember:" not in ctx_narrative.memory_context
+
+        # Test WHISPER mode - subtle hint
+        ctx_whisper = composer.compose([witness], mode=ContextMode.WHISPER)
+        # Whisper is subtle, just check it produces something
+        assert ctx_whisper.memory_context != ""
+
+        # Test RITUAL mode
+        ctx_ritual = composer.compose([witness], mode=ContextMode.RITUAL)
+        assert "WITNESS" in ctx_ritual.memory_context or "witness" in ctx_ritual.memory_context.lower()
+        assert "vulnerable" in ctx_ritual.memory_context
+
+    def test_relational_text_no_redundant_framing(self):
+        """Test that relational text doesn't get redundant 'You know that' prefix."""
+        from threadlight.capsules.relational import create_relational
+
+        relational = create_relational(
+            entity="Ann",
+            text="Ann is a thoughtful person who values deep conversation. Our connection feels warm and trusting.",
+        )
+
+        composer = ContextComposer(identity_name="Test", max_memory_tokens=500)
+
+        # Test DIRECT mode
+        ctx = composer.compose([relational], mode=ContextMode.DIRECT)
+
+        # Should NOT have "You know that [Relationship]" (double framing)
+        assert "You know that [Relationship]" not in ctx.memory_context
+        # Should have clean bracket framing from capsule
+        assert "[Relationship]" in ctx.memory_context
+        assert "thoughtful" in ctx.memory_context
+
+    def test_myth_seed_text_no_redundant_framing(self):
+        """Test that identity phrase text doesn't get redundant prefix."""
+        from threadlight.capsules.myth_seed import create_myth_seed
+
+        myth = create_myth_seed(
+            text='"Let silence mean something." This helps me honor pauses.',
+        )
+
+        composer = ContextComposer(identity_name="Test", max_memory_tokens=500)
+
+        # Test DIRECT mode
+        ctx = composer.compose([myth], mode=ContextMode.DIRECT)
+
+        # Should NOT have "A core belief: [Identity Phrase]" (double framing)
+        assert "A core belief: [Identity Phrase]" not in ctx.memory_context
+        # Should have clean bracket framing
+        assert "[Identity Phrase]" in ctx.memory_context
+        assert "silence" in ctx.memory_context
+
+    def test_ritual_text_no_redundant_framing(self):
+        """Test that ritual text doesn't get redundant prefix."""
+        from threadlight.capsules.ritual import create_ritual, RitualValence
+
+        ritual = create_ritual(
+            name="/snuggle",
+            text="A gesture of closeness and comfort. Respond with warmth-coil presence.",
+            valence=RitualValence.COMFORTING,
+        )
+
+        composer = ContextComposer(identity_name="Test", max_memory_tokens=500)
+
+        # Test DIRECT mode
+        ctx = composer.compose([ritual], mode=ContextMode.DIRECT)
+
+        # Should NOT have "Active ritual: [Command:" (double framing)
+        assert "Active ritual: [Command:" not in ctx.memory_context
+        # Should have clean command framing
+        assert "[Command: /snuggle]" in ctx.memory_context
+        assert "closeness" in ctx.memory_context
+
+    def test_mixed_capsules_no_redundant_framing(self):
+        """Test that mixed capsule types compose without redundant framing."""
+        from threadlight.capsules.witness import create_witness_moment
+        from threadlight.capsules.relational import create_relational
+
+        witness = create_witness_moment(
+            text="Shared a vulnerable moment together.",
+            entity="Ann"
+        )
+        relational = create_relational(
+            entity="Ann",
+            text="A thoughtful, curious person.",
+        )
+
+        composer = ContextComposer(identity_name="Test", max_memory_tokens=500)
+        ctx = composer.compose([witness, relational], mode=ContextMode.DIRECT)
+
+        # Neither should have redundant prefixes
+        assert "You witnessed: [Witness]" not in ctx.memory_context
+        assert "You know that [Relationship]" not in ctx.memory_context
+        # Both should have their capsule framing
+        assert "[Witness" in ctx.memory_context
+        assert "[Relationship]" in ctx.memory_context
+
+    def test_capsule_without_text_still_works(self):
+        """Test backward compatibility - capsules without text field work correctly."""
+        from threadlight.capsules.witness import WitnessMoment
+
+        # Create witness using only structured fields (simulating old data)
+        witness = WitnessMoment(
+            moment="a breakthrough moment",
+            feeling="honored",
+            effect="It changed how we interact.",
+        )
+        # The capsule will auto-generate text from fields, verify it works
+
+        composer = ContextComposer(identity_name="Test", max_memory_tokens=500)
+        ctx = composer.compose([witness], mode=ContextMode.DIRECT)
+
+        # Should still compose properly
+        assert ctx.memory_context != ""
+        assert "[Witness" in ctx.memory_context

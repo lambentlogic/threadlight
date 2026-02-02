@@ -134,6 +134,10 @@ def create_capsule(data: dict[str, Any]) -> MemoryCapsule:
     if "embedding" in data:
         kwargs["embedding"] = data["embedding"]
 
+    # Text-first memory content
+    if "text" in data:
+        kwargs["text"] = data["text"]
+
     # Scope
     if "profile_scope" in data:
         kwargs["profile_scope"] = data["profile_scope"]
@@ -293,6 +297,10 @@ def _create_custom_type_capsule(data: dict[str, Any], custom_type_id: str) -> Cu
 
     if "embedding" in data:
         kwargs["embedding"] = data["embedding"]
+
+    # Text-first memory content
+    if "text" in data:
+        kwargs["text"] = data["text"]
 
     # Scope
     if "profile_scope" in data:

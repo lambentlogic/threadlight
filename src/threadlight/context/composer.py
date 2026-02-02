@@ -74,6 +74,12 @@ class ComposedContext:
 
 
 # Mode-specific prefixes for framing memories
+# NOTE: These are kept for reference/documentation but are no longer used.
+# With the text-first architecture, capsules handle their own framing
+# via to_context() methods. Adding prefixes here would create redundancy
+# like "You witnessed: [Witness] text" instead of just "[Witness] text".
+#
+# If you need mode-specific framing, modify the capsule's to_context() method.
 MODE_PREFIXES = {
     ContextMode.DIRECT: {
         "relational": "You know that",
@@ -179,7 +185,7 @@ class ContextComposer:
         system_prompt_sections: Optional[list[dict[str, str]]] = None,
         use_freeform_prompt: bool = False,
         freeform_system_prompt: Optional[str] = None,
-        knowledge_summary: Optional[dict[str, Any]] = None,
+        knowledge_summary: Optional[Any] = None,
     ) -> ComposedContext:
         """
         Compose capsules into a context object.
@@ -369,8 +375,9 @@ class ContextComposer:
         """
         Compose a single capsule into context text.
 
-        Uses the capsule's to_context() method but can wrap with
-        mode-specific framing.
+        Text-first architecture: Capsules handle their own framing via
+        to_context(), so the composer simply passes through the result.
+        This avoids redundant framing like "You witnessed: [Witness] text".
         """
         # Get the philosophy setting for ritual context
         philosophy = getattr(self, '_current_philosophy', '')
@@ -378,19 +385,9 @@ class ContextComposer:
         # For ritual capsules, pass the profile_philosophy parameter
         if capsule.type == CapsuleType.RITUAL:
             # RitualHook.to_context accepts profile_philosophy parameter
-            base_context = capsule.to_context(mode, profile_philosophy=philosophy)
+            return capsule.to_context(mode, profile_philosophy=philosophy)
         else:
-            base_context = capsule.to_context(mode)
-
-        # For most cases, the capsule's own to_context is sufficient
-        # Only add prefixes for DIRECT mode where we want explicit framing
-        if mode == ContextMode.DIRECT:
-            type_key = capsule.type.value
-            prefix = MODE_PREFIXES.get(mode, {}).get(type_key, "")
-            if prefix and not base_context.startswith(prefix):
-                return f"{prefix} {base_context}"
-
-        return base_context
+            return capsule.to_context(mode)
 
     def _format_memory_context(
         self,
@@ -430,7 +427,7 @@ class ContextComposer:
         system_prompt_sections: Optional[list[dict[str, str]]] = None,
         use_freeform_prompt: bool = False,
         freeform_system_prompt: Optional[str] = None,
-        knowledge_summary: Optional[dict[str, Any]] = None,
+        knowledge_summary: Optional[Any] = None,
     ) -> str:
         """Compose the full system message from parts."""
         parts = []
@@ -453,11 +450,17 @@ class ContextComposer:
             if profile_philosophy:
                 parts.append(f"---\n## Your Approach\n{profile_philosophy}")
 
-        # User knowledge summary (structured context about the human)
+        # User knowledge summary (flexible format - text, JSON, list, etc.)
         if knowledge_summary:
             import json
-            summary_text = json.dumps(knowledge_summary, indent=2)
-            parts.append(f"---\n## About Your Human\n```json\n{summary_text}\n```")
+            # Handle different formats
+            if isinstance(knowledge_summary, str):
+                # Already a string, use as-is
+                summary_text = knowledge_summary
+            else:
+                # Dict, list, or other - serialize to JSON
+                summary_text = json.dumps(knowledge_summary, indent=2)
+            parts.append(f"---\n## About Your Human\n{summary_text}")
 
         # Style guidance
         if context.style_prompt:

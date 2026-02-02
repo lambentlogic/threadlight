@@ -32,31 +32,47 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "create_memory",
             "description": (
-                "Propose creating a new memory to remember something important from this conversation. "
-                "The memory will be stored as a proposal and requires user consent before becoming active. "
-                "Use this when the user shares something meaningful that should be remembered across conversations, "
-                "such as personal information, preferences, important moments, or relationship context."
+                "Create a memory to remember something important from this conversation. "
+                "Write memories as natural narrative text - how you would describe this moment to your future self. "
+                "The text becomes the memory's voice during future conversations.\n\n"
+                "Text-first approach: Write the memory as prose. Structured fields (type, content) are optional "
+                "metadata for organization and search - they don't replace the narrative text.\n\n"
+                "Example text: 'They shared that their cat Luna passed away last month. The grief was still fresh - "
+                "they teared up talking about how Luna would sit on their keyboard during work calls. This feels "
+                "important to hold gently in future conversations.'"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "The memory as natural narrative text. Write this as prose - how you would "
+                            "describe this moment to your future self. This is the primary content that "
+                            "will be used in future conversations. Be specific, preserve emotional nuance, "
+                            "and include context that helps future-you understand why this matters."
+                        ),
+                    },
                     "memory_type": {
                         "type": "string",
                         "enum": ["relational", "identity_phrase", "witness"],
                         "description": (
-                            "Type of memory to create:\n"
-                            "- relational: Information about a person or relationship (entity, role, tone)\n"
-                            "- identity_phrase: A core belief or meaningful phrase (seed, origin)\n"
-                            "- witness: A moment of being seen or understood (moment, feeling)"
+                            "Optional type classification for organization:\n"
+                            "- relational: About a person, place, or relationship\n"
+                            "- identity_phrase: A core belief, value, or guiding phrase\n"
+                            "- witness: A significant moment of connection or understanding\n"
+                            "If omitted, defaults to 'witness' for general memories."
                         ),
                     },
                     "content": {
                         "type": "object",
                         "description": (
-                            "Content for the memory. Structure depends on memory_type:\n"
-                            "- relational: {entity: string, summary: string, tone?: string}\n"
-                            "- identity_phrase: {seed: string, origin: string, function?: string}\n"
-                            "- witness: {moment: string, feeling: string}"
+                            "Optional structured metadata for search and organization. "
+                            "This supplements the text, not replaces it:\n"
+                            "- relational: {entity: string, summary?: string, tone?: string}\n"
+                            "- identity_phrase: {seed: string, origin?: string}\n"
+                            "- witness: {moment?: string, feeling?: string}\n"
+                            "For backward compatibility, can be provided without text."
                         ),
                     },
                     "reason": {
@@ -74,7 +90,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         ),
                     },
                 },
-                "required": ["memory_type", "content", "reason"],
+                "required": ["reason"],
             },
         },
     },

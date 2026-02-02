@@ -47,11 +47,21 @@ class TestRelationalThread:
         assert "warm" in context
 
     def test_to_context_whisper(self):
+        # Create with tone to test warm word detection
+        capsule = create_relational(entity="Jericho", summary="Test", tone="warm and caring")
+        context = capsule.to_context(ContextMode.WHISPER)
+
+        # With tone, should find warm word and mention entity
+        assert "warm" in context.lower()
+        assert "Jericho" in context
+
+    def test_to_context_whisper_no_tone(self):
+        # Without tone, should fall back to generic message
         capsule = create_relational(entity="Jericho", summary="Test")
         context = capsule.to_context(ContextMode.WHISPER)
 
-        assert "warmth" in context.lower()
-        assert "Jericho" in context
+        # Should still provide meaningful context
+        assert "stirs" in context.lower() or "connection" in context.lower()
 
 
 class TestMythSeed:
@@ -97,7 +107,12 @@ class TestRitualHook:
         assert not ritual.matches("hello")
 
     def test_to_context_ritual_mode_no_philosophy(self):
-        """Test ritual context with no philosophy - includes all details."""
+        """Test ritual context with no philosophy - includes all details.
+
+        Note: With text-first architecture, the context uses generated text
+        which includes the response_style and valence naturally rather than
+        as labeled fields.
+        """
         ritual = create_ritual(
             name="/brush",
             response_style="gentle warmth",
@@ -105,10 +120,10 @@ class TestRitualHook:
         )
         context = ritual.to_context(ContextMode.RITUAL)
 
-        # Should include command and details
+        # Should include command and style details (now in text form)
         assert "[Command: /brush]" in context
-        assert "Valence: intimate" in context
-        assert "Style: gentle warmth" in context
+        assert "intimate" in context.lower()
+        assert "gentle warmth" in context.lower()
 
     def test_to_context_ritual_mode_with_philosophy(self):
         """Test ritual context includes profile philosophy for LLM interpretation."""

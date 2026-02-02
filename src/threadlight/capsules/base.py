@@ -68,6 +68,12 @@ class MemoryCapsule(ABC):
     # Content (type-specific, implemented by subclasses)
     content: dict[str, Any] = field(default_factory=dict)
 
+    # Primary narrative content for text-first memory architecture.
+    # This is the main text that will be used for context composition.
+    # Structured content fields remain for backward compatibility but
+    # text takes precedence when present.
+    text: Optional[str] = None
+
     # Timestamps
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -133,6 +139,7 @@ class MemoryCapsule(ABC):
             "id": self.id,
             "type": self.type.value,
             "content": self.content,
+            "text": self.text,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "last_accessed": self.last_accessed.isoformat(),

@@ -491,3 +491,172 @@ class TestExecuteToolCallConvenience:
 
         assert result.success is False
         assert "Invalid JSON" in result.error
+
+
+class TestTextFirstMemoryCreation:
+    """Tests for text-first memory creation tools (Phase 3)."""
+
+    def test_create_memory_with_text_only(self, executor, orchestrator):
+        """Test creating memory with just text parameter."""
+        result = executor.execute("create_memory", {
+            "text": "They shared that their cat Luna passed away last month. The grief was still fresh.",
+            "reason": "Important emotional context to remember",
+        })
+
+        assert result.success is True
+        assert "capsule_id" in result.result
+        assert result.result["type"] == "witness"  # Should default to witness
+
+        # Verify text was stored in the capsule
+        capsule = orchestrator.get(result.result["capsule_id"])
+        assert capsule is not None
+        assert capsule.text is not None
+        assert "Luna" in capsule.text
+
+    def test_create_memory_with_text_and_type(self, executor, orchestrator):
+        """Test creating memory with text and explicit type."""
+        result = executor.execute("create_memory", {
+            "text": "Alice is my best friend from college. We bonded over late-night coding sessions.",
+            "memory_type": "relational",
+            "reason": "Relationship context",
+        })
+
+        assert result.success is True
+        capsule = orchestrator.get(result.result["capsule_id"])
+        assert capsule.type.value == "relational"
+        assert "Alice" in capsule.text
+
+    def test_create_memory_with_text_and_content(self, executor, orchestrator):
+        """Test creating memory with both text and structured content."""
+        result = executor.execute("create_memory", {
+            "text": "Alice always brings homemade cookies when we meet. It's her way of showing care.",
+            "memory_type": "relational",
+            "content": {"entity": "Alice", "tone": "warm"},
+            "reason": "Relationship detail",
+        })
+
+        assert result.success is True
+        capsule = orchestrator.get(result.result["capsule_id"])
+        assert capsule.text is not None
+        assert "cookies" in capsule.text
+        # Structured fields should also be accessible
+        assert capsule.entity == "Alice" or capsule.content.get("entity") == "Alice"
+
+    def test_create_memory_content_only_backward_compat(self, executor, orchestrator):
+        """Test backward compatibility with content-only (no text)."""
+        result = executor.execute("create_memory", {
+            "memory_type": "relational",
+            "content": {"entity": "Bob", "summary": "Colleague who loves coffee"},
+            "reason": "Work relationship",
+        })
+
+        assert result.success is True
+        assert "capsule_id" in result.result
+
+    def test_create_memory_requires_text_or_content(self, executor):
+        """Test that either text or content must be provided."""
+        result = executor.execute("create_memory", {
+            "memory_type": "witness",
+            "reason": "Should fail",
+        })
+
+        assert result.success is False
+        assert "text" in result.error.lower() or "content" in result.error.lower()
+
+    def test_create_memory_text_preview_in_result(self, executor):
+        """Test that long text gets a preview in the result."""
+        long_text = "This is a very long memory text. " * 20  # Over 100 chars
+
+        result = executor.execute("create_memory", {
+            "text": long_text,
+            "reason": "Testing preview",
+        })
+
+        assert result.success is True
+        assert "text_preview" in result.result
+        assert len(result.result["text_preview"]) <= 103  # 100 + "..."
+
+    def test_create_memory_with_text_defaults_to_witness(self, executor, orchestrator):
+        """Test that memory_type defaults to 'witness' when only text is provided."""
+        result = executor.execute("create_memory", {
+            "text": "A moment of deep connection happened today.",
+            "reason": "General memory",
+        })
+
+        assert result.success is True
+        capsule = orchestrator.get(result.result["capsule_id"])
+        assert capsule.type.value == "witness"
+
+    def test_create_memory_identity_phrase_with_text(self, executor, orchestrator):
+        """Test creating identity_phrase (myth_seed) with text."""
+        result = executor.execute("create_memory", {
+            "text": "They said 'I process through talking' and it felt like a key to understanding them.",
+            "memory_type": "identity_phrase",
+            "content": {"seed": "I process through talking"},
+            "reason": "Core communication style",
+        })
+
+        assert result.success is True
+        capsule = orchestrator.get(result.result["capsule_id"])
+        # identity_phrase maps to myth_seed internally
+        assert capsule.type.value == "myth_seed"
+        assert capsule.text is not None
+
+    def test_create_memory_proposal_includes_text(self, orchestrator):
+        """Test that proposals created with consent include text."""
+        from threadlight.tools.executor import ToolExecutor
+
+        executor = ToolExecutor(orchestrator, require_consent_for_memories=True)
+
+        result = executor.execute("create_memory", {
+            "text": "Something important to propose remembering.",
+            "reason": "Testing proposals",
+        })
+
+        assert result.success is True
+        assert result.requires_consent is True
+        assert "text" in result.result
+        assert result.result["text"] == "Something important to propose remembering."
+
+
+class TestToolDefinitionsTextFirst:
+    """Tests for tool definitions with text-first updates."""
+
+    def test_create_memory_has_text_parameter(self):
+        """Test that create_memory tool definition includes text parameter."""
+        tool = next(
+            (t for t in TOOL_DEFINITIONS if t["function"]["name"] == "create_memory"),
+            None
+        )
+        assert tool is not None
+
+        properties = tool["function"]["parameters"]["properties"]
+        assert "text" in properties
+        assert "string" == properties["text"]["type"]
+
+    def test_create_memory_text_is_prominent_in_description(self):
+        """Test that create_memory description emphasizes text-first approach."""
+        tool = next(
+            (t for t in TOOL_DEFINITIONS if t["function"]["name"] == "create_memory"),
+            None
+        )
+        assert tool is not None
+
+        description = tool["function"]["description"].lower()
+        assert "text" in description
+        assert "narrative" in description
+
+    def test_create_memory_only_requires_reason(self):
+        """Test that only 'reason' is strictly required (text or content needed)."""
+        tool = next(
+            (t for t in TOOL_DEFINITIONS if t["function"]["name"] == "create_memory"),
+            None
+        )
+        assert tool is not None
+
+        required = tool["function"]["parameters"]["required"]
+        assert "reason" in required
+        # Neither text nor content should be required at schema level
+        # (validation happens at execution time)
+        assert "text" not in required
+        assert "content" not in required

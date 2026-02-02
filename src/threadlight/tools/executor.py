@@ -130,25 +130,30 @@ class ToolExecutor:
             )
 
     def _execute_create_memory(self, arguments: dict[str, Any]) -> ToolResult:
-        """Execute create_memory tool call."""
+        """Execute create_memory tool call.
+
+        Text-first architecture: The `text` parameter is the primary content.
+        When text is provided, it becomes the narrative core of the memory.
+        Structured fields (memory_type, content) are optional metadata for
+        organization and search.
+        """
+        text = arguments.get("text")
         memory_type = arguments.get("memory_type")
         content = arguments.get("content", {})
         reason = arguments.get("reason", "")
         memory_tier = arguments.get("memory_tier", "semantic")
 
-        if not memory_type:
+        # Text-first: either text or content must be provided
+        if not text and not content:
             return ToolResult(
                 tool_name=ToolName.CREATE_MEMORY.value,
                 success=False,
-                error="memory_type is required",
+                error="Either 'text' (preferred) or 'content' must be provided",
             )
 
-        if not content:
-            return ToolResult(
-                tool_name=ToolName.CREATE_MEMORY.value,
-                success=False,
-                error="content is required",
-            )
+        # Default memory_type to 'witness' if not specified (most general type)
+        if not memory_type:
+            memory_type = "witness"
 
         # Validate memory type (accept identity_phrase as alias for myth_seed)
         valid_types = ["relational", "myth_seed", "identity_phrase", "witness"]
@@ -172,24 +177,37 @@ class ToolExecutor:
         if memory_type == "identity_phrase":
             memory_type = "myth_seed"
 
+        # Text-first: merge text into content for storage
+        # The capsule factory and capsule classes know how to handle text
+        effective_content = content.copy() if content else {}
+        if text:
+            effective_content["text"] = text
+
         if self.require_consent:
             # Create a proposal instead of an active memory
             proposal = self.memory.propose(
                 type=memory_type,
-                content=content,
+                content=effective_content,
                 source_message=reason,
                 memory_tier=memory_tier,
             )
 
+            # Build result showing text-first approach
+            result_data = {
+                "type": memory_type,
+                "reason": reason,
+                "memory_tier": memory_tier,
+            }
+            if text:
+                result_data["text"] = text
+                result_data["text_preview"] = text[:100] + "..." if len(text) > 100 else text
+            if content:
+                result_data["content"] = content
+
             return ToolResult(
                 tool_name=ToolName.CREATE_MEMORY.value,
                 success=True,
-                result={
-                    "type": memory_type,
-                    "content": content,
-                    "reason": reason,
-                    "memory_tier": memory_tier,
-                },
+                result=result_data,
                 requires_consent=True,
                 proposal_id=proposal.id,
                 display_message=f"I'd like to remember this. [Proposal: {proposal.id[:8]}...]",
@@ -198,20 +216,26 @@ class ToolExecutor:
             # Create memory directly (for trusted contexts)
             capsule = self.memory.create(
                 type=memory_type,
-                content=content,
+                content=effective_content,
                 consent_confirmed=True,
                 consent_origin="model_direct",
                 memory_tier=memory_tier,
             )
 
+            # Build result showing text-first approach
+            result_data = {
+                "capsule_id": capsule.id,
+                "type": memory_type,
+            }
+            if text:
+                result_data["text_preview"] = text[:100] + "..." if len(text) > 100 else text
+            if content:
+                result_data["content"] = content
+
             return ToolResult(
                 tool_name=ToolName.CREATE_MEMORY.value,
                 success=True,
-                result={
-                    "capsule_id": capsule.id,
-                    "type": memory_type,
-                    "content": content,
-                },
+                result=result_data,
                 display_message=f"Memory created: {capsule.id[:8]}...",
             )
 

@@ -54,19 +54,8 @@ class StyleProfile(MemoryCapsule):
     user_tone_adaptations: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.content:
-            self.content = {
-                "style_id": self.style_id,
-                "tone_base": self.tone_base,
-                "permissions": self.permissions,
-                "constraints": self.constraints,
-                "vocal_motifs": self.vocal_motifs,
-                "forbidden_patterns": self.forbidden_patterns,
-                "user_tone_adaptations": self.user_tone_adaptations,
-                "freeform_description": self.freeform_description,
-                "use_freeform": self.use_freeform,
-            }
-        else:
+        # Restore structured fields from content if loading from storage
+        if self.content:
             self.style_id = self.content.get("style_id", self.style_id)
             self.tone_base = self.content.get("tone_base", self.tone_base)
             self.permissions = self.content.get("permissions", [])
@@ -76,21 +65,141 @@ class StyleProfile(MemoryCapsule):
             self.user_tone_adaptations = self.content.get("user_tone_adaptations", {})
             self.freeform_description = self.content.get("freeform_description", "")
             self.use_freeform = self.content.get("use_freeform", False)
+            # Restore text from content if present (loading from storage)
+            if self.text is None and "text" in self.content:
+                self.text = self.content["text"]
+
+        # Text-first architecture: if text is not provided, generate it from structured fields
+        if self.text is None and (self.style_id or self.tone_base or self.freeform_description):
+            self.text = self._generate_text_from_fields()
+
+        # Always sync structured fields to content dict for storage/serialization
+        self.content = {
+            "style_id": self.style_id,
+            "tone_base": self.tone_base,
+            "permissions": self.permissions,
+            "constraints": self.constraints,
+            "vocal_motifs": self.vocal_motifs,
+            "forbidden_patterns": self.forbidden_patterns,
+            "user_tone_adaptations": self.user_tone_adaptations,
+            "freeform_description": self.freeform_description,
+            "use_freeform": self.use_freeform,
+        }
+        # Also store text in content for persistence
+        if self.text:
+            self.content["text"] = self.text
+
+        # Extract cue phrases
+        if not self.cue_phrases:
+            self._extract_cue_phrases()
+
+    def _generate_text_from_fields(self) -> str:
+        """Generate natural narrative text from structured fields.
+
+        Creates a readable narrative that describes the voice style
+        in a way that feels natural and guiding.
+        """
+        # If using freeform, that IS the text
+        if self.use_freeform and self.freeform_description:
+            return self.freeform_description
+
+        parts = []
+
+        # Start with the tone base
+        if self.tone_base:
+            parts.append(f"My voice is {self.tone_base}.")
+
+        # Add permissions
+        if self.permissions:
+            perms = ", ".join(self.permissions[:3])  # Limit for readability
+            parts.append(f"I am permitted to: {perms}.")
+
+        # Add constraints
+        if self.constraints:
+            cons = ", ".join(self.constraints[:3])  # Limit for readability
+            parts.append(f"I avoid: {cons}.")
+
+        # Add vocal motifs
+        if self.vocal_motifs:
+            motifs = ", ".join(f'"{m}"' for m in self.vocal_motifs[:3])
+            parts.append(f"Motifs: {motifs}.")
+
+        return " ".join(parts) if parts else ""
+
+    def _extract_cue_phrases(self) -> None:
+        """Extract key words for cue phrases from text and fields."""
+        phrases = []
+        if self.style_id:
+            phrases.append(self.style_id.lower())
+        if self.tone_base:
+            words = self.tone_base.lower().split()
+            phrases.extend(w.strip(".,") for w in words if len(w) > 3)
+        # Also extract from text if available
+        if self.text:
+            words = [w.lower().strip(".,!?'\"") for w in self.text.split()]
+            phrases.extend(w for w in words if len(w) > 4)
+        self.cue_phrases = list(dict.fromkeys(phrases))[:10]  # Dedupe and limit
 
     def validate(self) -> bool:
-        """Validate that required fields are present."""
-        # Valid if has freeform content or structured content
+        """Validate that required fields are present.
+
+        Text-first: valid if we have text OR style_id/tone_base (for backward compatibility).
+        """
+        # Valid if has text
+        if self.text:
+            return True
+        # Valid if has freeform content
         if self.use_freeform and self.freeform_description:
             return bool(self.style_id)
+        # Valid if has structured content
         return bool(self.style_id or self.tone_base)
 
     def to_context(self, mode: ContextMode = ContextMode.DIRECT) -> str:
-        """Transform into prompt-ready context."""
-        # If using freeform mode, return the freeform description
-        if self.use_freeform and self.freeform_description:
-            return f"(Style guidance: {self.freeform_description})"
+        """Transform into prompt-ready context.
 
-        # Otherwise use structured approach
+        Text-first: When text field exists, use it directly instead of
+        reconstructing from structured fields. Falls back to field-based
+        construction for backward compatibility with memories that don't
+        have a text field.
+        """
+        if mode == ContextMode.DIRECT:
+            # If we have text, use it directly
+            if self.text:
+                return f"(Style guidance: {self.text})"
+            # If using freeform mode, return the freeform description
+            if self.use_freeform and self.freeform_description:
+                return f"(Style guidance: {self.freeform_description})"
+            # Otherwise use structured approach
+            return self._structured_context()
+
+        elif mode == ContextMode.NARRATIVE:
+            # Wrap in narrative framing
+            if self.text:
+                return f"(Your voice follows this style: {self.text})"
+            if self.use_freeform and self.freeform_description:
+                return f"(Your voice follows this style: {self.freeform_description})"
+            return f"(Your voice follows this style: {self._structured_context()})"
+
+        elif mode == ContextMode.WHISPER:
+            # Just the essence
+            if self.text:
+                return f"(Voice: {self.text[:60]}...)" if len(self.text) > 60 else f"(Voice: {self.text})"
+            if self.tone_base:
+                return f"(Your voice is {self.tone_base}.)"
+            return "(Style guidance active.)"
+
+        elif mode == ContextMode.RITUAL:
+            # Full style context
+            if self.text:
+                id_label = f"[Style: {self.style_id}]\n" if self.style_id else ""
+                return f"(STYLE PROFILE:\n{id_label}{self.text})"
+            return self.to_system_prompt()
+
+        # Default fallback
+        return self.text if self.text else self._structured_context()
+
+    def _structured_context(self) -> str:
+        """Generate context from structured fields (legacy mode)."""
         lines = []
 
         if self.tone_base:
@@ -110,7 +219,15 @@ class StyleProfile(MemoryCapsule):
         return " ".join(lines)
 
     def to_system_prompt(self) -> str:
-        """Generate a system prompt fragment from this style."""
+        """Generate a system prompt fragment from this style.
+
+        Text-first: When text field exists, use it as the primary content.
+        Falls back to structured field composition for backward compatibility.
+        """
+        # If we have text, use it as the style definition
+        if self.text:
+            return f"## Style\n{self.text}"
+
         # If using freeform mode, return it directly
         if self.use_freeform and self.freeform_description:
             return f"## Style\n{self.freeform_description}"
@@ -158,16 +275,21 @@ class StyleProfile(MemoryCapsule):
 
 
 def create_style_profile(
-    style_id: str,
+    style_id: str = "",
     tone_base: str = "",
     permissions: list[str] | None = None,
     constraints: list[str] | None = None,
     vocal_motifs: list[str] | None = None,
     freeform_description: str = "",
     use_freeform: bool = False,
+    text: str | None = None,
     **kwargs: Any
 ) -> StyleProfile:
     """Factory function for creating style profiles.
+
+    Text-first architecture: When text is provided, it becomes the primary
+    narrative content. Structured fields remain for search/organization but
+    text takes precedence for context composition.
 
     Args:
         style_id: Unique identifier for the style
@@ -177,6 +299,9 @@ def create_style_profile(
         vocal_motifs: List of recurring phrases/symbols (for structured styles)
         freeform_description: Raw style text (for freeform styles)
         use_freeform: If True, use freeform_description instead of structured fields
+        text: Primary narrative content (optional). If provided, this is
+              the main text that will be used for context composition.
+              If not provided, text will be generated from structured fields.
     """
     return StyleProfile(
         style_id=style_id,
@@ -186,13 +311,15 @@ def create_style_profile(
         vocal_motifs=vocal_motifs or [],
         freeform_description=freeform_description,
         use_freeform=use_freeform,
+        text=text,
         **kwargs
     )
 
 
 def create_freeform_style(
-    style_id: str,
-    description: str,
+    style_id: str = "",
+    description: str = "",
+    text: str | None = None,
     **kwargs: Any
 ) -> StyleProfile:
     """Create a freeform style profile from a description.
@@ -200,14 +327,20 @@ def create_freeform_style(
     This is useful for importing styles from other platforms like
     Claude Custom Instructions or ChatGPT Custom Instructions.
 
+    Text-first architecture: When text is provided, it becomes the primary
+    narrative content. The freeform_description remains for backward compatibility.
+
     Args:
         style_id: Unique identifier for the style
-        description: The raw style definition text
+        description: The raw style definition text (for freeform_description field)
+        text: Primary narrative content (optional). If provided, this takes
+              precedence over freeform_description.
     """
     return StyleProfile(
         style_id=style_id,
         freeform_description=description,
         use_freeform=True,
+        text=text,
         **kwargs
     )
 

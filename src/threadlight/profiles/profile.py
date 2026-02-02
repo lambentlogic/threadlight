@@ -143,7 +143,7 @@ class Profile:
     # Memory
     memory_scope: Optional[str] = None  # Defaults to profile ID
     access_shared_memories: bool = True
-    knowledge_summary: Optional[dict[str, Any]] = None  # Structured user knowledge (identity, preferences, context)
+    knowledge_summary: Optional[Any] = None  # User knowledge in any format (text, JSON, list, etc.)
 
     # DEPRECATED: Use system_prompt_sections instead
     # Kept for backward compatibility - will be migrated to sections on load

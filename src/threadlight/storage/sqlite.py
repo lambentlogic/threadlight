@@ -54,6 +54,7 @@ class SQLiteStorage(StorageBackend):
                 id TEXT PRIMARY KEY,
                 type TEXT NOT NULL,
                 content TEXT NOT NULL,
+                text TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 last_accessed TEXT,
@@ -382,6 +383,77 @@ class SQLiteStorage(StorageBackend):
             """)
             self.conn.commit()
 
+        # Migration: Add text column to capsules table for text-first memory architecture
+        # This is the primary narrative content field - nullable for backward compatibility
+        cursor = self.conn.execute("PRAGMA table_info(capsules)")
+        capsule_cols = [row[1] for row in cursor.fetchall()]
+        if 'text' not in capsule_cols:
+            self.conn.execute("ALTER TABLE capsules ADD COLUMN text TEXT")
+            self.conn.commit()
+
+        # Phase 5: Populate text field for existing memories
+        # This generates text from structured fields for all memories that don't have it
+        self._migrate_populate_text()
+
+    def _migrate_populate_text(self) -> int:
+        """
+        Migrate existing memories to text-first architecture by generating text
+        from structured fields for all capsules that don't have a text field.
+
+        This migration is idempotent - it only processes capsules where text IS NULL.
+        When a capsule is loaded, its __post_init__ will automatically generate text
+        from the structured fields if text is not present.
+
+        Returns:
+            Number of capsules migrated
+        """
+        assert self.conn is not None
+
+        # Count capsules needing migration
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM capsules WHERE text IS NULL"
+        )
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            return 0
+
+        # Log migration start
+        import logging
+        logger = logging.getLogger("threadlight.storage")
+        logger.info(f"Migrating {count} memories to text-first architecture...")
+
+        # Get all capsule IDs that need migration
+        cursor = self.conn.execute(
+            "SELECT id FROM capsules WHERE text IS NULL"
+        )
+        capsule_ids = [row[0] for row in cursor.fetchall()]
+
+        migrated = 0
+        for capsule_id in capsule_ids:
+            # Load the capsule - this triggers __post_init__ which generates text
+            capsule = self.get_capsule(capsule_id)
+            if capsule and capsule.text:
+                # Save the capsule back with the generated text
+                self.update_capsule(capsule)
+                migrated += 1
+
+        logger.info(f"Migration complete: {migrated} memories updated with generated text")
+        return migrated
+
+    def migrate_populate_text(self) -> int:
+        """
+        Public method to manually trigger text field migration.
+
+        This generates text from structured fields for all memories that don't have
+        a text field yet. Safe to run multiple times (idempotent).
+
+        Returns:
+            Number of capsules migrated
+        """
+        self._ensure_connected()
+        return self._migrate_populate_text()
+
     def close(self) -> None:
         """Close database connection."""
         if self.conn:
@@ -412,14 +484,15 @@ class SQLiteStorage(StorageBackend):
 
         conn.execute("""
             INSERT OR REPLACE INTO capsules
-            (id, type, content, created_at, updated_at, last_accessed,
+            (id, type, content, text, created_at, updated_at, last_accessed,
              access_count, retention, memory_tier, decay_rate, presence_score,
              consent_origin, consent_confirmed, cue_phrases, embedding, model_scope, profile_scope, archived)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             data["id"],
             data["type"],
             json.dumps(data["content"]),
+            data.get("text"),
             data["created_at"],
             data["updated_at"],
             data["last_accessed"],
@@ -469,6 +542,7 @@ class SQLiteStorage(StorageBackend):
         result = conn.execute("""
             UPDATE capsules SET
                 content = ?,
+                text = ?,
                 updated_at = ?,
                 last_accessed = ?,
                 access_count = ?,
@@ -485,6 +559,7 @@ class SQLiteStorage(StorageBackend):
             WHERE id = ?
         """, (
             json.dumps(data["content"]),
+            data.get("text"),
             data["updated_at"],
             data["last_accessed"],
             data["access_count"],
@@ -793,11 +868,12 @@ class SQLiteStorage(StorageBackend):
 
     def _row_to_capsule(self, row: sqlite3.Row) -> MemoryCapsule:
         """Convert a database row to a capsule."""
-        # Handle model_scope, profile_scope, memory_tier, and archived fields which may not exist in older databases
+        # Handle optional fields which may not exist in older databases
         model_scope = None
         profile_scope = None
         memory_tier = MemoryTier.SEMANTIC.value  # Default for existing/migrated rows
         archived = False  # Default for existing/migrated rows
+        text = None  # Text-first memory content (Phase 1)
         try:
             model_scope = row["model_scope"]
         except (IndexError, KeyError):
@@ -815,11 +891,16 @@ class SQLiteStorage(StorageBackend):
             archived = bool(row["archived"])
         except (IndexError, KeyError):
             pass
+        try:
+            text = row["text"]
+        except (IndexError, KeyError):
+            pass
 
         data = {
             "id": row["id"],
             "type": row["type"],
             "content": json.loads(row["content"]),
+            "text": text,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "last_accessed": row["last_accessed"],
