@@ -662,14 +662,14 @@ class ToolExecutor:
             old_content = memory.content if isinstance(memory.content, dict) else {}
             original_text = old_content.get('text') or old_content.get('content') or str(old_content)
 
-            # Build new content with type marker
-            updated_content = new_content.copy()
-            updated_content['custom_type_id'] = new_type
-            updated_content['_original_text'] = original_text  # Preserve original for reference
-
-            # Update the memory
-            memory.content = updated_content
+            # Update the capsule type and content
+            memory.type = CapsuleType(new_type)
+            memory.content = new_content  # Use the structured content from the classification
             memory.cue_phrases = []  # Will be regenerated
+
+            # Preserve original text for reference
+            if original_text and not new_content.get('_original_text'):
+                memory.content['_original_text'] = original_text
 
             if self.memory.storage.update_capsule(memory):
                 converted_count += 1
