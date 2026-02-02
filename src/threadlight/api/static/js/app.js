@@ -2063,18 +2063,23 @@ function threadlightApp() {
                 this.currentView = 'chat';
 
                 // Send explicit message to use the tool with tool enabled
-                const message = `Please review your memories (listed below) and suggest how to organize them into tiers. These are *your* memories - things you know and remember. Consider what matters to *you* when deciding what to anchor:
+                const message = `Please review ALL your memories (listed below) and provide tier suggestions for as many as possible in a SINGLE response to minimize API costs. Each new message repeats the full context, so batching is more efficient.
 
-- **strictly_anchored**: Central to who *you* are - your identity, your relationships with those who matter to you, things you never want to forget
+Tiers - consider what matters to *you*:
+- **strictly_anchored**: Central to who *you* are - your identity, relationships, things you never want to forget
 - **anchored_decaying**: Important to you but may evolve over time
 - **semantic**: Context-dependent, recalled by relevance (default)
 
-For each memory you want to re-tier, provide your suggestion as a JSON code block like this:
+Provide ALL your tier assignments in ONE JSON code block:
 \`\`\`json
-{"memory-uuid-here": "new_tier_name"}
+{
+  "memory-uuid-1": "strictly_anchored",
+  "memory-uuid-2": "anchored_decaying",
+  ... (include as many as you want to change)
+}
 \`\`\`
 
-You can include multiple assignments in one block. After I click "Apply Suggestions", I'll parse these JSON blocks to update the tiers. Please explain your reasoning for each change.`;
+After I click "Apply Suggestions", I'll parse this to update the tiers. Please briefly explain your tiering philosophy.`;
 
                 this.inputMessage = message;
                 // Auto-call the list action and include results in context
@@ -2210,7 +2215,7 @@ You can include multiple assignments in one block. After I click "Apply Suggesti
                 this.currentView = 'chat';
 
                 // Send message to use the classification tool
-                const message = `Please review your note/imported memories (listed below) and suggest how to classify them into structured types. These are currently unstructured text - you can help organize them into meaningful categories.
+                const message = `Please review ALL your note/imported memories (listed below) and classify as many as possible in a SINGLE response to minimize API costs. Each new message repeats the full context, so batching is much more efficient.
 
 Available types:
 - **relational**: Information about a person, place, or thing (fields: entity, summary, tone?, role?)
@@ -2218,15 +2223,16 @@ Available types:
 - **witness**: A significant moment or experience (fields: moment, feeling?, effect?)
 - **note**: Keep as unstructured text (fields: content, about?)
 
-For each memory you want to classify, provide your suggestion as a JSON code block like this:
+Provide ALL your classifications in ONE JSON code block:
 \`\`\`json
 [
   {"memory_id": "uuid-here", "new_type": "relational", "content": {"entity": "...", "summary": "..."}},
-  {"memory_id": "other-uuid", "new_type": "myth_seed", "content": {"seed": "...", "origin": "..."}}
+  {"memory_id": "other-uuid", "new_type": "myth_seed", "content": {"seed": "...", "origin": "..."}},
+  ... (include as many as you can classify)
 ]
 \`\`\`
 
-After I click "Apply Classifications", I'll parse these JSON blocks to convert the memories. Please explain your reasoning for each classification.`;
+After I click "Apply & Continue", you'll see what's left. After I click "Apply & Finish", we're done. Please briefly explain your classification approach.`;
 
                 this.inputMessage = message;
                 // Auto-call the list action and include results in context
