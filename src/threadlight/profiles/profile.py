@@ -143,6 +143,7 @@ class Profile:
     # Memory
     memory_scope: Optional[str] = None  # Defaults to profile ID
     access_shared_memories: bool = True
+    knowledge_summary: Optional[dict[str, Any]] = None  # Structured user knowledge (identity, preferences, context)
 
     # DEPRECATED: Use system_prompt_sections instead
     # Kept for backward compatibility - will be migrated to sections on load
@@ -196,6 +197,7 @@ class Profile:
             "use_freeform_prompt": self.use_freeform_prompt,
             "memory_scope": self.memory_scope,
             "access_shared_memories": self.access_shared_memories,
+            "knowledge_summary": self.knowledge_summary,
             # Deprecated fields - kept for backward compatibility
             "philosophy": self.philosophy,
             "approach_to_rituals": self.approach_to_rituals,
@@ -250,6 +252,7 @@ class Profile:
             use_freeform_prompt=use_freeform_prompt,
             memory_scope=data.get("memory_scope"),
             access_shared_memories=data.get("access_shared_memories", True),
+            knowledge_summary=data.get("knowledge_summary"),
             philosophy=philosophy,
             approach_to_rituals=approach,
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),

@@ -179,6 +179,7 @@ class ContextComposer:
         system_prompt_sections: Optional[list[dict[str, str]]] = None,
         use_freeform_prompt: bool = False,
         freeform_system_prompt: Optional[str] = None,
+        knowledge_summary: Optional[dict[str, Any]] = None,
     ) -> ComposedContext:
         """
         Compose capsules into a context object.
@@ -246,6 +247,7 @@ class ContextComposer:
             system_prompt_sections,
             use_freeform_prompt,
             freeform_system_prompt,
+            knowledge_summary,
         )
 
         return result
@@ -428,6 +430,7 @@ class ContextComposer:
         system_prompt_sections: Optional[list[dict[str, str]]] = None,
         use_freeform_prompt: bool = False,
         freeform_system_prompt: Optional[str] = None,
+        knowledge_summary: Optional[dict[str, Any]] = None,
     ) -> str:
         """Compose the full system message from parts."""
         parts = []
@@ -449,6 +452,12 @@ class ContextComposer:
             # Backward compat: use deprecated philosophy fields
             if profile_philosophy:
                 parts.append(f"---\n## Your Approach\n{profile_philosophy}")
+
+        # User knowledge summary (structured context about the human)
+        if knowledge_summary:
+            import json
+            summary_text = json.dumps(knowledge_summary, indent=2)
+            parts.append(f"---\n## About Your Human\n```json\n{summary_text}\n```")
 
         # Style guidance
         if context.style_prompt:

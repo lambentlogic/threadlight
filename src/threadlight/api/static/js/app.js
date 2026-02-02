@@ -50,6 +50,8 @@ function threadlightApp() {
         memoryTypeFilter: '',
         selectedMemory: null,
         showCreateMemory: false,
+        showProposalsModal: false,
+        proposals: [],
         newMemory: {
             type: 'relational',
             content: {},
@@ -256,6 +258,9 @@ function threadlightApp() {
             system_prompt_sections: [],  // List of {name, content} dicts
             use_freeform_prompt: false,  // If true, use system_prompt instead of sections
             routing_rules: [],  // For content-routed strategy
+            knowledge_summary_text: '',  // JSON text for knowledge summary
+            knowledge_summary_expanded: false,  // UI state for knowledge summary section
+            knowledge_summary_error: null,  // JSON validation error
         },
 
         // Routing rule editor state
@@ -1802,6 +1807,100 @@ function threadlightApp() {
                 await this.loadStats();
             } catch (error) {
                 this.showToast('Failed to delete memory: ' + error.message, 'error');
+            }
+        },
+
+        async loadProposals() {
+            try {
+                const response = await fetch('/api/proposals');
+                if (!response.ok) throw new Error('Failed to load proposals');
+                const data = await response.json();
+                this.proposals = data.proposals || [];
+            } catch (error) {
+                console.error('Failed to load proposals:', error);
+                this.showToast('Failed to load proposals: ' + error.message, 'error');
+            }
+        },
+
+        async approveProposalInline(proposalId, tool) {
+            try {
+                const response = await fetch(`/api/proposals/${proposalId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "confirm" }),
+                });
+
+                if (!response.ok) throw new Error('Failed to approve proposal');
+
+                // Update the tool result to show it was approved
+                tool.requires_consent = false;
+                tool.success = true;
+
+                this.showToast('Memory approved');
+                await this.loadStats();
+            } catch (error) {
+                console.error('Failed to approve proposal:', error);
+                this.showToast('Failed to approve: ' + error.message, 'error');
+            }
+        },
+
+        async rejectProposalInline(proposalId, tool) {
+            try {
+                const response = await fetch(`/api/proposals/${proposalId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "reject" }),
+                });
+
+                if (!response.ok) throw new Error('Failed to reject proposal');
+
+                // Update the tool result to show it was rejected
+                tool.requires_consent = false;
+                tool.success = false;
+
+                this.showToast('Memory proposal rejected');
+                await this.loadStats();
+            } catch (error) {
+                console.error('Failed to reject proposal:', error);
+                this.showToast('Failed to reject: ' + error.message, 'error');
+            }
+        },
+
+        async approveProposal(proposalId) {
+            try {
+                const response = await fetch(`/api/proposals/${proposalId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "confirm" }),
+                });
+
+                if (!response.ok) throw new Error('Failed to approve proposal');
+
+                this.showToast('Memory approved');
+                await this.loadProposals();
+                await this.loadStats();
+            } catch (error) {
+                console.error('Failed to approve proposal:', error);
+                this.showToast('Failed to approve: ' + error.message, 'error');
+            }
+        },
+
+        async rejectProposal(proposalId) {
+            try {
+                const response = await fetch(`/api/proposals/${proposalId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "reject" }),
+                });
+
+                if (!response.ok) throw new Error('Failed to reject proposal');
+
+                this.showToast('Memory proposal rejected');
+                await this.loadProposals();
+                await this.loadStats();
+            } catch (error) {
+                console.error('Failed to reject proposal:', error);
+                this.showToast('Failed to reject: ' + error.message, 'error');
             }
         },
 
@@ -4218,6 +4317,9 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     use_freeform_prompt: profile.use_freeform_prompt || false,
                     routing_rules: profile.routing_rules || [],
                     useManualModelInput: false,  // Start with dropdown if models available
+                    knowledge_summary_text: profile.knowledge_summary ? JSON.stringify(profile.knowledge_summary, null, 2) : '',
+                    knowledge_summary_expanded: false,
+                    knowledge_summary_error: null,
                 };
             } else {
                 // Create mode
@@ -4243,6 +4345,9 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     use_freeform_prompt: false,
                     routing_rules: [],
                     useManualModelInput: false,  // Start with dropdown if models available
+                    knowledge_summary_text: '',
+                    knowledge_summary_expanded: false,
+                    knowledge_summary_error: null,
                 };
             }
             this.showProfileEditor = true;
@@ -4268,6 +4373,17 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 s => s.name && s.content
             );
 
+            // Parse knowledge_summary JSON if present
+            let knowledge_summary = null;
+            if (this.newProfile.knowledge_summary_text && this.newProfile.knowledge_summary_text.trim()) {
+                try {
+                    knowledge_summary = JSON.parse(this.newProfile.knowledge_summary_text);
+                } catch (e) {
+                    this.newProfile.knowledge_summary_error = 'Invalid JSON: ' + e.message;
+                    return;  // Don't save if JSON is invalid
+                }
+            }
+
             const profileData = {
                 name: this.newProfile.name,
                 description: this.newProfile.description,
@@ -4284,6 +4400,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 system_prompt_sections: sections,
                 use_freeform_prompt: this.newProfile.use_freeform_prompt,
                 routing_rules: this.newProfile.routing_rules.length > 0 ? this.newProfile.routing_rules : null,
+                knowledge_summary: knowledge_summary,
             };
 
             console.log('[saveProfile] Saving profile:', profileData.name);
@@ -4515,6 +4632,42 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             );
             if (!exists) {
                 this.newProfile.system_prompt_sections.push({ name, content });
+            }
+        },
+
+        loadKnowledgeSummaryFromFile() {
+            // Trigger file input click
+            document.getElementById('knowledge-summary-file-input').click();
+        },
+
+        handleKnowledgeSummaryFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this.newProfile.knowledge_summary_text = e.target.result;
+                this.validateKnowledgeSummaryJSON();
+                // Reset file input
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        },
+
+        clearKnowledgeSummary() {
+            this.newProfile.knowledge_summary_text = '';
+            this.newProfile.knowledge_summary_error = null;
+        },
+
+        validateKnowledgeSummaryJSON() {
+            this.newProfile.knowledge_summary_error = null;
+            if (!this.newProfile.knowledge_summary_text || !this.newProfile.knowledge_summary_text.trim()) {
+                return;  // Empty is OK
+            }
+            try {
+                JSON.parse(this.newProfile.knowledge_summary_text);
+            } catch (e) {
+                this.newProfile.knowledge_summary_error = 'Invalid JSON: ' + e.message;
             }
         },
 

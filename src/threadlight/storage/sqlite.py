@@ -373,6 +373,15 @@ class SQLiteStorage(StorageBackend):
             """)
             self.conn.commit()
 
+        # Migration: Add memory_tier to memory_proposals table
+        cursor = self.conn.execute("PRAGMA table_info(memory_proposals)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'memory_tier' not in columns:
+            self.conn.execute("""
+                ALTER TABLE memory_proposals ADD COLUMN memory_tier TEXT DEFAULT 'semantic'
+            """)
+            self.conn.commit()
+
     def close(self) -> None:
         """Close database connection."""
         if self.conn:
@@ -646,8 +655,8 @@ class SQLiteStorage(StorageBackend):
 
         conn.execute("""
             INSERT INTO memory_proposals
-            (id, capsule_type, content, proposed_at, source_message, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (id, capsule_type, content, proposed_at, source_message, status, memory_tier)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             proposal.id,
             proposal.capsule_type.value if isinstance(proposal.capsule_type, CapsuleType) else proposal.capsule_type,
@@ -655,6 +664,7 @@ class SQLiteStorage(StorageBackend):
             proposal.proposed_at.isoformat(),
             proposal.source_message,
             proposal.status,
+            proposal.memory_tier,
         ))
         conn.commit()
 
@@ -831,6 +841,12 @@ class SQLiteStorage(StorageBackend):
 
     def _row_to_proposal(self, row: sqlite3.Row) -> MemoryProposal:
         """Convert a database row to a proposal."""
+        # Handle memory_tier column which may not exist in older databases
+        try:
+            memory_tier = row["memory_tier"]
+        except (KeyError, IndexError):
+            memory_tier = "semantic"
+
         return MemoryProposal(
             id=row["id"],
             capsule_type=CapsuleType(row["capsule_type"]),
@@ -838,6 +854,7 @@ class SQLiteStorage(StorageBackend):
             proposed_at=datetime.fromisoformat(row["proposed_at"]),
             source_message=row["source_message"],
             status=row["status"],
+            memory_tier=memory_tier,
         )
 
     # ========================================================================

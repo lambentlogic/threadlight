@@ -293,6 +293,7 @@ class ProfileUpdateRequest(BaseModel):
     # New section-based system prompt fields
     system_prompt_sections: Optional[list[dict[str, str]]] = None
     use_freeform_prompt: Optional[bool] = None
+    knowledge_summary: Optional[dict[str, Any]] = None
     # Deprecated fields - kept for backward compatibility
     philosophy: Optional[str] = None
     approach_to_rituals: Optional[str] = None
@@ -718,7 +719,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     # This ensures context is preserved across page refreshes
                     if conversation_id and not history:
                         try:
-                            conv_messages = tl.storage.get_conversation_messages(conversation_id)
+                            conv_messages = tl.storage.get_messages(conversation_id)
                             for msg in conv_messages:
                                 history.append({"role": msg.role, "content": msg.content})
                             logger.info(f"[WebSocket] Loaded {len(history)} messages from conversation {conversation_id}")
@@ -857,7 +858,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     # Load conversation history if needed
                     if conversation_id and not history:
                         try:
-                            conv_messages = tl.storage.get_conversation_messages(conversation_id)
+                            conv_messages = tl.storage.get_messages(conversation_id)
                             for msg in conv_messages:
                                 history.append({"role": msg.role, "content": msg.content})
                             logger.info(f"[WebSocket] Loaded {len(history)} messages from conversation {conversation_id}")
@@ -1365,6 +1366,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     "content": p.content,
                     "proposed_at": p.proposed_at.isoformat(),
                     "source": p.source_message,
+                    "memory_tier": p.memory_tier,
                 }
                 for p in proposals
             ],
@@ -4858,6 +4860,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             updates["system_prompt_sections"] = request.system_prompt_sections
         if request.use_freeform_prompt is not None:
             updates["use_freeform_prompt"] = request.use_freeform_prompt
+        if request.knowledge_summary is not None:
+            updates["knowledge_summary"] = request.knowledge_summary
 
         logger.info(f"[update_profile] Updates dict: {updates}")
         profile = tl.update_profile(profile_id, **updates)
@@ -5027,6 +5031,7 @@ def _profile_to_dict(profile: Profile) -> dict[str, Any]:
         "approach_to_rituals": getattr(profile, 'approach_to_rituals', ""),
         "system_prompt_sections": getattr(profile, 'system_prompt_sections', []),
         "use_freeform_prompt": getattr(profile, 'use_freeform_prompt', False),
+        "knowledge_summary": getattr(profile, 'knowledge_summary', None),
         "created_at": profile.created_at.isoformat() if profile.created_at else None,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }

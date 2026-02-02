@@ -63,6 +63,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "Brief explanation of why this memory is worth keeping.",
                     },
+                    "memory_tier": {
+                        "type": "string",
+                        "enum": ["strictly_anchored", "anchored_decaying", "semantic"],
+                        "description": (
+                            "How important is this memory for future recall:\n"
+                            "- strictly_anchored: Core identity/relationship info, always needed\n"
+                            "- anchored_decaying: Important but can fade if unused\n"
+                            "- semantic: Retrieved based on relevance (default)"
+                        ),
+                    },
                 },
                 "required": ["memory_type", "content", "reason"],
             },

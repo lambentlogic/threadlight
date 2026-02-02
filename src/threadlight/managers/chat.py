@@ -196,12 +196,14 @@ class ChatManager:
         profile_philosophy = None
         approach_to_rituals = None
 
+        knowledge_summary = None
         if profile:
             system_prompt_sections = profile.system_prompt_sections
             use_freeform_prompt = profile.use_freeform_prompt
             freeform_system_prompt = profile.system_prompt  # Profile uses system_prompt for freeform
             profile_philosophy = profile.philosophy
             approach_to_rituals = profile.approach_to_rituals
+            knowledge_summary = profile.knowledge_summary
 
         # Compose context
         return self.tl.composer.compose(
@@ -214,6 +216,7 @@ class ChatManager:
             freeform_system_prompt=freeform_system_prompt,
             profile_philosophy=profile_philosophy,
             approach_to_rituals=approach_to_rituals,
+            knowledge_summary=knowledge_summary,
         )
 
     def build_soft_memory_context(

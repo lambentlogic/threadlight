@@ -228,6 +228,7 @@ class MemoryProposal:
     proposed_at: datetime = field(default_factory=datetime.utcnow)
     source_message: str = ""
     status: str = "pending"  # pending, confirmed, rejected
+    memory_tier: str = "semantic"  # strictly_anchored, anchored_decaying, semantic
 
 
 class StorageBackend(ABC):

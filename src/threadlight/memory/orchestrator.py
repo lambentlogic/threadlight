@@ -728,6 +728,7 @@ class MemoryOrchestrator:
         type: str,
         content: dict[str, Any],
         source_message: str = "",
+        memory_tier: str = "semantic",
     ) -> MemoryProposal:
         """
         Create a memory proposal for user consent.
@@ -743,10 +744,11 @@ class MemoryOrchestrator:
             proposed_at=datetime.utcnow(),
             source_message=source_message,
             status="pending",
+            memory_tier=memory_tier,
         )
 
         self.storage.save_proposal(proposal)
-        logger.debug(f"Created proposal: {proposal.id}")
+        logger.debug(f"Created proposal: {proposal.id} with tier={memory_tier}")
 
         return proposal
 
@@ -770,6 +772,7 @@ class MemoryOrchestrator:
             content=proposal.content,
             consent_confirmed=True,
             consent_origin="user_confirmed",
+            memory_tier=proposal.memory_tier,
         )
 
         # Update proposal status

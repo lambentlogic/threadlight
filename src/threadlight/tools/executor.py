@@ -134,6 +134,7 @@ class ToolExecutor:
         memory_type = arguments.get("memory_type")
         content = arguments.get("content", {})
         reason = arguments.get("reason", "")
+        memory_tier = arguments.get("memory_tier", "semantic")
 
         if not memory_type:
             return ToolResult(
@@ -158,6 +159,15 @@ class ToolExecutor:
                 error=f"Invalid memory_type. Must be one of: {valid_types}",
             )
 
+        # Validate memory tier
+        valid_tiers = ["strictly_anchored", "anchored_decaying", "semantic"]
+        if memory_tier not in valid_tiers:
+            return ToolResult(
+                tool_name=ToolName.CREATE_MEMORY.value,
+                success=False,
+                error=f"Invalid memory_tier. Must be one of: {valid_tiers}",
+            )
+
         # Normalize identity_phrase to myth_seed (internal name)
         if memory_type == "identity_phrase":
             memory_type = "myth_seed"
@@ -168,6 +178,7 @@ class ToolExecutor:
                 type=memory_type,
                 content=content,
                 source_message=reason,
+                memory_tier=memory_tier,
             )
 
             return ToolResult(
@@ -177,6 +188,7 @@ class ToolExecutor:
                     "type": memory_type,
                     "content": content,
                     "reason": reason,
+                    "memory_tier": memory_tier,
                 },
                 requires_consent=True,
                 proposal_id=proposal.id,
@@ -189,6 +201,7 @@ class ToolExecutor:
                 content=content,
                 consent_confirmed=True,
                 consent_origin="model_direct",
+                memory_tier=memory_tier,
             )
 
             return ToolResult(
