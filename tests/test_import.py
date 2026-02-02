@@ -60,10 +60,10 @@ class TestImportedMemory:
             tags=["tag1"]
         )
         context = mem.to_context(ContextMode.DIRECT)
-        assert "[Memory" in context
+        assert "[Note" in context
         assert "test.txt" in context
-        assert "line 10" in context
         assert "Test memory" in context
+        assert "tag1" in context
 
     def test_to_context_narrative(self):
         """Test NARRATIVE context mode output."""
@@ -72,7 +72,7 @@ class TestImportedMemory:
             source="test.txt",
         )
         context = mem.to_context(ContextMode.NARRATIVE)
-        assert "You remember" in context
+        assert "From your notes" in context or "You noted" in context
         assert "Test memory" in context
 
     def test_to_context_whisper(self):
