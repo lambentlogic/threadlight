@@ -2215,24 +2215,24 @@ After I click "Apply Suggestions", I'll parse this to update the tiers. Please b
                 this.currentView = 'chat';
 
                 // Send message to use the classification tool
-                const message = `Please review ALL your note/imported memories (listed below) and classify as many as possible in a SINGLE response to minimize API costs. Each new message repeats the full context, so batching is much more efficient.
+                const message = `Looking at these note memories below - let's organize them into structured types. To save on API costs, please classify as many as you can in ONE response (batching is way more efficient than going back and forth).
 
-Available types:
-- **relational**: Information about a person, place, or thing (fields: entity, summary, tone?, role?)
-- **myth_seed**: A guiding phrase or belief (fields: seed, origin?, function?)
-- **witness**: A significant moment or experience (fields: moment, feeling?, effect?)
-- **note**: Keep as unstructured text (fields: content, about?)
+**Types you can use:**
+- **relational**: about a person, place, or thing → needs entity + summary
+- **myth_seed**: a belief or guiding phrase → needs the seed itself
+- **witness**: a moment or experience → needs what happened + how it felt
+- **note**: keep it unstructured if none of the above fit
 
-Provide ALL your classifications in ONE JSON code block:
+**Put everything in one JSON block:**
 \`\`\`json
 [
   {"memory_id": "uuid-here", "new_type": "relational", "content": {"entity": "...", "summary": "..."}},
-  {"memory_id": "other-uuid", "new_type": "myth_seed", "content": {"seed": "...", "origin": "..."}},
-  ... (include as many as you can classify)
+  {"memory_id": "other-uuid", "new_type": "witness", "content": {"moment": "...", "feeling": "..."}},
+  ... (as many as you want)
 ]
 \`\`\`
 
-After I click "Apply & Continue", you'll see what's left. After I click "Apply & Finish", we're done. Please briefly explain your classification approach.`;
+I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're done.`;
 
                 this.inputMessage = message;
                 // Auto-call the list action and include results in context
@@ -2315,8 +2315,20 @@ After I click "Apply & Continue", you'll see what's left. After I click "Apply &
                     // Keep classification mode active so button stays visible
                     this.isTypeClassificationConversation = true;
                 } else {
-                    // Exit classification mode
+                    // Exit classification mode - clear the purpose from conversation metadata
                     this.isTypeClassificationConversation = false;
+                    // Update conversation to remove the purpose so buttons don't reappear
+                    if (this.currentConversationId) {
+                        try {
+                            await fetch(`/api/conversations/${this.currentConversationId}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ purpose: '' }),  // Empty string removes purpose
+                            });
+                        } catch (e) {
+                            console.error('Failed to clear conversation purpose:', e);
+                        }
+                    }
                     this.showToast(`Classification complete! Converted ${convertCount} memory types.`);
                 }
             } catch (error) {

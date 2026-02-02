@@ -243,6 +243,7 @@ class ConversationUpdateRequest(BaseModel):
     model: Optional[str] = None  # Model name for display
     archived: Optional[bool] = None
     participant_profiles: Optional[list[str]] = None  # Update group chat participants
+    purpose: Optional[str] = None  # Update conversation purpose
 
 
 class GroupChatRequest(BaseModel):
@@ -3966,6 +3967,15 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             conversation.model = request.model
         if request.participant_profiles is not None:
             conversation.participant_profiles = request.participant_profiles
+        if request.purpose is not None:
+            # Update metadata.purpose
+            if not conversation.metadata:
+                conversation.metadata = {}
+            if request.purpose == "":
+                # Empty string means remove the purpose
+                conversation.metadata.pop('purpose', None)
+            else:
+                conversation.metadata['purpose'] = request.purpose
 
         tl.storage.update_conversation(conversation)
 
