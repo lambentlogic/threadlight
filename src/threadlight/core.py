@@ -241,6 +241,9 @@ class Threadlight:
         self.tool_definitions: list[dict] = []
 
         if self.enable_tools:
+            # Set back-reference so tools can access profile info
+            self.memory.threadlight = self
+
             self.tool_executor = ToolExecutor(
                 memory=self.memory,
                 require_consent_for_memories=self.require_memory_consent,
@@ -468,6 +471,7 @@ class Threadlight:
         enable_tools: Optional[bool] = None,
         load_history: bool = False,
         auto_save: Optional[bool] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         **kwargs: Any
     ) -> str:
         """
@@ -491,6 +495,7 @@ class Threadlight:
             enable_tools: Override default tool calling (default: use instance setting)
             load_history: Load recent messages from current conversation
             auto_save: Override auto_save_messages setting
+            tools: Override tool definitions (None uses default, [] disables tools)
             **kwargs: Additional provider options (temperature, max_tokens, etc.)
 
         Returns:
@@ -515,7 +520,7 @@ class Threadlight:
         response = self.chat_with_context(
             message, history, memory_filter, include_memory, context_mode,
             enable_tools=enable_tools, load_history=load_history,
-            auto_save=auto_save, **kwargs
+            auto_save=auto_save, tools=tools, **kwargs
         )
         return response.content
 
@@ -529,6 +534,7 @@ class Threadlight:
         enable_tools: Optional[bool] = None,
         load_history: bool = False,
         auto_save: Optional[bool] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         **kwargs: Any
     ) -> ProviderResponse:
         """
@@ -546,6 +552,7 @@ class Threadlight:
             enable_tools: Override default tool calling
             load_history: Load recent messages from current conversation
             auto_save: Override auto_save_messages setting
+            tools: Override tool definitions (None uses default, [] disables tools)
             **kwargs: Additional provider options
 
         Returns ProviderResponse with content, token usage, and metadata.
@@ -553,6 +560,8 @@ class Threadlight:
         use_memory = include_memory if include_memory is not None else self.enable_memory
         use_tools = enable_tools if enable_tools is not None else self.enable_tools
         should_auto_save = auto_save if auto_save is not None else self.config.memory.conversation.auto_save_messages
+        # Store tools override for later use
+        tools_override = tools
 
         # Track selected model for multi-provider routing
         selected_model: Optional[str] = None
@@ -624,7 +633,18 @@ class Threadlight:
         messages.append(ProviderMessage(role="user", content=message))
 
         # Determine if we should use tools
-        tools = self.tool_definitions if (use_tools and self.tool_executor) else None
+        # If tools_override is provided, use it (even if empty list to disable tools)
+        # Otherwise use the default tool_definitions if tools are enabled
+        if tools_override is not None:
+            tools = tools_override if (use_tools and self.tool_executor) else None
+        else:
+            tools = self.tool_definitions if (use_tools and self.tool_executor) else None
+
+        # Log tool configuration for debugging
+        logger.info(f"[chat] use_tools={use_tools}, tool_executor={self.tool_executor is not None}, "
+                   f"tool_definitions={len(self.tool_definitions) if self.tool_definitions else 0}, "
+                   f"tools_override={'provided' if tools_override is not None else 'none'}, "
+                   f"final_tools={len(tools) if tools else 0}")
 
         # Send to provider with tool calling loop
         # Use explicitly passed model_id if provided, otherwise use profile's selected model

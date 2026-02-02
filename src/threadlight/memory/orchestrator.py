@@ -654,7 +654,7 @@ class MemoryOrchestrator:
         if semantic_limit > 0:
             # Extract meaningful terms from message (filters stop words and short words)
             meaningful_terms = extract_meaningful_terms(message)
-            logger.debug(f"Semantic recall: extracted terms {meaningful_terms[:10]} from message")
+            logger.info(f"[memory_recall] semantic search terms={meaningful_terms[:5]} limit={semantic_limit}")
 
             # Search each meaningful term for semantic matches
             semantic_capsules: list[MemoryCapsule] = []
@@ -711,6 +711,13 @@ class MemoryOrchestrator:
             # Track in session
             if self._current_session:
                 self._current_session.record_access(capsule.id)
+
+        # Log memory recall summary
+        type_counts = {}
+        for c in results:
+            t = c.type.value
+            type_counts[t] = type_counts.get(t, 0) + 1
+        logger.info(f"[memory_recall] recalled {len(results)} memories: {type_counts}")
 
         return results
 

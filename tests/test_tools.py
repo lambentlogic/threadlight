@@ -6,6 +6,9 @@ import json
 from threadlight.tools.definitions import (
     TOOL_DEFINITIONS,
     get_tool_definitions,
+    get_contextual_tools,
+    CORE_TOOLS,
+    CONTEXTUAL_TOOLS,
     ToolName,
 )
 from threadlight.tools.executor import ToolExecutor, ToolResult, execute_tool_call
@@ -83,6 +86,71 @@ class TestToolDefinitions:
         assert "action" in func["parameters"]["properties"]
         assert "tier_assignments" in func["parameters"]["properties"]
         assert func["parameters"]["required"] == ["action"]
+
+
+class TestContextualTools:
+    """Test contextual tool filtering for different conversation purposes."""
+
+    def test_core_tools_defined(self):
+        """Test that core tools are properly defined."""
+        assert len(CORE_TOOLS) == 3
+        assert ToolName.CREATE_MEMORY in CORE_TOOLS
+        assert ToolName.RECALL_MEMORY in CORE_TOOLS
+        assert ToolName.INVOKE_RITUAL in CORE_TOOLS
+
+    def test_contextual_tools_defined(self):
+        """Test that contextual tools mapping is properly defined."""
+        assert "tier_review" in CONTEXTUAL_TOOLS
+        assert "type_classification" in CONTEXTUAL_TOOLS
+        assert ToolName.REVIEW_MEMORY_TIERS in CONTEXTUAL_TOOLS["tier_review"]
+        assert ToolName.CLASSIFY_MEMORY_TYPES in CONTEXTUAL_TOOLS["type_classification"]
+
+    def test_normal_conversation_has_core_tools_only(self):
+        """Test that normal conversations (None purpose) get only core tools."""
+        tools = get_contextual_tools(None)
+        names = [t["function"]["name"] for t in tools]
+        assert len(tools) == 3
+        assert "create_memory" in names
+        assert "recall_memory" in names
+        assert "invoke_ritual" in names
+        assert "review_memory_tiers" not in names
+        assert "classify_memory_types" not in names
+
+    def test_tier_review_conversation_has_tier_tool(self):
+        """Test that tier_review conversations get core + tier review tool."""
+        tools = get_contextual_tools("tier_review")
+        names = [t["function"]["name"] for t in tools]
+        assert len(tools) == 4
+        assert "create_memory" in names
+        assert "recall_memory" in names
+        assert "invoke_ritual" in names
+        assert "review_memory_tiers" in names
+        assert "classify_memory_types" not in names
+
+    def test_type_classification_conversation_has_classify_tool(self):
+        """Test that type_classification conversations get core + classify tool."""
+        tools = get_contextual_tools("type_classification")
+        names = [t["function"]["name"] for t in tools]
+        assert len(tools) == 4
+        assert "create_memory" in names
+        assert "recall_memory" in names
+        assert "invoke_ritual" in names
+        assert "classify_memory_types" in names
+        assert "review_memory_tiers" not in names
+
+    def test_unknown_purpose_defaults_to_core_tools(self):
+        """Test that unknown purposes fallback to core tools only."""
+        tools = get_contextual_tools("unknown_purpose")
+        names = [t["function"]["name"] for t in tools]
+        assert len(tools) == 3
+        assert "review_memory_tiers" not in names
+        assert "classify_memory_types" not in names
+
+    def test_empty_string_purpose_treated_as_normal(self):
+        """Test that empty string purpose defaults to core tools."""
+        tools = get_contextual_tools("")
+        names = [t["function"]["name"] for t in tools]
+        assert len(tools) == 3
 
 
 class TestToolResult:

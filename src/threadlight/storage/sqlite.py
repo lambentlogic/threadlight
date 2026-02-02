@@ -924,6 +924,117 @@ class SQLiteStorage(StorageBackend):
 
         return [self._row_to_conversation(row) for row in rows]
 
+    def search_conversations(
+        self,
+        query: str,
+        limit: int = 50,
+        offset: int = 0,
+        source: Optional[str] = None,
+        include_archived: bool = False,
+    ) -> list[Conversation]:
+        """Search conversations by title AND message content.
+
+        Uses SQLite FTS5 for efficient full-text search across messages,
+        combined with LIKE search on conversation names.
+
+        Args:
+            query: Search query string
+            limit: Maximum number of conversations to return
+            offset: Pagination offset
+            source: Filter by source (local, claude, chatgpt)
+            include_archived: Include archived conversations
+
+        Returns:
+            List of conversations matching the search query, sorted by relevance
+            (conversations with title matches first, then by updated_at)
+        """
+        conn = self._ensure_connected()
+
+        if not query or not query.strip():
+            return self.list_conversations(
+                limit=limit,
+                offset=offset,
+                source=source,
+                include_archived=include_archived,
+            )
+
+        search_term = query.strip().lower()
+
+        # Build base filter conditions
+        conditions = []
+        params: list[Any] = []
+
+        if source:
+            conditions.append("c.source = ?")
+            params.append(source)
+
+        if not include_archived:
+            conditions.append("(c.archived = 0 OR c.archived IS NULL)")
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+        # Strategy: Find conversations that match either:
+        # 1. Conversation name contains the search term
+        # 2. Any message in the conversation matches via FTS
+
+        # For FTS, we need to escape special characters and use prefix matching
+        # FTS5 query syntax: use quotes for phrase, * for prefix
+        fts_query = '"' + search_term.replace('"', '""') + '"*'
+
+        try:
+            # Use a UNION to combine title matches and content matches
+            # Title matches get a higher rank (2) vs content matches (1)
+            query_sql = f"""
+                SELECT c.*, 2 as match_rank FROM conversations c
+                WHERE LOWER(c.name) LIKE ?
+                AND {where_clause}
+
+                UNION
+
+                SELECT c.*, 1 as match_rank FROM conversations c
+                WHERE c.id IN (
+                    SELECT DISTINCT m.conversation_id
+                    FROM messages m
+                    WHERE m.rowid IN (
+                        SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?
+                    )
+                )
+                AND {where_clause}
+                AND c.id NOT IN (
+                    SELECT id FROM conversations WHERE LOWER(name) LIKE ?
+                )
+
+                ORDER BY match_rank DESC, updated_at DESC
+                LIMIT ? OFFSET ?
+            """
+
+            # Parameters: LIKE pattern, conditions (x2), FTS query, conditions (x2), LIKE pattern, limit, offset
+            like_pattern = f"%{search_term}%"
+            all_params = [like_pattern] + params + [fts_query] + params + [like_pattern, limit, offset]
+
+            rows = conn.execute(query_sql, all_params).fetchall()
+
+        except sqlite3.OperationalError:
+            # FTS table might not exist, fall back to LIKE-only search on titles
+            query_sql = f"""
+                SELECT c.*, 1 as match_rank FROM conversations c
+                WHERE (LOWER(c.name) LIKE ? OR c.id IN (
+                    SELECT DISTINCT m.conversation_id
+                    FROM messages m
+                    WHERE LOWER(m.content) LIKE ?
+                ))
+                AND {where_clause}
+                ORDER BY updated_at DESC
+                LIMIT ? OFFSET ?
+            """
+
+            like_pattern = f"%{search_term}%"
+            all_params = [like_pattern, like_pattern] + params + [limit, offset]
+
+            rows = conn.execute(query_sql, all_params).fetchall()
+
+        return [self._row_to_conversation(row) for row in rows]
+
     def update_conversation(self, conversation: Conversation) -> bool:
         """Update an existing conversation."""
         conn = self._ensure_connected()

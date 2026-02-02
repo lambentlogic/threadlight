@@ -31,8 +31,38 @@ except ImportError:
 from threadlight import Threadlight
 from threadlight.capsules.base import CapsuleType, RetentionPolicy
 from threadlight.profiles import Profile, ModelStrategy
+from threadlight.tools.definitions import get_contextual_tools
 
 logger = logging.getLogger(__name__)
+
+
+def configure_logging() -> None:
+    """Configure logging for the threadlight namespace.
+
+    This should be called early, before creating the app, to ensure all
+    logger.info() calls throughout the codebase produce output to stdout.
+    """
+    threadlight_logger = logging.getLogger("threadlight")
+    if not threadlight_logger.handlers:
+        # Only add handler if none exist (avoid duplicates on reload)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        ))
+        threadlight_logger.addHandler(handler)
+        threadlight_logger.setLevel(logging.INFO)
+        # Prevent propagation to root logger (avoid duplicate output)
+        threadlight_logger.propagate = False
+
+        # Also configure uvicorn access logs to show requests
+        uvicorn_logger = logging.getLogger("uvicorn.access")
+        if not uvicorn_logger.handlers:
+            uvicorn_logger.addHandler(handler)
+
+
+# Configure logging immediately when module is imported
+configure_logging()
 
 
 # ============================================================================
@@ -127,6 +157,18 @@ class BatchArchiveRequest(BaseModel):
     archived: bool = True  # True to archive, False to unarchive
 
 
+class MemoryTypeConversion(BaseModel):
+    """Single memory type conversion."""
+    memory_id: str
+    new_type: str
+    content: dict[str, Any]
+
+
+class BatchTypeConversionRequest(BaseModel):
+    """Batch memory type conversion request."""
+    conversions: list[MemoryTypeConversion]
+
+
 class RitualInvokeRequest(BaseModel):
     ritual_name: str
     context: Optional[str] = None
@@ -193,6 +235,7 @@ class ConversationCreateRequest(BaseModel):
     name: str = "New Chat"
     model: Optional[str] = None  # Model name for display (e.g., "gpt-4o", "Claude Opus")
     participant_profiles: Optional[list[str]] = None  # For group chat - list of profile IDs
+    purpose: Optional[str] = None  # Conversation purpose: "tier_review", "type_classification", or None for normal
 
 
 class ConversationUpdateRequest(BaseModel):
@@ -406,19 +449,8 @@ async def broadcast_message(message: dict[str, Any]) -> None:
 def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     """Create the FastAPI application."""
 
-    # Configure logging for the threadlight namespace
-    # This ensures logger.info() calls throughout the codebase produce output
-    threadlight_logger = logging.getLogger("threadlight")
-    if not threadlight_logger.handlers:
-        # Only add handler if none exist (avoid duplicates on reload)
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(logging.Formatter(
-            "%(levelname)s:%(name)s:%(message)s"
-        ))
-        threadlight_logger.addHandler(handler)
-        threadlight_logger.setLevel(logging.INFO)
-        # Prevent propagation to root logger (avoid duplicate output)
-        threadlight_logger.propagate = False
+    # Ensure logging is configured (idempotent - safe to call multiple times)
+    configure_logging()
 
     app = FastAPI(
         title="Threadlight API",
@@ -670,6 +702,17 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
                     logger.info(f"[WebSocket] Using model_id={model_id}, active_profile={tl.active_profile.name if tl.active_profile else None}")
 
+                    # Get conversation purpose for contextual tool filtering
+                    conversation_purpose = None
+                    if conversation_id:
+                        try:
+                            conversation = tl.storage.get_conversation(conversation_id)
+                            if conversation and conversation.metadata:
+                                conversation_purpose = conversation.metadata.get("purpose")
+                            logger.info(f"[WebSocket] Conversation purpose: {conversation_purpose}")
+                        except Exception as e:
+                            logger.warning(f"[WebSocket] Failed to get conversation purpose: {e}")
+
                     # Load conversation history from database if we have a conversation_id
                     # This ensures context is preserved across page refreshes
                     if conversation_id and not history:
@@ -709,9 +752,15 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                         # Append tool context to the message
                         message = message + tool_context
 
+                    # Get contextual tools based on conversation purpose
+                    # This prevents models from spontaneously offering batch operations in normal conversations
+                    contextual_tools = get_contextual_tools(conversation_purpose)
+                    logger.info(f"[WebSocket] Using {len(contextual_tools)} contextual tools for purpose={conversation_purpose}")
+
                     # Get complete response (no streaming - simpler and avoids UI reactivity issues)
                     try:
-                        full_response = tl.chat(message, history=history, model_id=model_id)
+                        response = tl.chat_with_context(message, history=history, model_id=model_id, tools=contextual_tools)
+                        full_response = response.content
 
                         # Update history
                         history.append({"role": "user", "content": message})
@@ -730,11 +779,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                                 conversation_id=conversation_id
                             )
 
+                        # Extract tool results if any
+                        tool_results = None
+                        if response.raw and "tool_results" in response.raw:
+                            tool_results = response.raw["tool_results"]
+
                         # Send completion with metadata
                         await websocket.send_json({
                             "type": "complete",
                             "content": full_response,
-                            # Note: memories are used internally for context, not shown to user
+                            "tool_results": tool_results,
                         })
                     except Exception as e:
                         await websocket.send_json({
@@ -764,6 +818,75 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     await websocket.send_json({
                         "type": "history_cleared",
                     })
+
+                elif data.get("type") == "continue":
+                    # Continue the last assistant response
+                    profile_id = data.get("profile_id")
+                    conversation_id = data.get("conversation_id")
+
+                    logger.info(f"[WebSocket] Continue request received. profile_id={profile_id}, conv_id={conversation_id}")
+
+                    # Activate profile if specified
+                    if profile_id:
+                        try:
+                            current_profile_id = tl.active_profile.id if tl.active_profile else None
+                            if profile_id != current_profile_id:
+                                tl.switch_profile(profile_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to switch profile: {e}")
+
+                    # Determine model_id from active profile
+                    model_id = None
+                    if tl.active_profile and tl.active_profile.primary_model:
+                        model_id = tl.active_profile.primary_model
+
+                    # Load conversation history if needed
+                    if conversation_id and not history:
+                        try:
+                            conv_messages = tl.storage.get_conversation_messages(conversation_id)
+                            for msg in conv_messages:
+                                history.append({"role": msg.role, "content": msg.content})
+                            logger.info(f"[WebSocket] Loaded {len(history)} messages from conversation {conversation_id}")
+                        except Exception as e:
+                            logger.warning(f"[WebSocket] Failed to load conversation history: {e}")
+
+                    # Build a continue prompt
+                    continue_prompt = "Please continue your previous response where you left off."
+
+                    # Send typing indicator
+                    await websocket.send_json({"type": "typing", "status": True})
+
+                    try:
+                        full_response = tl.chat(continue_prompt, history=history, model_id=model_id)
+
+                        # Update history
+                        history.append({"role": "user", "content": continue_prompt})
+                        history.append({"role": "assistant", "content": full_response})
+
+                        # Keep history manageable
+                        if len(history) > 20:
+                            history = history[-20:]
+
+                        # Save to database
+                        if conversation_id:
+                            tl.memory.save_message_pair(
+                                user_message=continue_prompt,
+                                assistant_response=full_response,
+                                conversation_id=conversation_id
+                            )
+
+                        # Send completion
+                        await websocket.send_json({
+                            "type": "continue_response",
+                            "content": full_response,
+                        })
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": str(e),
+                        })
+                    finally:
+                        await websocket.send_json({"type": "typing", "status": False})
 
                 elif data.get("type") == "group_chat":
                     # Group chat message - stream responses from multiple profiles
@@ -1106,6 +1229,82 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             except Exception as e:
                 results["errors"].append({
                     "capsule_id": capsule_id,
+                    "error": str(e)
+                })
+                results["summary"]["failed"] += 1
+
+        return results
+
+    @app.post("/api/memories/batch-type-convert")
+    async def batch_type_convert(request: BatchTypeConversionRequest):
+        """
+        Batch convert memory types.
+
+        Converts multiple note/imported memories to structured types.
+        Preserves original text content while adding structured fields.
+        Returns summary of successful conversions and any errors encountered.
+        """
+        tl = get_threadlight()
+
+        valid_types = ["relational", "myth_seed", "witness", "note"]
+
+        results = {
+            "converted": [],
+            "errors": [],
+            "summary": {
+                "total": len(request.conversions),
+                "successful": 0,
+                "failed": 0
+            }
+        }
+
+        for conv in request.conversions:
+            try:
+                # Validate type
+                if conv.new_type not in valid_types:
+                    results["errors"].append({
+                        "memory_id": conv.memory_id,
+                        "error": f"Invalid type: {conv.new_type}"
+                    })
+                    results["summary"]["failed"] += 1
+                    continue
+
+                # Get capsule
+                capsule = tl.storage.get_capsule(conv.memory_id)
+                if not capsule:
+                    results["errors"].append({
+                        "memory_id": conv.memory_id,
+                        "error": "Memory not found"
+                    })
+                    results["summary"]["failed"] += 1
+                    continue
+
+                # Preserve original text
+                old_content = capsule.content if isinstance(capsule.content, dict) else {}
+                original_text = old_content.get('text') or old_content.get('content') or str(old_content)
+
+                # Build new content with type marker
+                new_content = conv.content.copy()
+                new_content['custom_type_id'] = conv.new_type
+                new_content['_original_text'] = original_text
+
+                old_type = old_content.get('custom_type_id', 'note')
+
+                # Update capsule
+                capsule.content = new_content
+                capsule.cue_phrases = []  # Will be regenerated on next access
+                tl.storage.update_capsule(capsule)
+
+                results["converted"].append({
+                    "memory_id": conv.memory_id,
+                    "old_type": old_type,
+                    "new_type": conv.new_type
+                })
+                results["summary"]["successful"] += 1
+
+            except Exception as e:
+                results["errors"].append({
+                    "memory_id": conv.memory_id,
                     "error": str(e)
                 })
                 results["summary"]["failed"] += 1
@@ -3630,27 +3829,42 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         limit: int = 50,
         offset: int = 0,
         source: Optional[str] = None,
+        search: Optional[str] = None,
     ):
-        """List all conversations.
+        """List all conversations, with optional search.
 
         Args:
             include_archived: Include archived conversations
             limit: Maximum number to return
             offset: Pagination offset
             source: Filter by source (local, claude, chatgpt). If None, returns all sources.
+            search: Search query to match against conversation titles AND message content.
+                    Uses full-text search for efficient content matching.
         """
         tl = get_threadlight()
 
-        conversations = tl.storage.list_conversations(
-            limit=limit,
-            offset=offset,
-            source=source,  # None means all sources
-            include_archived=include_archived,
-        )
+        if search and search.strip():
+            # Use search method when query provided
+            conversations = tl.storage.search_conversations(
+                query=search,
+                limit=limit,
+                offset=offset,
+                source=source,
+                include_archived=include_archived,
+            )
+        else:
+            # Standard listing without search
+            conversations = tl.storage.list_conversations(
+                limit=limit,
+                offset=offset,
+                source=source,
+                include_archived=include_archived,
+            )
 
         return {
             "conversations": [c.to_dict() for c in conversations],
             "count": len(conversations),
+            "search": search if search else None,
         }
 
     @app.post("/api/conversations")
@@ -3690,6 +3904,11 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         if request.participant_profiles:
             participant_profiles = request.participant_profiles
 
+        # Build metadata with purpose if provided
+        metadata = {}
+        if request.purpose:
+            metadata["purpose"] = request.purpose
+
         conversation = Conversation(
             id=str(uuid.uuid4()),
             name=request.name,
@@ -3699,6 +3918,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             message_count=0,
             model=model_name,
             participant_profiles=participant_profiles,
+            metadata=metadata,
         )
 
         tl.storage.save_conversation(conversation)

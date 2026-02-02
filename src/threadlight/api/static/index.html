@@ -347,10 +347,22 @@
 
                     <!-- Search and Count -->
                     <div class="flex items-center gap-2 mb-2">
-                        <input type="text"
-                            x-model="conversationSearch"
-                            placeholder="Search..."
-                            class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                        <div class="flex-1 relative">
+                            <input type="text"
+                                x-model="conversationSearch"
+                                @input="searchConversationsDebounced()"
+                                placeholder="Search titles & messages..."
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-1.5 text-sm text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                            <!-- Search indicator -->
+                            <template x-if="isSearchingConversations">
+                                <div class="absolute right-2 top-1/2 -translate-y-1/2">
+                                    <svg class="animate-spin h-4 w-4 text-threadlight-muted" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                </div>
+                            </template>
+                        </div>
                         <span class="text-xs text-threadlight-muted whitespace-nowrap" x-text="`${filteredConversations.length} chats`"></span>
                     </div>
 
@@ -631,13 +643,24 @@
                                         <div class="absolute -top-2 opacity-0 group-hover:opacity-100 transition-opacity z-10"
                                             :class="msg.role === 'user' ? 'right-0' : 'left-0'">
                                             <div class="flex gap-1 bg-threadlight-elevated rounded-lg shadow-lg border border-threadlight-border p-1">
-                                                <!-- Edit Button -->
-                                                <button @click="startEditMessage(msg)"
-                                                    class="p-1.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors" title="Edit">
-                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-                                                    </svg>
-                                                </button>
+                                                <!-- Edit Button (user messages only) -->
+                                                <template x-if="msg.role === 'user'">
+                                                    <button @click="startEditMessage(msg)"
+                                                        class="p-1.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors" title="Edit and regenerate">
+                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                                        </svg>
+                                                    </button>
+                                                </template>
+                                                <!-- Copy Button (assistant only) -->
+                                                <template x-if="msg.role === 'assistant'">
+                                                    <button @click="copyMessageContent(msg)"
+                                                        class="p-1.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors" title="Copy">
+                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                                                        </svg>
+                                                    </button>
+                                                </template>
                                                 <!-- Regenerate Button (assistant only) -->
                                                 <template x-if="msg.role === 'assistant'">
                                                     <button @click="regenerateResponse(msg)"
@@ -647,12 +670,21 @@
                                                         </svg>
                                                     </button>
                                                 </template>
+                                                <!-- Continue Button (last assistant message only) -->
+                                                <template x-if="msg.role === 'assistant' && isLastAssistantMessage(index)">
+                                                    <button @click="continueResponse()"
+                                                        class="p-1.5 text-threadlight-muted hover:text-threadlight-accent rounded transition-colors" title="Continue">
+                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+                                                        </svg>
+                                                    </button>
+                                                </template>
                                                 <!-- Delete Button -->
                                                 <button @click="deleteMessage(msg)"
                                                     class="p-1.5 text-threadlight-muted hover:text-red-400 rounded transition-colors" title="Delete">
                                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                                    </svg>
+                                                        </svg>
                                                 </button>
                                             </div>
                                         </div>
@@ -661,7 +693,7 @@
                                         <template x-if="editingMessageId === msg.id">
                                             <div class="bg-threadlight-elevated max-w-3xl rounded-2xl px-4 py-3 border border-threadlight-accent">
                                                 <textarea x-model="editedMessageContent"
-                                                    @keydown.ctrl.enter="saveEditedMessage(msg)"
+                                                    @keydown.ctrl.enter="msg.role === 'user' ? editAndRegenerate(msg) : saveEditedMessage(msg)"
                                                     @keydown.escape="cancelEditMessage()"
                                                     rows="4"
                                                     class="w-full bg-threadlight-surface border border-threadlight-border rounded-lg px-3 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent resize-y min-w-96"></textarea>
@@ -670,10 +702,20 @@
                                                         class="px-3 py-1 text-sm text-threadlight-muted hover:text-threadlight-text transition-colors">
                                                         Cancel
                                                     </button>
-                                                    <button @click="saveEditedMessage(msg)"
-                                                        class="px-3 py-1 text-sm bg-threadlight-accent text-white rounded hover:bg-threadlight-accent/80 transition-colors">
-                                                        Save
-                                                    </button>
+                                                    <!-- For user messages: Save and Regenerate -->
+                                                    <template x-if="msg.role === 'user'">
+                                                        <button @click="editAndRegenerate(msg)"
+                                                            class="px-3 py-1 text-sm bg-threadlight-accent text-white rounded hover:bg-threadlight-accent/80 transition-colors">
+                                                            Save & Regenerate
+                                                        </button>
+                                                    </template>
+                                                    <!-- For assistant messages: Just Save -->
+                                                    <template x-if="msg.role === 'assistant'">
+                                                        <button @click="saveEditedMessage(msg)"
+                                                            class="px-3 py-1 text-sm bg-threadlight-accent text-white rounded hover:bg-threadlight-accent/80 transition-colors">
+                                                            Save
+                                                        </button>
+                                                    </template>
                                                 </div>
                                             </div>
                                         </template>
@@ -710,6 +752,23 @@
                                                         </div>
                                                     </div>
                                                 </template>
+
+                                                <!-- Tool Results -->
+                                                <template x-if="msg.tool_results && msg.tool_results.length > 0">
+                                                    <div class="mt-3 pt-3 border-t border-threadlight-border/50">
+                                                        <p class="text-xs text-threadlight-accent mb-2">Tools used:</p>
+                                                        <div class="space-y-2">
+                                                            <template x-for="tool in msg.tool_results" :key="tool.tool_name">
+                                                                <div class="px-3 py-2 text-xs bg-threadlight-accent/10 text-threadlight-text rounded border border-threadlight-accent/20">
+                                                                    <span class="font-medium text-threadlight-accent" x-text="tool.tool_name"></span>
+                                                                    <span x-show="tool.success" class="ml-2 text-green-400">✓</span>
+                                                                    <span x-show="!tool.success" class="ml-2 text-red-400">✗</span>
+                                                                    <span x-show="tool.requires_consent" class="ml-2 text-yellow-400">(pending consent)</span>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </template>
                                             </div>
                                         </template>
                                     </div>
@@ -734,6 +793,13 @@
                             <button @click="applyTierSuggestions()"
                                 class="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors">
                                 Apply Tier Suggestions
+                            </button>
+                        </div>
+                        <!-- Apply Type Classifications button -->
+                        <div x-show="isTypeClassificationConversation && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant'" class="mb-3">
+                            <button @click="applyTypeClassifications()"
+                                class="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors">
+                                Apply Type Classifications
                             </button>
                         </div>
                         <form @submit.prevent="sendMessage()" class="flex gap-4">
@@ -770,6 +836,12 @@
                                 </button>
                                 <button @click="showTierReviewModal = true; loadMemoriesForTierReview()" class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
                                     Review Tiers
+                                </button>
+                                <button @click="haveAIClassifyTypes()"
+                                    :disabled="!getActiveProfile()"
+                                    class="px-4 py-2 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 rounded-lg transition-colors border border-amber-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    :title="getActiveProfile() ? 'Have ' + getActiveProfile().name + ' classify imported memories' : 'Select a profile first'">
+                                    Classify Types
                                 </button>
                                 <button @click="showCreateMemory = true" class="px-4 py-2 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded-lg transition-colors">
                                     + New Memory
@@ -1564,9 +1636,10 @@
                                     <label class="block text-sm text-threadlight-muted mb-1">Current Model</label>
                                     <div class="flex gap-2">
                                         <select x-model="currentModelId" @change="switchModel($event.target.value)"
+                                            x-init="$nextTick(() => syncModelSelectElement())"
                                             class="flex-1 bg-threadlight-surface border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
                                             <template x-for="model in availableModels" :key="model.model_id">
-                                                <option :value="model.model_id" x-text="model.model_id" :selected="model.is_current"></option>
+                                                <option :value="model.model_id" x-text="model.model_id"></option>
                                             </template>
                                         </select>
                                         <button @click="showAddModelModal = true"
@@ -4315,6 +4388,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260201-5"></script>
+    <script src="/static/js/app.js?v=20260201-6"></script>
 </body>
 </html>

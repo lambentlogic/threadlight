@@ -1,10 +1,10 @@
 /**
  * Threadlight Web UI - Alpine.js Application
- * Version: 2026-01-31-model-fix
+ * Version: 2026-02-01-logging-model-fix
  */
 
 // Log when script loads to verify we're running the updated version
-console.log('[app.js] Loading Threadlight app version 2026-01-31-model-fix-v2');
+console.log('[app.js] Loading Threadlight app version 2026-02-01-logging-model-fix');
 
 function threadlightApp() {
     return {
@@ -22,6 +22,8 @@ function threadlightApp() {
         conversations: [],
         currentConversationId: null,
         conversationSearch: '',
+        conversationSearchDebounce: null,
+        isSearchingConversations: false,
         showArchivedConversations: false,
         renamingConversationId: null,
         renameConversationName: '',
@@ -59,6 +61,9 @@ function threadlightApp() {
         tierReviewMemories: [],
         tierReviewChanges: [],
         isTierReviewConversation: false,
+
+        // Type classification state
+        isTypeClassificationConversation: false,
 
         // Bulk delete state
         selectedMemoryIds: [],
@@ -358,14 +363,17 @@ function threadlightApp() {
             });
         },
 
-        // Helper to force the model select dropdown to match currentModelId
+        // Helper to force the model select dropdown(s) to match currentModelId
         // Needed because Alpine.js x-model can desync with dynamically-populated options
         syncModelSelectElement() {
-            const selectEl = document.querySelector('select[x-model="currentModelId"]');
-            if (selectEl && selectEl.value !== this.currentModelId) {
-                console.log('[model-select-sync] Forcing select sync from', selectEl.value, 'to', this.currentModelId);
-                selectEl.value = this.currentModelId;
-            }
+            // Sync ALL model selects (there are two: chat header and settings page)
+            const selectElements = document.querySelectorAll('select[x-model="currentModelId"]');
+            selectElements.forEach((selectEl, idx) => {
+                if (selectEl && selectEl.value !== this.currentModelId) {
+                    console.log(`[model-select-sync] Syncing select #${idx} from "${selectEl.value}" to "${this.currentModelId}"`);
+                    selectEl.value = this.currentModelId;
+                }
+            });
         },
 
         // WebSocket connection
@@ -414,6 +422,7 @@ function threadlightApp() {
                         role: 'assistant',
                         content: data.content,
                         memories: data.memories_recalled || [],
+                        tool_results: data.tool_results || null,
                     }];
                     this.isTyping = false;
                     this.scrollToBottom();
@@ -435,6 +444,17 @@ function threadlightApp() {
 
                 case 'history_cleared':
                     this.chatHistory = [];
+                    break;
+
+                case 'continue_response':
+                    // Append the continuation as a new assistant message
+                    this.messages = [...this.messages, {
+                        role: 'assistant',
+                        content: data.content,
+                        memories: [],
+                    }];
+                    this.isTyping = false;
+                    this.scrollToBottom();
                     break;
             }
         },
@@ -601,20 +621,24 @@ function threadlightApp() {
         // Conversation Management Functions
         // ============================================
 
-        async loadConversations() {
+        async loadConversations(searchQuery = null) {
             try {
                 const params = new URLSearchParams();
                 params.append('limit', '50');
                 if (this.showArchivedConversations) {
                     params.append('include_archived', 'true');
                 }
+                // Add search parameter if provided (searches titles AND message content)
+                if (searchQuery && searchQuery.trim()) {
+                    params.append('search', searchQuery.trim());
+                }
 
                 const response = await fetch(`/api/conversations?${params}`);
                 const data = await response.json();
                 this.conversations = data.conversations || [];
 
-                // Load most recent conversation if none selected
-                if (!this.currentConversationId && this.conversations.length > 0) {
+                // Only auto-load most recent conversation if not searching and none selected
+                if (!searchQuery && !this.currentConversationId && this.conversations.length > 0) {
                     await this.loadConversation(this.conversations[0].id);
                 }
             } catch (error) {
@@ -622,15 +646,33 @@ function threadlightApp() {
             }
         },
 
-        get filteredConversations() {
-            if (!this.conversationSearch) {
-                return this.conversations;
+        // Debounced search for conversations (searches titles AND message content)
+        searchConversationsDebounced() {
+            // Clear existing timer
+            if (this.conversationSearchDebounce) {
+                clearTimeout(this.conversationSearchDebounce);
             }
-            const search = this.conversationSearch.toLowerCase();
-            return this.conversations.filter(c =>
-                (c.name || '').toLowerCase().includes(search) ||
-                (c.summary || '').toLowerCase().includes(search)
-            );
+
+            // If search is empty, load immediately without debounce
+            if (!this.conversationSearch || !this.conversationSearch.trim()) {
+                this.isSearchingConversations = false;
+                this.loadConversations();
+                return;
+            }
+
+            // Show searching indicator
+            this.isSearchingConversations = true;
+
+            // Debounce the actual search by 300ms
+            this.conversationSearchDebounce = setTimeout(async () => {
+                await this.loadConversations(this.conversationSearch);
+                this.isSearchingConversations = false;
+            }, 300);
+        },
+
+        get filteredConversations() {
+            // Server-side search handles filtering, so just return all loaded conversations
+            return this.conversations;
         },
 
         async createNewConversation() {
@@ -649,6 +691,7 @@ function threadlightApp() {
                 this.chatHistory = [];
                 this.isGroupChat = false;
                 this.isTierReviewConversation = false;  // Reset tier review state
+                this.isTypeClassificationConversation = false;  // Reset type classification state
                 await this.loadConversations();
             } catch (error) {
                 this.showToast('Failed to create conversation: ' + error.message, 'error');
@@ -718,15 +761,27 @@ function threadlightApp() {
                     console.log('[loadConversation] Conversation data:', { id: convData.id, model: convData.model, name: convData.name });
                     this.isGroupChat = convData.participant_profiles && convData.participant_profiles.length > 1;
 
-                    // Detect tier review conversations to show Apply button
-                    this.isTierReviewConversation = convData.name === 'Memory Tier Review';
+                    // Detect special conversation types to show Apply buttons
+                    // Check metadata.purpose first (preferred), fallback to name-based detection
+                    const purpose = convData.metadata?.purpose;
+                    this.isTierReviewConversation = purpose === 'tier_review' || convData.name === 'Memory Tier Review';
+                    this.isTypeClassificationConversation = purpose === 'type_classification' || convData.name === 'Memory Type Classification';
 
                     // Update current model to match conversation's model
-                    if (convData.model && convData.model !== this.currentModelId) {
-                        console.log('[loadConversation] Updating currentModelId from', this.currentModelId, 'to', convData.model);
-                        this.currentModelId = convData.model;
+                    if (convData.model) {
+                        // Check if this model exists in availableModels
+                        const modelExists = this.availableModels.some(m => m.model_id === convData.model);
+                        if (!modelExists) {
+                            // Add it dynamically so the dropdown can display it
+                            console.log('[loadConversation] Model not in availableModels, adding:', convData.model);
+                            this.availableModels = [...this.availableModels, { model_id: convData.model, is_current: false }];
+                        }
+                        if (convData.model !== this.currentModelId) {
+                            console.log('[loadConversation] Updating currentModelId from', this.currentModelId, 'to', convData.model);
+                            this.currentModelId = convData.model;
+                        }
                     }
-                    console.log('[loadConversation] currentModelId after update:', this.currentModelId);
+                    console.log('[loadConversation] currentModelId after update:', this.currentModelId, 'availableModels:', this.availableModels.map(m => m.model_id));
                 }
 
                 const response = await fetch(`/api/conversations/${conversationId}/messages`);
@@ -1211,6 +1266,130 @@ function threadlightApp() {
             } else {
                 await this.sendMessageHTTP(userMessage);
             }
+        },
+
+        // Copy assistant message content to clipboard
+        async copyMessageContent(msg) {
+            try {
+                await navigator.clipboard.writeText(msg.content);
+                this.showToast('Copied to clipboard');
+            } catch (error) {
+                // Fallback for browsers that don't support clipboard API
+                const textArea = document.createElement('textarea');
+                textArea.value = msg.content;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-9999px';
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    this.showToast('Copied to clipboard');
+                } catch (e) {
+                    this.showToast('Failed to copy: ' + e.message, 'error');
+                }
+                document.body.removeChild(textArea);
+            }
+        },
+
+        // Continue the last assistant response
+        async continueResponse() {
+            // Find the last assistant message
+            const lastAssistantIndex = this.findLastAssistantMessageIndex();
+            if (lastAssistantIndex === -1) {
+                this.showToast('No assistant message to continue', 'error');
+                return;
+            }
+
+            // Send a continue request via WebSocket
+            if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    type: 'continue',
+                    conversation_id: this.currentConversationId,
+                    profile_id: this.activeProfileId,
+                }));
+            } else {
+                // Fallback: send a message asking to continue
+                this.inputMessage = 'Please continue your response.';
+                await this.sendMessage();
+            }
+        },
+
+        // Edit a user message and regenerate from that point
+        async editAndRegenerate(msg) {
+            if (!this.editingMessageId || !this.editedMessageContent.trim()) return;
+
+            const msgIndex = this.messages.findIndex(m => m.id === msg.id);
+            if (msgIndex === -1) {
+                this.showToast('Message not found', 'error');
+                return;
+            }
+
+            const newContent = this.editedMessageContent;
+
+            try {
+                // Update the message content first
+                const response = await fetch(`/api/messages/${msg.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: newContent }),
+                });
+
+                if (!response.ok) throw new Error('Failed to update message');
+
+                // Find the next message (should be assistant response) and delete it and all after
+                if (msgIndex + 1 < this.messages.length) {
+                    const nextMsgId = this.messages[msgIndex + 1].id;
+                    if (nextMsgId) {
+                        try {
+                            await fetch(`/api/messages/${nextMsgId}/and-after`, {
+                                method: 'DELETE',
+                            });
+                        } catch (error) {
+                            console.error('Failed to delete messages from server:', error);
+                        }
+                    }
+                }
+
+                // Update local state - keep messages up to and including the edited one
+                const updatedMsg = { ...this.messages[msgIndex], content: newContent };
+                this.messages = [...this.messages.slice(0, msgIndex), updatedMsg];
+
+                // Clear edit state
+                this.editingMessageId = null;
+                this.editedMessageContent = '';
+
+                // Regenerate the response
+                if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({
+                        type: 'chat',
+                        message: newContent,
+                        profile_id: this.activeProfileId,
+                        conversation_id: this.currentConversationId,
+                    }));
+                } else {
+                    await this.sendMessageHTTP(newContent);
+                }
+
+            } catch (error) {
+                this.showToast('Failed to edit and regenerate: ' + error.message, 'error');
+            }
+        },
+
+        // Check if a message at a given index is the last assistant message
+        isLastAssistantMessage(index) {
+            // Find the last assistant message index
+            const lastIndex = this.findLastAssistantMessageIndex();
+            return index === lastIndex;
+        },
+
+        // Find the index of the last assistant message
+        findLastAssistantMessageIndex() {
+            for (let i = this.messages.length - 1; i >= 0; i--) {
+                if (this.messages[i].role === 'assistant') {
+                    return i;
+                }
+            }
+            return -1;
         },
 
         scrollToBottom() {
@@ -1846,13 +2025,14 @@ function threadlightApp() {
                         name: 'Memory Tier Review',
                         participant_profiles: [this.activeProfileId],
                         model: activeProfile?.primary_model || null,
+                        purpose: 'tier_review',  // Enable tier review tools for this conversation
                     }),
                 });
 
                 if (!response.ok) throw new Error('Failed to create conversation');
 
                 const conversation = await response.json();
-                console.log('[haveAIReviewTiers] Created conversation:', conversation.id, 'model:', conversation.model);
+                console.log('[haveAIReviewTiers] Created conversation:', conversation.id, 'model:', conversation.model, 'purpose: tier_review');
 
                 // IMPORTANT: Set currentConversationId BEFORE loadConversations() to prevent
                 // it from auto-loading a different conversation (which would override our model)
@@ -1974,6 +2154,158 @@ You can include multiple assignments in one block. After I click "Apply Suggesti
             } catch (error) {
                 console.error('[applyTierSuggestions] Error:', error);
                 this.showToast('Failed to apply suggestions: ' + error.message, 'error');
+            }
+        },
+
+        // Type classification methods - similar pattern to tier review
+        async haveAIClassifyTypes() {
+            if (!this.activeProfileId) {
+                this.showToast('Please select a profile first', 'error');
+                return;
+            }
+
+            // Create a new conversation for this task
+            try {
+                const activeProfile = this.getActiveProfile();
+                console.log('[haveAIClassifyTypes] Starting. activeProfile:', activeProfile?.name);
+
+                const response = await fetch('/api/conversations', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: 'Memory Type Classification',
+                        participant_profiles: [this.activeProfileId],
+                        model: activeProfile?.primary_model || null,
+                        purpose: 'type_classification',  // Enable type classification tools for this conversation
+                    }),
+                });
+
+                if (!response.ok) throw new Error('Failed to create conversation');
+
+                const conversation = await response.json();
+                console.log('[haveAIClassifyTypes] Created conversation:', conversation.id, 'purpose: type_classification');
+
+                // Set current conversation before loading to prevent auto-select
+                this.currentConversationId = conversation.id;
+
+                // Update model to match the new conversation
+                if (conversation.model) {
+                    this.currentModelId = conversation.model;
+                }
+
+                // Refresh conversations list
+                await this.loadConversations();
+
+                // Load the full conversation to populate messages
+                await this.loadConversation(conversation.id);
+
+                // Switch to chat view
+                this.currentView = 'chat';
+
+                // Send message to use the classification tool
+                const message = `Please review your note/imported memories (listed below) and suggest how to classify them into structured types. These are currently unstructured text - you can help organize them into meaningful categories.
+
+Available types:
+- **relational**: Information about a person, place, or thing (fields: entity, summary, tone?, role?)
+- **myth_seed**: A guiding phrase or belief (fields: seed, origin?, function?)
+- **witness**: A significant moment or experience (fields: moment, feeling?, effect?)
+- **note**: Keep as unstructured text (fields: content, about?)
+
+For each memory you want to classify, provide your suggestion as a JSON code block like this:
+\`\`\`json
+[
+  {"memory_id": "uuid-here", "new_type": "relational", "content": {"entity": "...", "summary": "..."}},
+  {"memory_id": "other-uuid", "new_type": "myth_seed", "content": {"seed": "...", "origin": "..."}}
+]
+\`\`\`
+
+After I click "Apply Classifications", I'll parse these JSON blocks to convert the memories. Please explain your reasoning for each classification.`;
+
+                this.inputMessage = message;
+                // Auto-call the list action and include results in context
+                await this.sendMessage({ autoTool: { name: 'classify_memory_types', action: 'list' } });
+
+                this.showToast('Created new conversation for type classification');
+                this.isTypeClassificationConversation = true;
+
+            } catch (error) {
+                console.error('[haveAIClassifyTypes] Error:', error);
+                this.showToast('Failed to start AI classification: ' + error.message, 'error');
+            }
+        },
+
+        async applyTypeClassifications() {
+            // Parse JSON blocks from the last assistant message
+            const assistantMessages = this.messages.filter(m => m.role === 'assistant');
+            if (assistantMessages.length === 0) {
+                this.showToast('No suggestions to apply', 'error');
+                return;
+            }
+
+            const lastMessage = assistantMessages[assistantMessages.length - 1].content;
+
+            // Find all JSON blocks in the message
+            const jsonRegex = /```json\s*([\s\S]*?)```/g;
+            let allConversions = [];
+            let match;
+
+            while ((match = jsonRegex.exec(lastMessage)) !== null) {
+                try {
+                    // Clean up the JSON - remove comments
+                    let jsonStr = match[1].replace(/\/\/.*$/gm, '').trim();
+                    // Remove trailing commas before closing brackets
+                    jsonStr = jsonStr.replace(/,(\s*[\]}])/g, '$1');
+                    const parsed = JSON.parse(jsonStr);
+
+                    // Handle both array format and object format
+                    if (Array.isArray(parsed)) {
+                        allConversions = allConversions.concat(parsed);
+                    } else if (parsed.memory_id) {
+                        // Single conversion object
+                        allConversions.push(parsed);
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse JSON block:', e);
+                }
+            }
+
+            if (allConversions.length === 0) {
+                this.showToast('No valid type classifications found in response', 'error');
+                return;
+            }
+
+            console.log('[applyTypeClassifications] Parsed conversions:', allConversions);
+
+            try {
+                const response = await fetch('/api/memories/batch-type-convert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ conversions: allConversions }),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to convert memory types');
+                }
+
+                const result = await response.json();
+                const convertCount = result.summary?.successful || result.converted?.length || 0;
+                this.showToast(`Converted ${convertCount} memory types`);
+
+                // Refresh memories list
+                await this.loadMemories();
+
+                // Auto-refresh context - send updated memory list so they can continue
+                this.inputMessage = `Applied ${convertCount} type conversions. Here's the updated list of remaining note memories:`;
+                await this.sendMessage({ autoTool: { name: 'classify_memory_types', action: 'list' } });
+
+                // Keep classification mode active so button stays visible
+                this.isTypeClassificationConversation = true;
+            } catch (error) {
+                console.error('[applyTypeClassifications] Error:', error);
+                this.showToast('Failed to apply classifications: ' + error.message, 'error');
             }
         },
 

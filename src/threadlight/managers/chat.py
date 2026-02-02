@@ -85,15 +85,17 @@ class ChatManager:
             self.tl.config.providers
         )
 
-        # DEBUG: Log routing decision
-        logger.info(f"[ROUTING DEBUG] model_id={model_id}, use_provider_manager={use_provider_manager}, providers={list(self.tl.config.providers.keys()) if self.tl.config.providers else None}")
+        # Structured logging for model routing
+        tool_count = len(tools) if tools else 0
+        tool_names = [t['function']['name'] for t in tools] if tools else []
+        logger.info(f"[model_routing] model_id={model_id}, use_provider_manager={use_provider_manager}, tool_count={tool_count}, tools={tool_names}")
 
         while iteration < MAX_TOOL_ITERATIONS:
             iteration += 1
 
             # Make the API call - route to appropriate provider
             if use_provider_manager:
-                logger.info(f"[ROUTING DEBUG] Using ProviderManager for model: {model_id}")
+                logger.info(f"[model_routing] routing to ProviderManager model={model_id}")
                 response = self.tl.provider_manager.complete(
                     model_id=model_id,
                     messages=messages,
@@ -101,11 +103,13 @@ class ChatManager:
                     **kwargs
                 )
             else:
-                logger.info(f"[ROUTING DEBUG] Using legacy provider: {self.tl.provider}")
+                logger.info(f"[model_routing] routing to default provider model={self.tl.provider.model}")
                 response = self.tl.provider.complete(messages, tools=tools, **kwargs)
 
             # If no tool calls, we're done
             if not response.has_tool_calls:
+                logger.info(f"[tool_calls] iteration={iteration} - no tool_calls in response, returning. "
+                           f"finish_reason={response.finish_reason}, content_preview={response.content[:100] if response.content else 'empty'}...")
                 # Attach tool results to response metadata
                 if accumulated_tool_results:
                     if response.raw is None:
@@ -113,7 +117,7 @@ class ChatManager:
                     response.raw["tool_results"] = [r.to_dict() for r in accumulated_tool_results]
                 return response
 
-            logger.debug(f"Model requested {len(response.tool_calls)} tool call(s)")
+            logger.info(f"[tool_calls] model requested {len(response.tool_calls)} tool(s): {[tc.name for tc in response.tool_calls]}")
 
             # Add the assistant message with tool calls to context
             messages.append(ProviderMessage.assistant_with_tool_calls(
@@ -123,7 +127,7 @@ class ChatManager:
 
             # Execute each tool call
             for tool_call in response.tool_calls:
-                logger.debug(f"Executing tool: {tool_call.name}")
+                logger.info(f"[tool_calls] executing tool={tool_call.name}")
 
                 # Parse arguments
                 try:
@@ -136,7 +140,7 @@ class ChatManager:
                 result = self.tl.tool_executor.execute(tool_call.name, arguments)
                 accumulated_tool_results.append(result)
 
-                logger.debug(f"Tool result: success={result.success}, consent={result.requires_consent}")
+                logger.info(f"[tool_calls] result tool={tool_call.name} success={result.success} consent_required={result.requires_consent}")
 
                 # Add tool response to messages
                 messages.append(ProviderMessage.tool_response(

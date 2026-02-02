@@ -155,6 +155,7 @@ class OpenAIProvider(BaseProvider):
             ProviderResponse with content and/or tool_calls
         """
         model = kwargs.get("model", self.model)
+        logger.info(f"[provider] complete model={model} messages={len(messages)} tools={len(tools) if tools else 0}")
 
         # For chatgpt-4o-latest, try Chat Completions API with native tools first
         # (Responses API doesn't work, but Chat Completions might)
@@ -233,15 +234,12 @@ class OpenAIProvider(BaseProvider):
             used_endpoint = endpoint_url
 
             try:
-                # DEBUG: Log request details at ERROR level to ensure visibility
-                logger.error(f"[OpenAI DEBUG] Sending request to {url}")
-                logger.error(f"[OpenAI DEBUG] Model: {payload.get('model')}")
-                logger.error(f"[OpenAI DEBUG] Has tools: {'tools' in payload}")
+                # Log request details for debugging
+                logger.info(f"[OpenAI] Sending request to {url}")
+                logger.info(f"[OpenAI] Model: {payload.get('model')}")
+                logger.info(f"[OpenAI] Has tools: {'tools' in payload}")
                 if 'tools' in payload:
-                    logger.error(f"[OpenAI DEBUG] Tool count: {len(payload['tools'])}")
-                    logger.error(f"[OpenAI DEBUG] Tool names: {[t['function']['name'] for t in payload['tools']]}")
-                    import json
-                    logger.error(f"[OpenAI DEBUG] Full payload: {json.dumps(payload, indent=2)}")
+                    logger.info(f"[OpenAI] Tool count: {len(payload['tools'])}")
 
                 with httpx.Client(timeout=self.timeout) as client:
                     response = client.post(url, json=payload, headers=self.headers)
@@ -284,6 +282,16 @@ class OpenAIProvider(BaseProvider):
         choice = data["choices"][0]
         message = choice["message"]
         usage = data.get("usage", {})
+
+        # Log response details for debugging tool calling
+        logger.info(f"[OpenAI DEBUG] Response finish_reason: {choice.get('finish_reason')}")
+        logger.info(f"[OpenAI DEBUG] Response has tool_calls: {'tool_calls' in message}")
+        if 'tool_calls' in message and message['tool_calls']:
+            logger.info(f"[OpenAI DEBUG] Tool calls in response: {len(message['tool_calls'])}")
+            for tc in message['tool_calls']:
+                logger.info(f"[OpenAI DEBUG]   Tool: {tc['function']['name']}, args: {tc['function']['arguments'][:100]}...")
+        else:
+            logger.info(f"[OpenAI DEBUG] No tool_calls in response, content preview: {message.get('content', '')[:200]}...")
 
         # Parse tool calls if present
         tool_calls = []

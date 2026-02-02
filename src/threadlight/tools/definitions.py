@@ -22,6 +22,7 @@ class ToolName(str, Enum):
     RECALL_MEMORY = "recall_memory"
     INVOKE_RITUAL = "invoke_ritual"
     REVIEW_MEMORY_TIERS = "review_memory_tiers"
+    CLASSIFY_MEMORY_TYPES = "classify_memory_types"
 
 
 # Tool definitions in OpenAI function calling format
@@ -164,6 +165,63 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "classify_memory_types",
+            "description": (
+                "Review imported/note memories and suggest converting them to structured types. "
+                "Call with action='list' to see all note-type memories ready for classification. "
+                "Call with action='convert' and conversions to apply type changes.\n\n"
+                "Available memory types for conversion:\n"
+                "- relational: Information about a person, place, or thing (fields: entity, summary, tone?, role?)\n"
+                "- myth_seed: A guiding phrase or belief (fields: seed, origin?, function?)\n"
+                "- witness: A significant moment or experience (fields: moment, feeling?, effect?)\n"
+                "- note: Keep as unstructured text (fields: content, about?)\n\n"
+                "When classifying, analyze the text content and determine which structured type best fits, "
+                "then extract the appropriate fields from the original text."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "convert"],
+                        "description": (
+                            "Action to perform: 'list' returns all note/imported memories for classification, "
+                            "'convert' applies type conversions."
+                        ),
+                    },
+                    "conversions": {
+                        "type": "array",
+                        "description": (
+                            "Array of conversion specifications. Each item should have: "
+                            "memory_id (the UUID), new_type (the target type), and content (the extracted fields).\n"
+                            "Example: [{\"memory_id\": \"uuid-here\", \"new_type\": \"relational\", "
+                            "\"content\": {\"entity\": \"Alice\", \"summary\": \"Friend who loves tea\"}}]"
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "memory_id": {"type": "string", "description": "UUID of the memory to convert"},
+                                "new_type": {
+                                    "type": "string",
+                                    "enum": ["relational", "myth_seed", "witness", "note"],
+                                    "description": "Target memory type",
+                                },
+                                "content": {
+                                    "type": "object",
+                                    "description": "Structured content for the new type",
+                                },
+                            },
+                            "required": ["memory_id", "new_type", "content"],
+                        },
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
 ]
 
 
@@ -192,3 +250,43 @@ def get_tool_definitions(
         tools = [t for t in tools if t["function"]["name"] not in exclude_names]
 
     return tools
+
+
+# Define which tools are always available (core interaction tools)
+CORE_TOOLS = [
+    ToolName.CREATE_MEMORY,
+    ToolName.RECALL_MEMORY,
+    ToolName.INVOKE_RITUAL,
+]
+
+# Define which tools are contextual (only available in specific conversation types)
+CONTEXTUAL_TOOLS = {
+    "tier_review": [ToolName.REVIEW_MEMORY_TIERS],
+    "type_classification": [ToolName.CLASSIFY_MEMORY_TYPES],
+}
+
+
+def get_contextual_tools(conversation_purpose: str | None = None) -> list[dict[str, Any]]:
+    """
+    Get tool definitions based on conversation purpose/context.
+
+    This prevents models from spontaneously offering batch operations
+    (like memory reorganization) in normal conversations.
+
+    Args:
+        conversation_purpose: The purpose of the conversation. Valid values:
+            - None or "normal": Only core tools (create_memory, recall_memory, invoke_ritual)
+            - "tier_review": Core tools + review_memory_tiers
+            - "type_classification": Core tools + classify_memory_types
+
+    Returns:
+        List of tool definitions appropriate for the conversation context
+    """
+    # Start with core tools that are always available
+    tools_to_include = CORE_TOOLS.copy()
+
+    # Add contextual tools based on conversation purpose
+    if conversation_purpose and conversation_purpose in CONTEXTUAL_TOOLS:
+        tools_to_include.extend(CONTEXTUAL_TOOLS[conversation_purpose])
+
+    return get_tool_definitions(include=tools_to_include)

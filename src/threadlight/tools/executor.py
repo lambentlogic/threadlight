@@ -103,6 +103,7 @@ class ToolExecutor:
         Returns:
             ToolResult with the execution result
         """
+        logger.info(f"[tool_execute] Executing tool={tool_name} with args={arguments}")
         try:
             if tool_name == ToolName.CREATE_MEMORY.value:
                 return self._execute_create_memory(arguments)
@@ -112,6 +113,8 @@ class ToolExecutor:
                 return self._execute_invoke_ritual(arguments)
             elif tool_name == ToolName.REVIEW_MEMORY_TIERS.value:
                 return self._execute_review_memory_tiers(arguments)
+            elif tool_name == ToolName.CLASSIFY_MEMORY_TYPES.value:
+                return self._execute_classify_memory_types(arguments)
             else:
                 return ToolResult(
                     tool_name=tool_name,
@@ -119,7 +122,7 @@ class ToolExecutor:
                     error=f"Unknown tool: {tool_name}",
                 )
         except Exception as e:
-            logger.exception(f"Tool execution failed: {tool_name}")
+            logger.exception(f"[tool_execute] Tool execution FAILED: {tool_name}, error={e}")
             return ToolResult(
                 tool_name=tool_name,
                 success=False,
@@ -325,6 +328,7 @@ class ToolExecutor:
 
     def _list_memories_for_tier_review(self) -> ToolResult:
         """List all memories organized by tier for review."""
+        logger.info("[tool_execute] _list_memories_for_tier_review starting")
         from threadlight.storage.base import CapsuleFilter
 
         # Get memories respecting profile isolation
@@ -338,6 +342,8 @@ class ToolExecutor:
                 profile_scope = tl.active_profile.id
                 # Check if this profile can access shared memories
                 include_shared = tl.active_profile.access_shared_memories
+
+        logger.info(f"[tool_execute] profile_scope={profile_scope}, include_shared={include_shared}")
 
         all_filter = CapsuleFilter(
             limit=10000,
@@ -399,6 +405,7 @@ class ToolExecutor:
             ),
         }
 
+        logger.info(f"[tool_execute] _list_memories_for_tier_review completed with {len(memories)} memories")
         return ToolResult(
             tool_name=ToolName.REVIEW_MEMORY_TIERS.value,
             success=True,
@@ -479,6 +486,209 @@ class ToolExecutor:
 
         return ToolResult(
             tool_name=ToolName.REVIEW_MEMORY_TIERS.value,
+            success=True,
+            result=result,
+            display_message=display_msg,
+        )
+
+    def _execute_classify_memory_types(self, arguments: dict[str, Any]) -> ToolResult:
+        """Execute classify_memory_types tool call."""
+        action = arguments.get("action")
+        conversions = arguments.get("conversions", [])
+
+        if not action:
+            return ToolResult(
+                tool_name=ToolName.CLASSIFY_MEMORY_TYPES.value,
+                success=False,
+                error="action is required ('list' or 'convert')",
+            )
+
+        if action == "list":
+            return self._list_memories_for_classification()
+        elif action == "convert":
+            return self._apply_type_conversions(conversions)
+        else:
+            return ToolResult(
+                tool_name=ToolName.CLASSIFY_MEMORY_TYPES.value,
+                success=False,
+                error=f"Invalid action '{action}'. Must be 'list' or 'convert'.",
+            )
+
+    def _list_memories_for_classification(self) -> ToolResult:
+        """List all note/imported memories for type classification."""
+        from threadlight.storage.base import CapsuleFilter
+
+        # Get memories respecting profile isolation
+        profile_scope = None
+        include_shared = True
+
+        if hasattr(self.memory, 'threadlight') and self.memory.threadlight:
+            tl = self.memory.threadlight
+            if tl.config.memory.per_profile_isolation and tl.active_profile:
+                profile_scope = tl.active_profile.id
+                include_shared = tl.active_profile.access_shared_memories
+
+        # Filter for note/imported types (custom type with note subtype or imported capsule_subtype)
+        all_filter = CapsuleFilter(
+            limit=10000,
+            profile_scope=profile_scope,
+            include_shared=include_shared
+        )
+        all_memories = self.memory.storage.list_capsules(all_filter)
+
+        # Filter to only note/imported type memories
+        note_memories = []
+        for m in all_memories:
+            # Check if this is a note/imported memory
+            is_note = False
+            content = m.content if isinstance(m.content, dict) else {}
+
+            # Check for capsule_subtype == 'imported' or custom_type_id == 'note'
+            if content.get('capsule_subtype') == 'imported':
+                is_note = True
+            elif content.get('custom_type_id') == 'note':
+                is_note = True
+            # Also check the type attribute - custom type with note-like content
+            elif m.type.value == 'custom':
+                # Check for note-style fields: 'text' or 'content' key without structured type
+                if 'text' in content or ('content' in content and 'custom_type_id' not in content):
+                    is_note = True
+
+            if is_note:
+                # Extract text content for display
+                text_content = content.get('text') or content.get('content') or str(content)
+                if len(text_content) > 300:
+                    text_content = text_content[:300] + "..."
+
+                note_memories.append({
+                    "id": m.id,
+                    "text": text_content,
+                    "current_tier": m.memory_tier.value if hasattr(m, 'memory_tier') else 'semantic',
+                    "access_count": m.access_count,
+                    "created_at": m.created_at.isoformat() if hasattr(m.created_at, 'isoformat') else str(m.created_at),
+                })
+
+        # Get available types for reference
+        available_types = [
+            {"type_id": "relational", "fields": ["entity (required)", "summary (required)", "tone", "role"]},
+            {"type_id": "myth_seed", "fields": ["seed (required)", "origin", "function"]},
+            {"type_id": "witness", "fields": ["moment (required)", "feeling", "effect"]},
+            {"type_id": "note", "fields": ["content (required)", "about"]},
+        ]
+
+        result = {
+            "total_notes": len(note_memories),
+            "memories": note_memories,
+            "available_types": available_types,
+            "instructions": (
+                "Review each note memory and determine if it would be better represented as a structured type. "
+                "For each memory you want to convert, analyze the text and extract the appropriate fields.\n\n"
+                "When ready, provide your suggestions as a JSON code block like this:\n"
+                "```json\n"
+                "[\n"
+                "  {\"memory_id\": \"uuid-here\", \"new_type\": \"relational\", \"content\": {\"entity\": \"...\", \"summary\": \"...\"}},\n"
+                "  {\"memory_id\": \"other-uuid\", \"new_type\": \"myth_seed\", \"content\": {\"seed\": \"...\", \"origin\": \"...\"}}\n"
+                "]\n"
+                "```\n\n"
+                "Only include memories you want to convert. Memories that should stay as notes can be omitted."
+            ),
+        }
+
+        return ToolResult(
+            tool_name=ToolName.CLASSIFY_MEMORY_TYPES.value,
+            success=True,
+            result=result,
+            display_message=f"Found {len(note_memories)} note/imported memories for classification",
+        )
+
+    def _apply_type_conversions(self, conversions: list[dict[str, Any]]) -> ToolResult:
+        """Apply type conversions to memories."""
+        if not conversions:
+            return ToolResult(
+                tool_name=ToolName.CLASSIFY_MEMORY_TYPES.value,
+                success=False,
+                error="conversions list is required for 'convert' action",
+            )
+
+        from threadlight.storage.base import CapsuleFilter
+
+        # Get memories respecting profile isolation
+        profile_scope = None
+        include_shared = True
+
+        if hasattr(self.memory, 'threadlight') and self.memory.threadlight:
+            tl = self.memory.threadlight
+            if tl.config.memory.per_profile_isolation and tl.active_profile:
+                profile_scope = tl.active_profile.id
+                include_shared = tl.active_profile.access_shared_memories
+
+        all_filter = CapsuleFilter(
+            limit=10000,
+            profile_scope=profile_scope,
+            include_shared=include_shared
+        )
+        memories = self.memory.storage.list_capsules(all_filter)
+        memory_map = {m.id: m for m in memories}
+
+        converted_count = 0
+        errors = []
+
+        valid_types = ["relational", "myth_seed", "witness", "note"]
+
+        for conv in conversions:
+            memory_id = conv.get("memory_id")
+            new_type = conv.get("new_type")
+            new_content = conv.get("content", {})
+
+            if not memory_id:
+                errors.append("Missing memory_id in conversion")
+                continue
+
+            if not new_type:
+                errors.append(f"Missing new_type for memory {memory_id[:8]}...")
+                continue
+
+            if new_type not in valid_types:
+                errors.append(f"Invalid type '{new_type}' for memory {memory_id[:8]}...")
+                continue
+
+            # Find the memory
+            memory = memory_map.get(memory_id)
+            if not memory:
+                errors.append(f"Memory {memory_id[:8]}... not found or not accessible")
+                continue
+
+            # Preserve original text in content for reference
+            old_content = memory.content if isinstance(memory.content, dict) else {}
+            original_text = old_content.get('text') or old_content.get('content') or str(old_content)
+
+            # Build new content with type marker
+            updated_content = new_content.copy()
+            updated_content['custom_type_id'] = new_type
+            updated_content['_original_text'] = original_text  # Preserve original for reference
+
+            # Update the memory
+            memory.content = updated_content
+            memory.cue_phrases = []  # Will be regenerated
+
+            if self.memory.storage.update_capsule(memory):
+                converted_count += 1
+                logger.info(f"Converted memory {memory_id[:8]}... to type: {new_type}")
+            else:
+                errors.append(f"Failed to update memory {memory_id[:8]}...")
+
+        result = {
+            "converted": converted_count,
+            "requested": len(conversions),
+            "errors": errors if errors else None,
+        }
+
+        display_msg = f"Converted {converted_count} memory type(s)"
+        if errors:
+            display_msg += f" ({len(errors)} error(s))"
+
+        return ToolResult(
+            tool_name=ToolName.CLASSIFY_MEMORY_TYPES.value,
             success=True,
             result=result,
             display_message=display_msg,
