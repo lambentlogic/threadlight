@@ -695,12 +695,13 @@ class SQLiteStorage(StorageBackend):
         cue_lower = cue.lower()
 
         # Build query with optional profile scope filtering
+        # Search cue_phrases, content dict, and text column (text-first architecture)
         query = """
             SELECT * FROM capsules
-            WHERE (LOWER(cue_phrases) LIKE ? OR LOWER(content) LIKE ?)
+            WHERE (LOWER(cue_phrases) LIKE ? OR LOWER(content) LIKE ? OR LOWER(text) LIKE ?)
             AND presence_score > 0.1
         """
-        params: list[Any] = [f"%{cue_lower}%", f"%{cue_lower}%"]
+        params: list[Any] = [f"%{cue_lower}%", f"%{cue_lower}%", f"%{cue_lower}%"]
 
         # Use profile_scope if provided, fall back to model_scope for backward compatibility
         effective_scope = profile_scope if profile_scope is not None else model_scope

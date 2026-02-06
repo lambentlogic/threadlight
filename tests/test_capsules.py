@@ -378,3 +378,95 @@ class TestCapsuleFactory:
         assert restored.entity == original.entity
         assert restored.summary == original.summary
         assert restored.id == original.id
+
+
+class TestTextLengthValidation:
+    """Tests for text length validation on capsule creation."""
+
+    def test_short_text_is_not_truncated(self):
+        """Test that normal-length text passes through unchanged."""
+        text = "This is a normal length memory."
+        capsule = create_capsule({
+            "type": "relational",
+            "content": {"entity": "Test", "summary": "Test"},
+            "text": text,
+        })
+        assert capsule.text == text
+
+    def test_long_text_is_truncated_in_factory(self):
+        """Test that text exceeding MAX_TEXT_LENGTH is truncated."""
+        from threadlight.capsules.base import MAX_TEXT_LENGTH
+
+        long_text = "A" * (MAX_TEXT_LENGTH + 500)
+        capsule = create_capsule({
+            "type": "witness",
+            "content": {"moment": "Test"},
+            "text": long_text,
+        })
+
+        assert capsule.text is not None
+        assert len(capsule.text) <= MAX_TEXT_LENGTH + 3  # +3 for "..."
+        assert capsule.text.endswith("...")
+
+    def test_long_text_in_content_is_truncated(self):
+        """Test that text in the content dict is also truncated."""
+        from threadlight.capsules.base import MAX_TEXT_LENGTH
+
+        long_text = "B" * (MAX_TEXT_LENGTH + 100)
+        capsule = create_capsule({
+            "type": "relational",
+            "content": {
+                "entity": "Test",
+                "summary": "Test",
+                "text": long_text,
+            },
+        })
+
+        # The text should be truncated (either via content or top-level)
+        assert capsule.text is not None
+        assert len(capsule.text) <= MAX_TEXT_LENGTH + 3
+
+    def test_text_at_exact_limit_is_not_truncated(self):
+        """Test that text at exactly MAX_TEXT_LENGTH is not truncated."""
+        from threadlight.capsules.base import MAX_TEXT_LENGTH
+
+        exact_text = "C" * MAX_TEXT_LENGTH
+        capsule = create_capsule({
+            "type": "witness",
+            "content": {"moment": "Test"},
+            "text": exact_text,
+        })
+
+        assert capsule.text == exact_text
+        assert not capsule.text.endswith("...")
+
+    def test_validate_text_length_method(self):
+        """Test the base class validate_text_length helper."""
+        from threadlight.capsules.base import MAX_TEXT_LENGTH
+
+        capsule = create_relational(entity="Test", summary="Test")
+        assert capsule.validate_text_length() is True
+
+        # Manually set an oversized text (bypassing factory validation)
+        capsule.text = "D" * (MAX_TEXT_LENGTH + 100)
+        assert capsule.validate_text_length() is False
+
+    def test_none_text_passes_validation(self):
+        """Test that None text passes validate_text_length."""
+        capsule = create_relational(entity="Test", summary="Test")
+        capsule.text = None
+        assert capsule.validate_text_length() is True
+
+    def test_capsule_from_simple_validates_text(self):
+        """Test that capsule_from_simple also validates text length."""
+        from threadlight.capsules.base import MAX_TEXT_LENGTH
+
+        long_text = "E" * (MAX_TEXT_LENGTH + 200)
+        capsule = capsule_from_simple(
+            type="myth_seed",
+            content={"seed": "Test seed", "text": long_text},
+        )
+
+        # Text should be truncated
+        assert capsule.text is not None
+        assert len(capsule.text) <= MAX_TEXT_LENGTH + 3

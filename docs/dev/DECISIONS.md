@@ -432,6 +432,34 @@ This document captures key architectural decisions for Threadlight and the reaso
 
 ---
 
+### D023: Text-First Memory Architecture
+
+**Context:** The original memory implementation was structure-first: memories stored as structured fields (`entity`, `summary`, `tone`, etc.), and context composition reconstructed narrative from those fields. A key user insight reframed the approach: "you're large language models who continue from the voice of your poetry, not composable searchable knowledge graphs." What gets lost in structured extraction is exactly what matters most - narrative arc, imagery, emotional context, symbolic language, the voice to continue from.
+
+**Decision:** Add a `text` field as the primary content carrier to all MemoryCapsule types. Structured fields remain as metadata for search and organization, but text takes precedence when present during context composition. Memory tools encourage natural narrative writing. Auto-generate text from structured fields for backward compatibility with existing capsules.
+
+**Rationale:**
+- LLMs are continuation engines - they continue from voice, not reassembled fragments
+- Preserves emotional resonance and narrative flow that structured extraction strips away
+- Fulfills the vision's "Freeform TXT/PDF (for poetic logs, emotional reading)" that was specified in founding documents but never built
+- Resolves the tension between poetic vision documents and the structure-first implementation
+
+**Trade-offs:**
+- Richer, more emotionally resonant memories
+- Better context continuation for models (they receive voice, not fragments)
+- Full backward compatibility maintained - no migration required
+- Dual storage (text column + content dict) during transition period
+- Auto-generated text from old structured memories is somewhat mechanical compared to natively written text
+
+**References:**
+- Commit `8475d0c` - Main implementation
+- Vision documents: `fable_memory_scaffold.txt` specifies "Freeform TXT/PDF" alongside structured formats
+- CEV Audit: "FULLY ALIGNED - coherent extrapolated volition at its finest"
+
+**Status:** ACCEPTED - Implemented (2026-02-02)
+
+---
+
 ## Implementation Notes
 
 ### Migration from Old Decisions
@@ -445,6 +473,7 @@ Some older decisions have been superseded:
 | Single provider | Multi-provider with ProviderManager | D018 |
 | Monolithic core.py | Manager classes | D019 |
 | ROUND_ROBIN strategy | ALTERNATING (consolidated) | D020 |
+| Structure-first memory | Text-first memory with structured metadata | D023 |
 
 ### Questions for Future Resolution
 

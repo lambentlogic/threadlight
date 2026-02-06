@@ -293,7 +293,7 @@ class ProfileUpdateRequest(BaseModel):
     # New section-based system prompt fields
     system_prompt_sections: Optional[list[dict[str, str]]] = None
     use_freeform_prompt: Optional[bool] = None
-    knowledge_summary: Optional[dict[str, Any]] = None
+    knowledge_summary: Optional[Any] = None  # Any format: text, JSON, list, etc.
     # Deprecated fields - kept for backward compatibility
     philosophy: Optional[str] = None
     approach_to_rituals: Optional[str] = None

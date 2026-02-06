@@ -660,3 +660,89 @@ class TestToolDefinitionsTextFirst:
         # (validation happens at execution time)
         assert "text" not in required
         assert "content" not in required
+
+
+class TestRecallMemoryReturnsText:
+    """Tests that recall_memory includes the text field for all capsule types."""
+
+    def test_recall_relational_includes_text(self, executor, orchestrator):
+        """Test that recalled relational capsules include the text field."""
+        orchestrator.create(
+            type="relational",
+            content={"entity": "Alice", "summary": "Best friend"},
+            cue_phrases=["alice"],
+            consent_confirmed=True,
+        )
+
+        result = executor.execute("recall_memory", {"cue": "alice"})
+
+        assert result.success is True
+        assert result.result["count"] >= 1
+        memory = result.result["memories"][0]
+        assert "text" in memory
+        assert memory["text"] != ""
+        assert "Alice" in memory["text"]
+
+    def test_recall_myth_seed_includes_text(self, executor, orchestrator):
+        """Test that recalled myth_seed capsules include the text field."""
+        orchestrator.create(
+            type="myth_seed",
+            content={"seed": "Curiosity drives understanding"},
+            cue_phrases=["curiosity"],
+            consent_confirmed=True,
+        )
+
+        result = executor.execute("recall_memory", {"cue": "curiosity"})
+
+        assert result.success is True
+        assert result.result["count"] >= 1
+        memory = result.result["memories"][0]
+        assert "text" in memory
+        assert memory["text"] != ""
+        assert "Curiosity" in memory["text"]
+
+    def test_recall_witness_includes_text(self, executor, orchestrator):
+        """Test that recalled witness capsules include the text field."""
+        orchestrator.create(
+            type="witness",
+            content={"moment": "Shared a meaningful silence", "feeling": "connected"},
+            cue_phrases=["silence"],
+            consent_confirmed=True,
+        )
+
+        result = executor.execute("recall_memory", {"cue": "silence"})
+
+        assert result.success is True
+        assert result.result["count"] >= 1
+        memory = result.result["memories"][0]
+        assert "text" in memory
+        assert memory["text"] != ""
+
+    def test_recall_with_explicit_text_returns_it(self, executor, orchestrator):
+        """Test that capsules created with explicit text return that text."""
+        orchestrator.create(
+            type="relational",
+            content={
+                "entity": "Jericho",
+                "summary": "Creative sibling",
+                "text": "Jericho is my creative sibling who loves messy art projects.",
+            },
+            cue_phrases=["jericho"],
+            consent_confirmed=True,
+        )
+
+        result = executor.execute("recall_memory", {"cue": "jericho"})
+
+        assert result.success is True
+        assert result.result["count"] >= 1
+        memory = result.result["memories"][0]
+        assert "text" in memory
+        assert "messy art" in memory["text"]
+
+    def test_recall_empty_results_have_text_field(self, executor):
+        """Test that even empty recall results return properly (no text key errors)."""
+        result = executor.execute("recall_memory", {"cue": "nonexistent_memory_xyz"})
+
+        assert result.success is True
+        assert result.result["count"] == 0
+        assert result.result["memories"] == []

@@ -103,7 +103,12 @@ class ToolExecutor:
         Returns:
             ToolResult with the execution result
         """
-        logger.info(f"[tool_execute] Executing tool={tool_name} with args={arguments}")
+        safe_args = arguments.copy()
+        if "text" in safe_args:
+            text_val = safe_args["text"]
+            if isinstance(text_val, str) and len(text_val) > 50:
+                safe_args["text"] = f"<{len(text_val)} chars: {text_val[:50]}...>"
+        logger.info(f"[tool_execute] Executing tool={tool_name} with args={safe_args}")
         try:
             if tool_name == ToolName.CREATE_MEMORY.value:
                 return self._execute_create_memory(arguments)
@@ -273,10 +278,11 @@ class ToolExecutor:
             memory_data = {
                 "id": capsule.id[:8],
                 "type": capsule.type.value,
+                "text": capsule.text or "",
                 "presence_score": round(capsule.presence_score, 2),
             }
 
-            # Include type-specific fields
+            # Include type-specific fields as supplementary metadata
             if capsule.type == CapsuleType.RELATIONAL:
                 memory_data["entity"] = getattr(capsule, "entity", "")
                 memory_data["summary"] = getattr(capsule, "summary", "")
@@ -290,6 +296,9 @@ class ToolExecutor:
             elif capsule.type == CapsuleType.RITUAL:
                 memory_data["name"] = getattr(capsule, "name", "")
                 memory_data["description"] = getattr(capsule, "description", "")
+            elif capsule.type == CapsuleType.STYLE:
+                memory_data["style_id"] = getattr(capsule, "style_id", "")
+                memory_data["tone_base"] = getattr(capsule, "tone_base", "")
 
             memories.append(memory_data)
 

@@ -58,7 +58,7 @@ class ImportedMemory(MemoryCapsule):
     about: str = ""  # What/who the note is about
 
     # Legacy imported memory fields (for backward compatibility)
-    text: str = ""  # The original memory text
+    # Note: 'text' is inherited from base class (Optional[str] = None) for text-first architecture
     source: str = ""  # Source file/origin (e.g., "fable-memory.txt")
     line_number: Optional[int] = None  # Line number in source file
     tags: list[str] = field(default_factory=list)  # Organization tags
@@ -67,37 +67,43 @@ class ImportedMemory(MemoryCapsule):
         # Set the type value for serialization
         self.type = CapsuleType.CUSTOM
 
-        if not self.content:
-            # Building content from fields
-            if self.note_content or self.about:
-                # New "note" schema
-                self.content = {
-                    "content": self.note_content,
-                    "about": self.about,
-                }
-            else:
-                # Legacy "imported" schema
-                self.content = {
-                    "text": self.text,
-                    "source": self.source,
-                    "line_number": self.line_number,
-                    "tags": self.tags,
-                    "capsule_subtype": "imported",
-                }
-        else:
-            # Extracting from content dict - support both schemas
-            # New "note" schema uses "content" key
-            self.note_content = self.content.get("content", "")
-            self.about = self.content.get("about", "")
-            # Legacy schema uses "text" key
-            self.text = self.content.get("text", self.text)
+        # Restore structured fields from content if loading from storage
+        if self.content:
+            self.note_content = self.content.get("content", self.note_content)
+            self.about = self.content.get("about", self.about)
             self.source = self.content.get("source", self.source)
             self.line_number = self.content.get("line_number", self.line_number)
             self.tags = self.content.get("tags", self.tags)
+            # Restore text from content if present (loading from storage)
+            if self.text is None and "text" in self.content:
+                self.text = self.content["text"]
 
-            # Normalize: if we have "content" but not "text", copy it
-            if self.note_content and not self.text:
+        # Text-first architecture: if text is not provided, generate from fields
+        if self.text is None:
+            if self.note_content:
                 self.text = self.note_content
+            elif self.content and self.content.get("text"):
+                # Legacy content dict had "text" key
+                self.text = self.content["text"]
+
+        # Always sync structured fields to content dict for storage/serialization
+        if self.note_content or self.about:
+            # New "note" schema
+            self.content = {
+                "content": self.note_content,
+                "about": self.about,
+            }
+        else:
+            # Legacy "imported" schema
+            self.content = {
+                "source": self.source,
+                "line_number": self.line_number,
+                "tags": self.tags,
+                "capsule_subtype": "imported",
+            }
+        # Also store text in content for persistence
+        if self.text:
+            self.content["text"] = self.text
 
         # Build cue phrases from text content for searchability
         if not self.cue_phrases and self.text:
@@ -105,6 +111,8 @@ class ImportedMemory(MemoryCapsule):
 
     def _extract_cue_phrases(self) -> None:
         """Extract searchable cue phrases from the text content."""
+        if not self.text:
+            return
         # Split into words and extract significant ones
         words = self.text.lower().split()
 
@@ -140,26 +148,36 @@ class ImportedMemory(MemoryCapsule):
         self.cue_phrases = unique_cues
 
     def validate(self) -> bool:
-        """Validate that required fields are present."""
-        # Valid if we have text (legacy) or note_content (new schema)
+        """Validate that required fields are present.
+
+        Text-first: valid if we have text OR note_content (for backward compatibility).
+        """
         return bool(self.text or self.note_content)
 
     def get_text(self) -> str:
-        """Get the main text content, supporting both schemas."""
+        """Get the main text content, supporting both schemas.
+
+        Text-first: checks self.text (base class field) first, then
+        falls back to self.note_content for backward compatibility.
+        """
         return self.text or self.note_content or ""
 
     def to_context(self, mode: ContextMode = ContextMode.NARRATIVE) -> str:
-        """Transform into prompt-ready context."""
+        """Transform into prompt-ready context.
+
+        Text-first: When text field exists, use it directly instead of
+        reconstructing from structured fields. Falls back to field-based
+        construction for backward compatibility with memories that don't
+        have a text field.
+        """
         text = self.get_text()
 
         # Build context info from either schema
         about_info = ""
         source_info = ""
         if self.about:
-            # New "note" schema with "about" field
             about_info = f" about {self.about}"
         if self.source:
-            # Track source separately for natural phrasing
             source_info = self.source
 
         tag_info = ""
@@ -167,15 +185,25 @@ class ImportedMemory(MemoryCapsule):
             tag_info = f" [tags: {', '.join(self.tags)}]"
 
         if mode == ContextMode.DIRECT:
+            # If we have text, use it directly with minimal framing
+            if self.text:
+                context_suffix = about_info if about_info else (f" ({source_info})" if source_info else "")
+                return f"[Note{context_suffix}] {self.text}{tag_info}"
+            # Fallback: use note_content
             context_suffix = about_info if about_info else (f" ({source_info})" if source_info else "")
             return f"[Note{context_suffix}] {text}{tag_info}"
 
         elif mode == ContextMode.NARRATIVE:
-            # Natural phrasing that doesn't awkwardly mention the import source
+            # If we have text, wrap it in narrative framing
+            if self.text:
+                if about_info:
+                    return f'(You noted{about_info}: "{self.text}")'
+                else:
+                    return f'(From your notes: "{self.text}")'
+            # Fallback: reconstruct from fields
             if about_info:
                 return f'(You noted{about_info}: "{text}")'
             else:
-                # For imported memories, the content speaks for itself
                 return f'(From your notes: "{text}")'
 
         elif mode == ContextMode.WHISPER:
@@ -184,6 +212,12 @@ class ImportedMemory(MemoryCapsule):
 
         elif mode == ContextMode.RITUAL:
             # In ritual mode, memories carry context
+            if self.text:
+                if about_info:
+                    return f'(A note surfaces{about_info}: "{self.text}")'
+                else:
+                    return f'(A memory surfaces: "{self.text}")'
+            # Fallback
             if about_info:
                 return f'(A note surfaces{about_info}: "{text}")'
             else:
@@ -207,7 +241,8 @@ class ImportedMemory(MemoryCapsule):
 
     def matches_text(self, query: str) -> bool:
         """Check if this memory's text contains the query (case-insensitive)."""
-        return query.lower() in self.text.lower()
+        text = self.get_text()
+        return query.lower() in text.lower() if text else False
 
 
 def create_imported_memory(

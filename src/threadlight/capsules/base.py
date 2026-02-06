@@ -7,12 +7,18 @@ It is a vessel that carries meaning, context, and consent.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+# Maximum allowed length for the text field on any capsule.
+MAX_TEXT_LENGTH = 4000
 
 
 class CapsuleType(str, Enum):
@@ -114,6 +120,21 @@ class MemoryCapsule(ABC):
         """Update capsule content."""
         self.content.update(new_content)
         self.updated_at = datetime.utcnow()
+
+    def validate_text_length(self) -> bool:
+        """Check that the text field does not exceed MAX_TEXT_LENGTH.
+
+        Returns True if text is within limits or absent. Returns False if
+        text exceeds the maximum. Subclass validate() methods can call this
+        as a safety net in addition to the factory-level truncation.
+        """
+        if self.text is not None and len(self.text) > MAX_TEXT_LENGTH:
+            logger.warning(
+                f"Capsule {self.id[:8]}... has text exceeding {MAX_TEXT_LENGTH} chars "
+                f"({len(self.text)} chars)"
+            )
+            return False
+        return True
 
     @abstractmethod
     def to_context(self, mode: ContextMode = ContextMode.NARRATIVE) -> str:

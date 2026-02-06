@@ -73,47 +73,10 @@ class ComposedContext:
         }
 
 
-# Mode-specific prefixes for framing memories
-# NOTE: These are kept for reference/documentation but are no longer used.
-# With the text-first architecture, capsules handle their own framing
-# via to_context() methods. Adding prefixes here would create redundancy
-# like "You witnessed: [Witness] text" instead of just "[Witness] text".
-#
-# If you need mode-specific framing, modify the capsule's to_context() method.
-MODE_PREFIXES = {
-    ContextMode.DIRECT: {
-        "relational": "You know that",
-        "myth_seed": "A core belief:",
-        "identity_phrase": "A core belief:",
-        "ritual": "Active ritual:",
-        "witness": "You witnessed:",
-        "style": "Your voice:",
-    },
-    ContextMode.NARRATIVE: {
-        "relational": "You recall",
-        "myth_seed": "A belief you hold:",
-        "identity_phrase": "A belief you hold:",
-        "ritual": "A familiar gesture returns:",
-        "witness": "You remember witnessing",
-        "style": "Your voice carries",
-    },
-    ContextMode.WHISPER: {
-        "relational": "There is warmth when you think of",
-        "myth_seed": "Something resonates...",
-        "identity_phrase": "Something resonates...",
-        "ritual": "A familiar rhythm...",
-        "witness": "An echo of presence...",
-        "style": "A quality of voice...",
-    },
-    ContextMode.RITUAL: {
-        "relational": "(In the circle of relation:)",
-        "myth_seed": "(A belief surfaces:)",
-        "identity_phrase": "(A belief surfaces:)",
-        "ritual": "(The ritual is honored)",  # Presence-based, not mechanical
-        "witness": "(What was witnessed:)",
-        "style": "(Voice aligned:)",
-    },
-}
+# NOTE: MODE_PREFIXES was removed in the text-first architecture.
+# Previously, the composer added prefixes like "You witnessed:" before capsule content.
+# Now capsules handle their own framing via to_context(), making prefixes redundant.
+# See commit 8475d0c for the text-first architecture implementation.
 
 
 class ContextComposer:
