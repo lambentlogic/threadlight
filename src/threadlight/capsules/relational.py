@@ -46,8 +46,12 @@ class RelationalThread(MemoryCapsule):
             self.summary = self.content.get("summary", self.summary)
             self.role = self.content.get("role", self.role)
             # Restore text from content if present (loading from storage)
-            if self.text is None and "text" in self.content:
-                self.text = self.content["text"]
+            # Check _original_text first (richer narrative), then text
+            if self.text is None:
+                if "_original_text" in self.content:
+                    self.text = self.content["_original_text"]
+                elif "text" in self.content:
+                    self.text = self.content["text"]
 
         # Text-first architecture: if text is not provided, generate it from structured fields
         if self.text is None and (self.entity or self.summary):
