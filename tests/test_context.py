@@ -32,7 +32,7 @@ def sample_capsules():
         create_relational(
             entity="TestUser",
             summary="A thoughtful person",
-            tone="warm",
+            quality="warm",
         ),
         create_myth_seed(
             seed="Let silence mean something.",

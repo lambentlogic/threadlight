@@ -168,9 +168,9 @@ class WovenMemory:
                     capsules = self.entity_capsule_map[entity][:max_capsules_per_entity]
                     for capsule in capsules:
                         # Add relational context inline
-                        if hasattr(capsule, 'summary') and hasattr(capsule, 'tone'):
-                            tone_phrase = f" (tone: {capsule.tone})" if capsule.tone else ""
-                            lines.append(f"  -> About {entity}: {capsule.summary}{tone_phrase}")
+                        if hasattr(capsule, 'summary') and hasattr(capsule, 'quality'):
+                            quality_phrase = f" (quality: {capsule.quality})" if capsule.quality else ""
+                            lines.append(f"  -> About {entity}: {capsule.summary}{quality_phrase}")
                         elif hasattr(capsule, 'content'):
                             summary = capsule.content.get('summary', str(capsule.content)[:100])
                             lines.append(f"  -> About {entity}: {summary}")

@@ -400,14 +400,14 @@ class ThreadlightREPL:
             if type_str == "relational":
                 entity = console.input("[dim]Entity name:[/dim] ")
                 summary = console.input("[dim]Summary:[/dim] ")
-                tone = console.input("[dim]Tone (e.g., warm, playful):[/dim] ")
+                quality = console.input("[dim]Quality (e.g., warm, playful, dreamlike):[/dim] ")
 
                 capsule = self.tl.remember(
                     type="relational",
                     content={
                         "entity": entity,
                         "summary": summary,
-                        "tone": tone,
+                        "quality": quality,
                     },
                     cue_phrases=[entity.lower()],
                     confirm=True,

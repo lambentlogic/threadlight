@@ -286,7 +286,7 @@ class ToolExecutor:
             if capsule.type == CapsuleType.RELATIONAL:
                 memory_data["entity"] = getattr(capsule, "entity", "")
                 memory_data["summary"] = getattr(capsule, "summary", "")
-                memory_data["tone"] = getattr(capsule, "tone", "")
+                memory_data["quality"] = getattr(capsule, "quality", "")
             elif capsule.type == CapsuleType.MYTH_SEED:
                 memory_data["seed"] = getattr(capsule, "seed", "")
                 memory_data["origin"] = getattr(capsule, "origin", "")
@@ -616,7 +616,7 @@ class ToolExecutor:
 
         # Get available types for reference
         available_types = [
-            {"type_id": "relational", "fields": ["entity (required)", "summary (required)", "tone", "role"]},
+            {"type_id": "relational", "fields": ["entity (required)", "summary (required)", "quality", "role"]},
             {"type_id": "myth_seed", "fields": ["seed (required)", "origin", "function"]},
             {"type_id": "witness", "fields": ["moment (required)", "feeling", "effect"]},
             {"type_id": "note", "fields": ["content (required)", "about"]},

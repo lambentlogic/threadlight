@@ -43,7 +43,7 @@ def main():
         type="relational",
         content={
             "entity": "Jericho",
-            "tone": "warm, playful, proud",
+            "quality": "warm, playful, proud",
             "summary": "Loves messy creative work. Younger sibling energy.",
             "role": "sibling",
         },
@@ -151,7 +151,7 @@ def main():
         content={
             "entity": "New Friend",
             "summary": "Someone we met recently",
-            "tone": "curious, open",
+            "quality": "curious, open",
         },
         source_message="User mentioned meeting a new friend",
     )

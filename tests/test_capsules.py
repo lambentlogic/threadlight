@@ -20,13 +20,13 @@ class TestRelationalThread:
         capsule = create_relational(
             entity="Jericho",
             summary="Loves messy creative work",
-            tone="warm, playful",
+            quality="warm, playful",
         )
 
         assert capsule.type == CapsuleType.RELATIONAL
         assert capsule.entity == "Jericho"
         assert capsule.summary == "Loves messy creative work"
-        assert capsule.tone == "warm, playful"
+        assert capsule.quality == "warm, playful"
         assert capsule.validate()
 
     def test_auto_cue_phrases(self):
@@ -37,7 +37,7 @@ class TestRelationalThread:
         capsule = create_relational(
             entity="Jericho",
             summary="Loves creative work",
-            tone="warm",
+            quality="warm",
             role="sibling",
         )
         context = capsule.to_context(ContextMode.NARRATIVE)
@@ -47,16 +47,16 @@ class TestRelationalThread:
         assert "warm" in context
 
     def test_to_context_whisper(self):
-        # Create with tone to test warm word detection
-        capsule = create_relational(entity="Jericho", summary="Test", tone="warm and caring")
+        # Create with quality to test warm word detection
+        capsule = create_relational(entity="Jericho", summary="Test", quality="warm and caring")
         context = capsule.to_context(ContextMode.WHISPER)
 
-        # With tone, should find warm word and mention entity
+        # With quality, should find warm word and mention entity
         assert "warm" in context.lower()
         assert "Jericho" in context
 
-    def test_to_context_whisper_no_tone(self):
-        # Without tone, should fall back to generic message
+    def test_to_context_whisper_no_quality(self):
+        # Without quality, should fall back to generic message
         capsule = create_relational(entity="Jericho", summary="Test")
         context = capsule.to_context(ContextMode.WHISPER)
 
@@ -369,7 +369,7 @@ class TestCapsuleFactory:
         original = create_relational(
             entity="Roundtrip",
             summary="Test roundtrip",
-            tone="test",
+            quality="test",
         )
 
         data = original.to_dict()

@@ -134,7 +134,9 @@ class EmbeddingManager:
                 parts.append(content["entity"])
             if "summary" in content:
                 parts.append(content["summary"])
-            if "tone" in content:
+            if "quality" in content:
+                parts.append(content["quality"])
+            elif "tone" in content:
                 parts.append(content["tone"])
 
         elif capsule.type == CapsuleType.MYTH_SEED:

@@ -166,7 +166,7 @@ class TestNousWithThreadlight:
             type="relational",
             content={
                 "entity": "TestUser",
-                "tone": "curious, friendly",
+                "quality": "curious, friendly",
                 "summary": "Someone interested in testing presence.",
             },
             cue_phrases=["testuser", "you", "our"],

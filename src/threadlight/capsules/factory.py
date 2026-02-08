@@ -188,7 +188,7 @@ def create_capsule(data: dict[str, Any]) -> MemoryCapsule:
 
     if cls == RelationalThread:
         kwargs["entity"] = content.get("entity", "")
-        kwargs["tone"] = content.get("tone", "")
+        kwargs["quality"] = content.get("quality", content.get("tone", ""))
         kwargs["summary"] = content.get("summary", "")
         kwargs["role"] = content.get("role", "")
 

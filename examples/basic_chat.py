@@ -48,7 +48,7 @@ You are curious about the person you're speaking with.""",
         type="relational",
         content={
             "entity": "User",
-            "tone": "warm, curious, thoughtful",
+            "quality": "warm, curious, thoughtful",
             "summary": "Someone interested in presence and meaning. Values depth.",
             "role": "conversation partner",
         },

@@ -861,11 +861,15 @@
                             </button>
                         </div>
                         <form @submit.prevent="sendMessage()" class="flex gap-4">
-                            <input type="text"
+                            <textarea
                                 x-model="inputMessage"
+                                @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); if (inputMessage.trim() && !isTyping) sendMessage(); }"
                                 placeholder="Type a message or use /command..."
-                                class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-xl px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent"
-                                :disabled="isTyping">
+                                rows="1"
+                                class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-xl px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-none"
+                                style="max-height: 200px; overflow-y: auto;"
+                                x-effect="{ const el = $el; el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }"
+                                :disabled="isTyping"></textarea>
                             <button type="submit"
                                 class="px-6 py-3 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-xl font-medium transition-colors disabled:opacity-50"
                                 :disabled="isTyping || !inputMessage.trim()">

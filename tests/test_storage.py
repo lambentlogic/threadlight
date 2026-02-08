@@ -193,7 +193,7 @@ class TestSQLiteTextMigration:
         content = {
             "entity": "Alice",
             "summary": "Best friend from college",
-            "tone": "warm, trusting",
+            "quality": "warm, trusting",
             "role": "friend",
         }
         capsule_id = self._insert_capsule_without_text(

@@ -69,7 +69,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "description": (
                             "Optional structured metadata for search and organization. "
                             "This supplements the text, not replaces it:\n"
-                            "- relational: {entity: string, summary?: string, tone?: string}\n"
+                            "- relational: {entity: string, summary?: string, quality?: string}\n"
                             "- identity_phrase: {seed: string, origin?: string}\n"
                             "- witness: {moment?: string, feeling?: string}\n"
                             "For backward compatibility, can be provided without text."
@@ -200,7 +200,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "Call with action='list' to see all note-type memories ready for classification. "
                 "Call with action='convert' and conversions to apply type changes.\n\n"
                 "Available memory types for conversion:\n"
-                "- relational: Information about a person, place, or thing (fields: entity, summary, tone?, role?)\n"
+                "- relational: Information about a person, place, or thing (fields: entity, summary, quality?, role?)\n"
                 "- myth_seed: A guiding phrase or belief (fields: seed, origin?, function?)\n"
                 "- witness: A significant moment or experience (fields: moment, feeling?, effect?)\n"
                 "- note: Keep as unstructured text (fields: content, about?)\n\n"

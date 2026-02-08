@@ -339,7 +339,7 @@ class FieldDefinitionRequest(BaseModel):
     required: bool = True
     default: Optional[Any] = None
     help_text: str = ""
-    template: str = ""  # How field appears in AI context, e.g., "There is {value} in your tone"
+    template: str = ""  # How field appears in AI context, e.g., "There is {value} quality to how I speak of them"
     label: str = ""  # Display label (optional, defaults to name)
 
 

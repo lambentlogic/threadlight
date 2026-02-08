@@ -2,8 +2,8 @@
 Relationship Memory capsules (Relational Threads).
 
 Track evolving relationships with people and entities.
-These memories capture not just facts, but the emotional
-tone and quality of bonds over time.
+These memories capture not just facts, but the affective
+quality of bonds over time.
 """
 
 from __future__ import annotations
@@ -25,16 +25,16 @@ class RelationalThread(MemoryCapsule):
     """
     A relationship memory tracking bonds with people or entities.
 
-    Captures not just facts about someone, but the emotional
-    tone and quality of the relationship -- warmth, playfulness,
-    trust, or any other feeling that colors the connection.
+    Captures not just facts about someone, but the affective
+    quality of the relationship -- its essence, character, and
+    texture. Examples: "dreamlike, reverent", "archival, intimate".
     """
 
     type: CapsuleType = field(default=CapsuleType.RELATIONAL, init=False)
 
     # Relational-specific fields
     entity: str = ""  # Who/what this relationship is with
-    tone: str = ""  # Emotional quality: "warm, playful, proud"
+    quality: str = ""  # Affective quality: "dreamlike, reverent", "warm, playful"
     summary: str = ""  # Brief description of the bond
     role: str = ""  # Optional: "sibling", "friend", "mentor"
 
@@ -42,7 +42,8 @@ class RelationalThread(MemoryCapsule):
         # Restore structured fields from content if loading from storage
         if self.content:
             self.entity = self.content.get("entity", self.entity)
-            self.tone = self.content.get("tone", self.tone)
+            # Support both "quality" and legacy "tone" key in stored data
+            self.quality = self.content.get("quality", self.content.get("tone", self.quality))
             self.summary = self.content.get("summary", self.summary)
             self.role = self.content.get("role", self.role)
             # Restore text from content if present (loading from storage)
@@ -60,7 +61,7 @@ class RelationalThread(MemoryCapsule):
         # Always sync structured fields to content dict for storage/serialization
         self.content = {
             "entity": self.entity,
-            "tone": self.tone,
+            "quality": self.quality,
             "summary": self.summary,
             "role": self.role,
         }
@@ -92,9 +93,9 @@ class RelationalThread(MemoryCapsule):
             else:
                 parts.append(self.summary)
 
-        # Add the emotional tone
-        if self.tone:
-            parts.append(f"Our connection feels {self.tone}.")
+        # Add the affective quality
+        if self.quality:
+            parts.append(f"Our connection feels {self.quality}.")
 
         return " ".join(parts) if parts else ""
 
@@ -140,27 +141,27 @@ class RelationalThread(MemoryCapsule):
                 entity_phrase = f" about {self.entity}" if self.entity else ""
                 return f"(You remember{entity_phrase}: {self.text})"
             # Fallback: reconstruct from fields
-            tone_phrase = f"There is {self.tone} in your tone" if self.tone else ""
+            quality_phrase = f"There is {self.quality} quality to how I speak of them." if self.quality else ""
             role_phrase = f" ({self.role})" if self.role else ""
 
             return (
                 f"(You recall {self.entity}{role_phrase}. {self.summary}. "
-                f"{tone_phrase} when speaking of them.)"
+                f"{quality_phrase})"
             ).replace("  ", " ").strip()
 
         elif mode == ContextMode.WHISPER:
             # Extract essence - try to find emotional core
             if self.text:
-                # Try to find a tone/feeling from the text
+                # Try to find a quality/feeling from the text
                 text_lower = self.text.lower()
                 warm_words = ["warm", "love", "care", "trust", "close", "fond"]
                 for word in warm_words:
                     if word in text_lower:
                         return f"(A sense of {word} surfaces when you think of {self.entity or 'them'}...)"
                 return f"(A connection stirs...)"
-            # Fallback: use tone or generic
-            if self.tone:
-                return f"(A warmth of {self.tone} surfaces...)"
+            # Fallback: use quality or generic
+            if self.quality:
+                return f"(A warmth of {self.quality} surfaces...)"
             return f"(A warmth rises as you think of {self.entity}.)"
 
         elif mode == ContextMode.RITUAL:
@@ -180,7 +181,7 @@ class RelationalThread(MemoryCapsule):
 
     def update_relationship(
         self,
-        tone: str | None = None,
+        quality: str | None = None,
         summary: str | None = None,
         role: str | None = None,
         text: str | None = None
@@ -191,9 +192,9 @@ class RelationalThread(MemoryCapsule):
         As the vision says: "Update cadence is reflective --
         reshaped over time, not overwritten."
         """
-        if tone is not None:
-            self.tone = tone
-            self.content["tone"] = tone
+        if quality is not None:
+            self.quality = quality
+            self.content["quality"] = quality
         if summary is not None:
             # Consider appending rather than replacing for history
             self.summary = summary
@@ -211,7 +212,7 @@ class RelationalThread(MemoryCapsule):
 def create_relational(
     entity: str = "",
     summary: str = "",
-    tone: str = "",
+    quality: str = "",
     role: str = "",
     cue_phrases: list[str] | None = None,
     text: str | None = None,
@@ -226,7 +227,7 @@ def create_relational(
     Args:
         entity: Who/what this relationship is with
         summary: Brief description of the bond
-        tone: Emotional quality (e.g., "warm, playful, proud")
+        quality: Affective quality (e.g., "dreamlike, reverent", "warm, playful")
         role: Optional role (e.g., "sibling", "friend", "mentor")
         cue_phrases: Custom cue phrases for retrieval
         text: Primary narrative content (optional). If provided, this is
@@ -236,7 +237,7 @@ def create_relational(
     capsule = RelationalThread(
         entity=entity,
         summary=summary,
-        tone=tone,
+        quality=quality,
         role=role,
         text=text,
         **kwargs

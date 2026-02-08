@@ -212,7 +212,7 @@ class TestThreadlightRituals:
         relational = create_relational(
             entity="User",
             summary="A trusted companion who values warmth and presence",
-            tone="warm, trusting",
+            quality="warm, trusting",
             cue_phrases=["snuggle", "warmth", "closeness"],
         )
         relational.consent_confirmed = True

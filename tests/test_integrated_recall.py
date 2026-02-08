@@ -121,7 +121,7 @@ class TestWovenMemory:
         capsule = create_relational(
             entity="Sarah",
             summary="A thoughtful friend from college",
-            tone="warm",
+            quality="warm",
         )
         result = MessageSearchResult(
             message=Message(
@@ -332,7 +332,7 @@ class TestRecallWithContext:
         sarah_capsule = create_relational(
             entity="Sarah",
             summary="A colleague who works on data science",
-            tone="friendly",
+            quality="friendly",
         )
         mock_orchestrator.recall.return_value = [sarah_capsule]
 
@@ -413,7 +413,7 @@ class TestChatManagerIntegration:
         capsule = create_relational(
             entity="Sarah",
             summary="A thoughtful friend",
-            tone="warm",
+            quality="warm",
         )
         result = MessageSearchResult(
             message=Message(

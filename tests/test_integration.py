@@ -80,7 +80,7 @@ class TestFullConversationFlow:
             type="relational",
             content={
                 "entity": "TestUser",
-                "tone": "curious, friendly",
+                "quality": "curious, friendly",
                 "summary": "A tester exploring Threadlight",
             },
             cue_phrases=["testuser", "user", "you"],

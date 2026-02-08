@@ -47,11 +47,11 @@ BUILTIN_TYPES = [
                 "output_template": "{summary}.",
             },
             {
-                "name": "tone",
+                "name": "quality",
                 "type": "string",
                 "required": False,
-                "help_text": "How you feel about them (e.g., warm, professional, playful)",
-                "output_template": "There is {tone} in your tone when speaking of them.",
+                "help_text": "Affective quality (e.g., warm, dreamlike, archival, intimate)",
+                "output_template": "There is {quality} quality to how I speak of them.",
             },
             {
                 "name": "role",
@@ -62,7 +62,7 @@ BUILTIN_TYPES = [
             },
         ],
         "example_output": "(You recall Sarah (mentor). She taught me Python and always "
-                          "encourages questions. There is warm in your tone when speaking of them.)",
+                          "encourages questions. There is warm quality to how I speak of them.)",
     },
     {
         "type_id": "myth_seed",

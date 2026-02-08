@@ -531,7 +531,7 @@ class TestTextFirstMemoryCreation:
         result = executor.execute("create_memory", {
             "text": "Alice always brings homemade cookies when we meet. It's her way of showing care.",
             "memory_type": "relational",
-            "content": {"entity": "Alice", "tone": "warm"},
+            "content": {"entity": "Alice", "quality": "warm"},
             "reason": "Relationship detail",
         })
 
