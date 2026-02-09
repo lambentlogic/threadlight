@@ -6,7 +6,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utc_now() -> datetime:
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 from typing import Any, Optional, TYPE_CHECKING
 
 from threadlight.capsules.base import MemoryCapsule, CapsuleType, MemoryTier, RetentionPolicy
@@ -34,6 +39,8 @@ class Message:
     embedding: Optional[list[float]] = None
     profile_id: Optional[str] = None  # Profile that generated/received this message
     model_used: Optional[str] = None  # Model that generated this message (for assistant messages)
+    variant_group_id: Optional[str] = None  # Groups variant messages together (UUID)
+    variant_index: int = 0  # Order within variant group (0 = first, 1 = second, etc.)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize message to dictionary."""
@@ -48,6 +55,8 @@ class Message:
             "embedding": self.embedding,
             "profile_id": self.profile_id,
             "model_used": self.model_used,
+            "variant_group_id": self.variant_group_id,
+            "variant_index": self.variant_index,
         }
 
     @classmethod
@@ -68,6 +77,8 @@ class Message:
             embedding=data.get("embedding"),
             profile_id=data.get("profile_id"),
             model_used=data.get("model_used"),
+            variant_group_id=data.get("variant_group_id"),
+            variant_index=data.get("variant_index", 0),
         )
 
 
@@ -78,8 +89,8 @@ class Conversation:
     id: str
     name: str = ""
     summary: str = ""
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=_utc_now)
+    updated_at: datetime = field(default_factory=_utc_now)
     source: str = ""  # 'claude', 'chatgpt', 'local', etc.
     message_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -121,12 +132,12 @@ class Conversation:
         if isinstance(created_at, str) and created_at:
             created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         else:
-            created_at = datetime.utcnow()
+            created_at = _utc_now()
 
         if isinstance(updated_at, str) and updated_at:
             updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
         else:
-            updated_at = datetime.utcnow()
+            updated_at = _utc_now()
 
         return cls(
             id=data["id"],
@@ -176,7 +187,13 @@ class MessageSearchResult:
 
 @dataclass
 class CapsuleFilter:
-    """Filter criteria for capsule queries."""
+    """Filter criteria for capsule queries.
+
+    Profile scope filtering notes:
+        ``shared_only`` and ``profile_scope`` are mutually exclusive.  When
+        ``shared_only=True``, only capsules with a NULL profile_scope are
+        returned and any ``profile_scope`` value is ignored.
+    """
 
     type: Optional[CapsuleType] = None
     types: Optional[list[CapsuleType]] = None
@@ -196,6 +213,7 @@ class CapsuleFilter:
     # Profile scope filters (for per-profile memory isolation)
     profile_scope: Optional[str] = None  # Filter by specific profile
     include_shared: bool = True  # Whether to include profile_scope=NULL (shared) capsules
+    shared_only: bool = False  # If True, only return capsules with NULL profile_scope
 
     # Archive filter
     include_archived: bool = False  # Whether to include archived memories (default: hidden)
@@ -225,7 +243,7 @@ class MemoryProposal:
     id: str
     capsule_type: CapsuleType
     content: dict[str, Any]
-    proposed_at: datetime = field(default_factory=datetime.utcnow)
+    proposed_at: datetime = field(default_factory=_utc_now)
     source_message: str = ""
     status: str = "pending"  # pending, confirmed, rejected
     memory_tier: str = "semantic"  # strictly_anchored, anchored_decaying, semantic
@@ -374,8 +392,10 @@ class StorageBackend(ABC):
         offset: int = 0,
         source: Optional[str] = None,
         include_archived: bool = False,
-        model_scope: Optional[str] = None,
+        profile_scope: Optional[str] = None,
         include_shared: bool = True,
+        # Deprecated: Use profile_scope instead
+        model_scope: Optional[str] = None,
     ) -> list[Conversation]:
         """List conversations with optional filtering.
 
@@ -384,8 +404,9 @@ class StorageBackend(ABC):
             offset: Offset for pagination
             source: Filter by source (e.g., 'local', 'chatgpt')
             include_archived: Whether to include archived conversations
-            model_scope: Filter by model ID (for per-model isolation)
-            include_shared: Whether to include conversations with model_scope=NULL
+            profile_scope: Filter by profile ID (for per-profile isolation)
+            include_shared: Whether to include conversations with profile_scope=NULL
+            model_scope: Deprecated. Use profile_scope instead.
         """
         pass
 
@@ -461,6 +482,19 @@ class StorageBackend(ABC):
     @abstractmethod
     def delete_message(self, message_id: str) -> bool:
         """Delete a single message."""
+        pass
+
+    @abstractmethod
+    def get_message_variants(self, variant_group_id: str) -> list[Message]:
+        """
+        Get all messages in a variant group, ordered by variant_index.
+
+        Args:
+            variant_group_id: The variant group UUID
+
+        Returns:
+            List of messages in the variant group, ordered by variant_index ascending
+        """
         pass
 
     @abstractmethod

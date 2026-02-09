@@ -1125,8 +1125,10 @@ class MemoryOrchestrator:
         limit: int = 50,
         offset: int = 0,
         source: Optional[str] = None,
-        model_scope: Optional[str] = None,
+        profile_scope: Optional[str] = None,
         include_shared: bool = True,
+        # Deprecated: Use profile_scope instead
+        model_scope: Optional[str] = None,
     ) -> list[Conversation]:
         """List conversations with optional filtering.
 
@@ -1134,11 +1136,12 @@ class MemoryOrchestrator:
             limit: Maximum conversations to return
             offset: Offset for pagination
             source: Filter by source
-            model_scope: Filter by model scope (uses current if None and isolation enabled)
+            profile_scope: Filter by profile ID (uses current model if None and isolation enabled)
             include_shared: Whether to include shared conversations
+            model_scope: Deprecated. Use profile_scope instead.
         """
-        # Determine effective model scope for filtering
-        effective_scope = model_scope
+        # Backward compatibility: fall back to model_scope if profile_scope not set
+        effective_scope = profile_scope if profile_scope is not None else model_scope
         if effective_scope is None and self._per_model_isolation:
             effective_scope = self._current_model
 
@@ -1146,7 +1149,7 @@ class MemoryOrchestrator:
             limit=limit,
             offset=offset,
             source=source,
-            model_scope=effective_scope if self._per_model_isolation else None,
+            profile_scope=effective_scope if self._per_model_isolation else None,
             include_shared=include_shared,
         )
 

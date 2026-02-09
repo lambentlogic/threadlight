@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utc_now() -> datetime:
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 from pathlib import Path
 from typing import Any, Optional
 import uuid
@@ -130,13 +135,15 @@ class SQLiteStorage(StorageBackend):
                 embedding BLOB,
                 profile_id TEXT,
                 model_used TEXT,
+                variant_group_id TEXT,
+                variant_index INTEGER DEFAULT 0,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
             CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
             CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
-            -- profile_id index created in migrations for backward compat
+            -- profile_id and variant_group indexes created in migrations for backward compat
 
             -- Full-text search for messages
             CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -331,6 +338,7 @@ class SQLiteStorage(StorageBackend):
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_model_scope ON conversations(model_scope)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_profile_scope ON conversations(profile_scope)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_profile_id ON messages(profile_id)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_variant_group ON messages(variant_group_id)")
             self.conn.commit()
         except Exception:
             # Columns may not exist yet in old databases - migrations will handle them
@@ -394,6 +402,17 @@ class SQLiteStorage(StorageBackend):
         # Phase 5: Populate text field for existing memories
         # This generates text from structured fields for all memories that don't have it
         self._migrate_populate_text()
+
+        # Migration: Add variant columns to messages table for response variant navigation
+        cursor = self.conn.execute("PRAGMA table_info(messages)")
+        msg_cols_latest = [row[1] for row in cursor.fetchall()]
+        if 'variant_group_id' not in msg_cols_latest:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN variant_group_id TEXT")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_variant_group ON messages(variant_group_id)")
+            self.conn.commit()
+        if 'variant_index' not in msg_cols_latest:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN variant_index INTEGER DEFAULT 0")
+            self.conn.commit()
 
     def _migrate_populate_text(self) -> int:
         """
@@ -532,7 +551,7 @@ class SQLiteStorage(StorageBackend):
         conn = self._ensure_connected()
 
         # Update timestamp
-        capsule.updated_at = datetime.utcnow()
+        capsule.updated_at = _utc_now()
 
         data = capsule.to_dict()
 
@@ -638,7 +657,9 @@ class SQLiteStorage(StorageBackend):
 
             # Profile scope filtering (profile_scope takes precedence, model_scope for backward compat)
             # Note: CapsuleFilter.__post_init__ already handles model_scope -> profile_scope fallback
-            if filter.profile_scope is not None:
+            if filter.shared_only:
+                query += " AND profile_scope IS NULL"
+            elif filter.profile_scope is not None:
                 if filter.include_shared:
                     query += " AND (profile_scope = ? OR profile_scope IS NULL)"
                     params.append(filter.profile_scope)
@@ -827,7 +848,10 @@ class SQLiteStorage(StorageBackend):
     # Utility
 
     def count_capsules(self, filter: Optional[CapsuleFilter] = None) -> int:
-        """Count capsules matching filter."""
+        """Count capsules matching filter.
+
+        Applies the same WHERE conditions as list_capsules() (minus sorting/pagination).
+        """
         conn = self._ensure_connected()
 
         query = "SELECT COUNT(*) FROM capsules WHERE 1=1"
@@ -838,9 +862,61 @@ class SQLiteStorage(StorageBackend):
                 query += " AND type = ?"
                 params.append(filter.type.value)
 
+            if filter.types:
+                placeholders = ",".join("?" * len(filter.types))
+                query += f" AND type IN ({placeholders})"
+                params.extend(t.value for t in filter.types)
+
+            if filter.min_presence_score is not None:
+                query += " AND presence_score >= ?"
+                params.append(filter.min_presence_score)
+
             if filter.consent_confirmed is not None:
                 query += " AND consent_confirmed = ?"
                 params.append(1 if filter.consent_confirmed else 0)
+
+            if filter.retention:
+                query += " AND retention = ?"
+                params.append(filter.retention.value)
+
+            if filter.created_after:
+                query += " AND created_at >= ?"
+                params.append(filter.created_after.isoformat())
+
+            if filter.created_before:
+                query += " AND created_at <= ?"
+                params.append(filter.created_before.isoformat())
+
+            if filter.accessed_after:
+                query += " AND last_accessed >= ?"
+                params.append(filter.accessed_after.isoformat())
+
+            if filter.accessed_before:
+                query += " AND last_accessed <= ?"
+                params.append(filter.accessed_before.isoformat())
+
+            # Profile scope filtering (same logic as list_capsules)
+            if filter.shared_only:
+                query += " AND profile_scope IS NULL"
+            elif filter.profile_scope is not None:
+                if filter.include_shared:
+                    query += " AND (profile_scope = ? OR profile_scope IS NULL)"
+                    params.append(filter.profile_scope)
+                else:
+                    query += " AND profile_scope = ?"
+                    params.append(filter.profile_scope)
+
+            # Memory tier filtering
+            if filter.memory_tier is not None:
+                query += " AND memory_tier = ?"
+                params.append(filter.memory_tier.value)
+
+            # Archive filtering (default: exclude archived)
+            if not filter.include_archived:
+                query += " AND (archived = 0 OR archived IS NULL)"
+        else:
+            # Default: exclude archived (matches list_capsules default behavior)
+            query += " AND (archived = 0 OR archived IS NULL)"
 
         result = conn.execute(query, params).fetchone()
         return result[0] if result else 0
@@ -993,10 +1069,15 @@ class SQLiteStorage(StorageBackend):
         offset: int = 0,
         source: Optional[str] = None,
         include_archived: bool = False,
-        model_scope: Optional[str] = None,
+        profile_scope: Optional[str] = None,
         include_shared: bool = True,
+        # Deprecated: Use profile_scope instead
+        model_scope: Optional[str] = None,
     ) -> list[Conversation]:
         """List conversations with optional filtering."""
+        # Backward compatibility: fall back to model_scope if profile_scope not set
+        effective_scope = profile_scope if profile_scope is not None else model_scope
+
         conn = self._ensure_connected()
 
         query = "SELECT * FROM conversations WHERE 1=1"
@@ -1009,12 +1090,12 @@ class SQLiteStorage(StorageBackend):
         if not include_archived:
             query += " AND (archived = 0 OR archived IS NULL)"
 
-        if model_scope is not None:
+        if effective_scope is not None:
             if include_shared:
-                query += " AND (model_scope = ? OR model_scope IS NULL)"
+                query += " AND (profile_scope = ? OR profile_scope IS NULL)"
             else:
-                query += " AND model_scope = ?"
-            params.append(model_scope)
+                query += " AND profile_scope = ?"
+            params.append(effective_scope)
 
         query += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -1138,7 +1219,7 @@ class SQLiteStorage(StorageBackend):
         """Update an existing conversation."""
         conn = self._ensure_connected()
 
-        conversation.updated_at = datetime.utcnow()
+        conversation.updated_at = _utc_now()
 
         result = conn.execute("""
             UPDATE conversations SET
@@ -1204,8 +1285,8 @@ class SQLiteStorage(StorageBackend):
 
         conn.execute("""
             INSERT OR REPLACE INTO messages
-            (id, conversation_id, role, content, timestamp, source, metadata, embedding, profile_id, model_used)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, conversation_id, role, content, timestamp, source, metadata, embedding, profile_id, model_used, variant_group_id, variant_index)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             message.id,
             message.conversation_id,
@@ -1217,6 +1298,8 @@ class SQLiteStorage(StorageBackend):
             json.dumps(message.embedding) if message.embedding else None,
             message.profile_id,
             message.model_used,
+            message.variant_group_id,
+            message.variant_index,
         ))
         conn.commit()
 
@@ -1234,8 +1317,8 @@ class SQLiteStorage(StorageBackend):
             try:
                 conn.execute("""
                     INSERT OR REPLACE INTO messages
-                    (id, conversation_id, role, content, timestamp, source, metadata, embedding, profile_id, model_used)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, role, content, timestamp, source, metadata, embedding, profile_id, model_used, variant_group_id, variant_index)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     msg.id,
                     msg.conversation_id,
@@ -1247,6 +1330,8 @@ class SQLiteStorage(StorageBackend):
                     json.dumps(msg.embedding) if msg.embedding else None,
                     msg.profile_id,
                     msg.model_used,
+                    msg.variant_group_id,
+                    msg.variant_index,
                 ))
                 count += 1
             except Exception:
@@ -1275,12 +1360,27 @@ class SQLiteStorage(StorageBackend):
         limit: int = 100,
         offset: int = 0,
     ) -> list[Message]:
-        """Get messages for a conversation."""
+        """Get messages for a conversation.
+
+        For messages that belong to a variant group, only the variant with the
+        highest variant_index (most recent) is returned. Use get_message_variants()
+        to retrieve all variants in a group.
+        """
         conn = self._ensure_connected()
 
+        # Return non-variant messages plus only the latest variant from each group
         rows = conn.execute("""
             SELECT * FROM messages
             WHERE conversation_id = ?
+            AND (
+                variant_group_id IS NULL
+                OR id IN (
+                    SELECT id FROM messages m2
+                    WHERE m2.variant_group_id = messages.variant_group_id
+                    ORDER BY m2.variant_index DESC
+                    LIMIT 1
+                )
+            )
             ORDER BY timestamp ASC
             LIMIT ? OFFSET ?
         """, (conversation_id, limit, offset)).fetchall()
@@ -1306,19 +1406,58 @@ class SQLiteStorage(StorageBackend):
         return result.rowcount > 0
 
     def delete_message(self, message_id: str) -> bool:
-        """Delete a single message."""
+        """Delete a single message.
+
+        If the message belongs to a variant group, all messages in that
+        group are deleted to avoid leaving orphaned or incomplete groups.
+        """
         conn = self._ensure_connected()
 
-        result = conn.execute(
-            "DELETE FROM messages WHERE id = ?",
+        # Check if the message belongs to a variant group
+        row = conn.execute(
+            "SELECT variant_group_id FROM messages WHERE id = ?",
             (message_id,)
-        )
-        conn.commit()
+        ).fetchone()
 
-        return result.rowcount > 0
+        if row is None:
+            return False
+
+        variant_group_id = row["variant_group_id"]
+
+        if variant_group_id:
+            # Delete all messages in the variant group
+            conn.execute(
+                "DELETE FROM messages WHERE variant_group_id = ?",
+                (variant_group_id,)
+            )
+        else:
+            conn.execute(
+                "DELETE FROM messages WHERE id = ?",
+                (message_id,)
+            )
+
+        conn.commit()
+        return True
+
+    def get_message_variants(self, variant_group_id: str) -> list[Message]:
+        """Get all messages in a variant group, ordered by variant_index."""
+        conn = self._ensure_connected()
+
+        rows = conn.execute("""
+            SELECT * FROM messages
+            WHERE variant_group_id = ?
+            ORDER BY variant_index ASC
+        """, (variant_group_id,)).fetchall()
+
+        return [self._row_to_message(row) for row in rows]
 
     def delete_messages_after(self, conversation_id: str, message_id: str) -> int:
-        """Delete a message and all messages after it in a conversation."""
+        """Delete a message and all messages after it in a conversation.
+
+        If any deleted message belongs to a variant group that has other
+        variants outside the deletion range, those variants are also deleted
+        to avoid leaving incomplete groups.
+        """
         conn = self._ensure_connected()
 
         # Get the timestamp of the target message
@@ -1326,15 +1465,44 @@ class SQLiteStorage(StorageBackend):
         if not msg:
             return 0
 
-        # Delete the message and all after it
+        # Find variant groups that would be partially affected by this deletion.
+        # These are groups where at least one variant falls within the deletion
+        # range (timestamp >= target) but at least one falls outside it.
+        partial_groups = conn.execute("""
+            SELECT DISTINCT variant_group_id FROM messages
+            WHERE conversation_id = ?
+            AND variant_group_id IS NOT NULL
+            AND variant_group_id IN (
+                SELECT variant_group_id FROM messages
+                WHERE conversation_id = ?
+                AND timestamp >= ?
+                AND variant_group_id IS NOT NULL
+            )
+            AND timestamp < ?
+        """, (conversation_id, conversation_id,
+              msg.timestamp.isoformat(), msg.timestamp.isoformat())).fetchall()
+
+        deleted = 0
+
+        # Delete the orphaned variants from partially affected groups first
+        for row in partial_groups:
+            group_id = row["variant_group_id"]
+            result = conn.execute(
+                "DELETE FROM messages WHERE variant_group_id = ? AND timestamp < ?",
+                (group_id, msg.timestamp.isoformat())
+            )
+            deleted += result.rowcount
+
+        # Delete the message and all after it (including the in-range variants)
         result = conn.execute("""
             DELETE FROM messages
             WHERE conversation_id = ?
             AND timestamp >= ?
         """, (conversation_id, msg.timestamp.isoformat()))
-        conn.commit()
+        deleted += result.rowcount
 
-        return result.rowcount
+        conn.commit()
+        return deleted
 
     def search_messages(
         self,
@@ -1492,15 +1660,25 @@ class SQLiteStorage(StorageBackend):
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
 
-        # Handle profile_id and model_used which may not exist in older databases
+        # Handle columns which may not exist in older databases
         profile_id = None
         model_used = None
+        variant_group_id = None
+        variant_index = 0
         try:
             profile_id = row["profile_id"]
         except (IndexError, KeyError):
             pass
         try:
             model_used = row["model_used"]
+        except (IndexError, KeyError):
+            pass
+        try:
+            variant_group_id = row["variant_group_id"]
+        except (IndexError, KeyError):
+            pass
+        try:
+            variant_index = row["variant_index"] or 0
         except (IndexError, KeyError):
             pass
 
@@ -1515,6 +1693,8 @@ class SQLiteStorage(StorageBackend):
             embedding=json.loads(row["embedding"]) if row["embedding"] else None,
             profile_id=profile_id,
             model_used=model_used,
+            variant_group_id=variant_group_id,
+            variant_index=variant_index,
         )
 
     # ========================================================================
@@ -1739,8 +1919,8 @@ class SQLiteStorage(StorageBackend):
             fields_json,
             type_def.get("display_template", "{type_id}"),
             type_def.get("icon", "file-text"),
-            type_def.get("created_at", datetime.utcnow().isoformat()),
-            datetime.utcnow().isoformat(),
+            type_def.get("created_at", _utc_now().isoformat()),
+            _utc_now().isoformat(),
         ))
         conn.commit()
 
@@ -1806,7 +1986,7 @@ class SQLiteStorage(StorageBackend):
             if key != "type_id":  # Can't change the ID
                 existing[key] = value
 
-        existing["updated_at"] = datetime.utcnow().isoformat()
+        existing["updated_at"] = _utc_now().isoformat()
 
         # Save
         self.save_custom_type(existing)
@@ -1898,8 +2078,8 @@ class SQLiteStorage(StorageBackend):
             fields_json,
             customization.get("display_template"),
             customization.get("icon"),
-            customization.get("created_at", datetime.utcnow().isoformat()),
-            datetime.utcnow().isoformat(),
+            customization.get("created_at", _utc_now().isoformat()),
+            _utc_now().isoformat(),
         ))
         conn.commit()
 
@@ -1924,14 +2104,14 @@ class SQLiteStorage(StorageBackend):
             # Update existing to be hidden
             conn.execute(
                 "UPDATE builtin_type_customizations SET is_hidden = 1, updated_at = ? WHERE type_id = ?",
-                (datetime.utcnow().isoformat(), type_id)
+                (_utc_now().isoformat(), type_id)
             )
         else:
             # Create new hidden entry
             conn.execute("""
                 INSERT INTO builtin_type_customizations (type_id, is_hidden, created_at, updated_at)
                 VALUES (?, 1, ?, ?)
-            """, (type_id, datetime.utcnow().isoformat(), datetime.utcnow().isoformat()))
+            """, (type_id, _utc_now().isoformat(), _utc_now().isoformat()))
 
         conn.commit()
         return True
@@ -1965,7 +2145,7 @@ class SQLiteStorage(StorageBackend):
             # Just update is_hidden flag
             conn.execute(
                 "UPDATE builtin_type_customizations SET is_hidden = 0, updated_at = ? WHERE type_id = ?",
-                (datetime.utcnow().isoformat(), type_id)
+                (_utc_now().isoformat(), type_id)
             )
         else:
             # Delete the record entirely since there are no other customizations
@@ -2157,8 +2337,8 @@ class SQLiteStorage(StorageBackend):
         data = source.to_dict()
         data["id"] = str(uuid.uuid4())
         data["model_scope"] = target_model_scope
-        data["created_at"] = datetime.utcnow().isoformat()
-        data["updated_at"] = datetime.utcnow().isoformat()
+        data["created_at"] = _utc_now().isoformat()
+        data["updated_at"] = _utc_now().isoformat()
 
         # Save the copy
         new_capsule = create_capsule(data)

@@ -661,10 +661,35 @@
                                                         </svg>
                                                     </button>
                                                 </template>
+                                                <!-- Variant Navigation (assistant messages with variants) -->
+                                                <template x-if="msg.role === 'assistant' && getVariantInfo(msg) && getVariantInfo(msg).variants.length > 1">
+                                                    <div class="flex items-center gap-0.5">
+                                                        <button @click="switchToVariant(msg, 'prev')"
+                                                            :disabled="getVariantInfo(msg).currentIndex === 0"
+                                                            class="p-1.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                            title="Previous variant">
+                                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/>
+                                                            </svg>
+                                                        </button>
+                                                        <span class="text-[10px] text-threadlight-muted tabular-nums px-0.5"
+                                                            x-text="(getVariantInfo(msg).currentIndex + 1) + '/' + getVariantInfo(msg).variants.length">
+                                                        </span>
+                                                        <button @click="switchToVariant(msg, 'next')"
+                                                            :disabled="getVariantInfo(msg).currentIndex === getVariantInfo(msg).variants.length - 1"
+                                                            class="p-1.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                            title="Next variant">
+                                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/>
+                                                            </svg>
+                                                        </button>
+                                                    </div>
+                                                </template>
                                                 <!-- Regenerate Button (assistant only) -->
                                                 <template x-if="msg.role === 'assistant'">
                                                     <button @click="regenerateResponse(msg)"
-                                                        class="p-1.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors" title="Regenerate">
+                                                        class="p-1.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors" title="Regenerate"
+                                                        :disabled="isTyping">
                                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                                                         </svg>
@@ -740,6 +765,31 @@
                                                 </div>
 
                                                 <div class="message-content" x-html="renderMarkdown(msg.content)"></div>
+
+                                                <!-- Variant Navigation (persistent, below message) -->
+                                                <template x-if="msg.role === 'assistant' && getVariantInfo(msg) && getVariantInfo(msg).variants.length > 1">
+                                                    <div class="flex items-center gap-1.5 mt-2 pt-2 border-t border-threadlight-border/30">
+                                                        <button @click="switchToVariant(msg, 'prev')"
+                                                            :disabled="getVariantInfo(msg).currentIndex === 0"
+                                                            class="p-0.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                            title="Previous variant">
+                                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/>
+                                                            </svg>
+                                                        </button>
+                                                        <span class="text-xs text-threadlight-muted tabular-nums select-none"
+                                                            x-text="(getVariantInfo(msg).currentIndex + 1) + ' of ' + getVariantInfo(msg).variants.length">
+                                                        </span>
+                                                        <button @click="switchToVariant(msg, 'next')"
+                                                            :disabled="getVariantInfo(msg).currentIndex === getVariantInfo(msg).variants.length - 1"
+                                                            class="p-0.5 text-threadlight-muted hover:text-threadlight-text rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                            title="Next variant">
+                                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/>
+                                                            </svg>
+                                                        </button>
+                                                    </div>
+                                                </template>
 
                                                 <!-- Recalled Memories -->
                                                 <template x-if="msg.memories && msg.memories.length > 0">
@@ -842,11 +892,15 @@
 
                     <!-- Input -->
                     <div class="p-4 border-t border-threadlight-border">
-                        <!-- Apply Tier Suggestions button -->
-                        <div x-show="isTierReviewConversation && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant'" class="mb-3">
-                            <button @click="applyTierSuggestions()"
-                                class="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors">
-                                Apply Tier Suggestions
+                        <!-- Apply Tier Suggestions buttons -->
+                        <div x-show="isTierReviewConversation && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant'" class="mb-3 flex gap-2">
+                            <button @click="applyTierSuggestions(true)"
+                                class="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors">
+                                Apply & Continue
+                            </button>
+                            <button @click="applyTierSuggestions(false)"
+                                class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors">
+                                Apply & Conclude
                             </button>
                         </div>
                         <!-- Apply Type Classifications buttons -->
@@ -896,6 +950,16 @@
                                 <button x-show="selectedMemoryIds.length > 0" @click="bulkDeleteMemories()" class="px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors">
                                     Delete Selected (<span x-text="selectedMemoryIds.length"></span>)
                                 </button>
+                                <button x-show="selectedMemoryIds.length > 0 && perProfileIsolation && activeProfileId"
+                                    @click="bulkAssignToProfile()"
+                                    class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
+                                    Scope to <span x-text="getActiveProfile()?.name || 'Profile'"></span> (<span x-text="selectedMemoryIds.length"></span>)
+                                </button>
+                                <button x-show="selectedMemoryIds.length > 0 && perProfileIsolation"
+                                    @click="bulkShareMemories()"
+                                    class="px-4 py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition-colors">
+                                    Share Selected (<span x-text="selectedMemoryIds.length"></span>)
+                                </button>
                                 <button @click="showTierReviewModal = true; loadMemoriesForTierReview()" class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
                                     Review Tiers
                                 </button>
@@ -936,28 +1000,38 @@
                                 <option value="style">Style</option>
                                 <option value="note">Note</option>
                             </select>
+                            <!-- Profile Scope Filter -->
+                            <select x-model="memoryScopeFilter" @change="loadMemories()"
+                                class="bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none">
+                                <option value="" x-text="activeProfileId ? ('Viewing: ' + (profiles.find(p => p.id === activeProfileId)?.name || 'Profile')) : 'All (no profile active)'"></option>
+                                <option value="all">All Memories</option>
+                                <option value="shared">Shared Only</option>
+                                <template x-for="profile in profiles" :key="profile.id">
+                                    <option :value="profile.id" x-text="profile.name + ' Only'"></option>
+                                </template>
+                            </select>
                             <!-- Semantic Search Toggle -->
                             <div x-show="embeddingsEnabled" class="flex items-center gap-2">
                                 <label class="text-sm text-threadlight-muted cursor-pointer" @click="semanticSearch = !semanticSearch">Semantic</label>
                                 <button @click="semanticSearch = !semanticSearch"
-                                    :class="semanticSearch ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
-                                    class="w-10 h-5 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                    :class="semanticSearch ? 'bg-threadlight-memory' : 'bg-gray-600'"
+                                    class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
                                     :aria-checked="semanticSearch"
                                     role="switch">
-                                    <span :class="semanticSearch ? 'translate-x-5' : 'translate-x-1'"
-                                        class="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                    <span :class="semanticSearch ? 'translate-x-6' : 'translate-x-1'"
+                                        class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                 </button>
                             </div>
                             <!-- Show Archived Toggle -->
                             <div class="flex items-center gap-2">
                                 <label class="text-sm text-threadlight-muted cursor-pointer" @click="showArchived = !showArchived; loadMemories()">Show Archived</label>
                                 <button @click="showArchived = !showArchived; loadMemories()"
-                                    :class="showArchived ? 'bg-orange-500' : 'bg-threadlight-border'"
-                                    class="w-10 h-5 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                    :class="showArchived ? 'bg-orange-500' : 'bg-gray-600'"
+                                    class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
                                     :aria-checked="showArchived"
                                     role="switch">
-                                    <span :class="showArchived ? 'translate-x-5' : 'translate-x-1'"
-                                        class="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                    <span :class="showArchived ? 'translate-x-6' : 'translate-x-1'"
+                                        class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                 </button>
                             </div>
                         </div>
@@ -1574,12 +1648,12 @@
                                         <p class="text-xs text-threadlight-muted">Requires sentence-transformers for local mode</p>
                                     </div>
                                     <button @click="toggleEmbeddings()"
-                                        :class="embeddingsEnabled ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
+                                        :class="embeddingsEnabled ? 'bg-threadlight-memory' : 'bg-gray-600'"
                                         class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
                                         :aria-checked="embeddingsEnabled"
                                         role="switch">
                                         <span :class="embeddingsEnabled ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                            class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
 
@@ -1733,12 +1807,12 @@
                                         <p class="text-xs text-threadlight-muted">Include memories in conversations</p>
                                     </div>
                                     <button @click="currentModelConfig.memory_enabled = !currentModelConfig.memory_enabled; updateCurrentModelConfig({memory_enabled: currentModelConfig.memory_enabled})"
-                                        :class="currentModelConfig.memory_enabled ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
+                                        :class="currentModelConfig.memory_enabled ? 'bg-threadlight-memory' : 'bg-gray-600'"
                                         class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
                                         :aria-checked="currentModelConfig.memory_enabled"
                                         role="switch">
                                         <span :class="currentModelConfig.memory_enabled ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                            class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
                                 <div class="flex items-center justify-between">
@@ -1747,12 +1821,12 @@
                                         <p class="text-xs text-threadlight-muted">Gradually fade unused memories</p>
                                     </div>
                                     <button @click="currentModelConfig.decay_enabled = !currentModelConfig.decay_enabled; updateCurrentModelConfig({decay_enabled: currentModelConfig.decay_enabled})"
-                                        :class="currentModelConfig.decay_enabled ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
+                                        :class="currentModelConfig.decay_enabled ? 'bg-threadlight-accent' : 'bg-gray-600'"
                                         class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
                                         :aria-checked="currentModelConfig.decay_enabled"
                                         role="switch">
                                         <span :class="currentModelConfig.decay_enabled ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                            class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
                                 <div>
@@ -1788,12 +1862,12 @@
                                         <p class="text-xs text-threadlight-muted">Each profile gets its own memory space</p>
                                     </div>
                                     <button @click="togglePerProfileIsolation()"
-                                        :class="perProfileIsolation ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
+                                        :class="perProfileIsolation ? 'bg-threadlight-accent' : 'bg-gray-600'"
                                         class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
                                         :aria-checked="perProfileIsolation"
                                         role="switch">
                                         <span :class="perProfileIsolation ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                            class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
 
@@ -1804,12 +1878,12 @@
                                         <p class="text-xs text-threadlight-muted">New memories are shared across profiles by default</p>
                                     </div>
                                     <button @click="toggleDefaultShared()"
-                                        :class="defaultShared ? 'bg-threadlight-memory' : 'bg-threadlight-border'"
+                                        :class="defaultShared ? 'bg-threadlight-memory' : 'bg-gray-600'"
                                         class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
                                         :aria-checked="defaultShared"
                                         role="switch">
                                         <span :class="defaultShared ? 'translate-x-6' : 'translate-x-1'"
-                                            class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                            class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                     </button>
                                 </div>
 
@@ -1867,12 +1941,12 @@
                                     <div class="flex items-center justify-between mb-4">
                                         <label class="text-sm cursor-pointer" @click="toggleDecay()">Enable memory fading</label>
                                         <button @click="toggleDecay()"
-                                            :class="config.memory?.decay_enabled ? 'bg-threadlight-accent' : 'bg-threadlight-border'"
+                                            :class="config.memory?.decay_enabled ? 'bg-threadlight-accent' : 'bg-gray-600'"
                                             class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
                                             :aria-checked="config.memory?.decay_enabled"
                                             role="switch">
                                             <span :class="config.memory?.decay_enabled ? 'translate-x-6' : 'translate-x-1'"
-                                                class="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
+                                                class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                         </button>
                                     </div>
 
@@ -2492,7 +2566,7 @@
                                         Share
                                     </button>
                                     <button x-show="selectedMemory?.profile_scope === null && activeProfileId"
-                                        @click="assignMemoryToProfile(selectedMemory?.id)"
+                                        @click="assignMemoryToProfile(selectedMemory?.id, activeProfileId)"
                                         class="px-3 py-1 text-sm bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded transition-colors">
                                         Scope to Active Profile
                                     </button>
@@ -4114,10 +4188,11 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
 
                             <div class="flex items-center gap-3">
                                 <button type="button" @click="newProfile.access_shared_memories = !newProfile.access_shared_memories"
-                                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out"
-                                    :class="newProfile.access_shared_memories ? 'bg-threadlight-accent' : 'bg-threadlight-border'">
-                                    <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out"
-                                        :class="newProfile.access_shared_memories ? 'translate-x-5' : 'translate-x-0'"></span>
+                                    class="w-12 h-6 rounded-full relative transition-colors duration-200 flex-shrink-0"
+                                    :class="newProfile.access_shared_memories ? 'bg-threadlight-accent' : 'bg-gray-600'"
+                                    role="switch" :aria-checked="newProfile.access_shared_memories">
+                                    <span :class="newProfile.access_shared_memories ? 'translate-x-6' : 'translate-x-1'"
+                                        class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200"></span>
                                 </button>
                                 <div>
                                     <span class="text-sm text-threadlight-text">Access shared memories</span>
@@ -4583,6 +4658,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260201-6"></script>
+    <script src="/static/js/app.js?v=20260209-5"></script>
 </body>
 </html>

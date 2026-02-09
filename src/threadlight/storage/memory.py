@@ -6,7 +6,12 @@ Useful for testing and ephemeral sessions.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utc_now() -> datetime:
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 from typing import Any, Optional
 import uuid
 
@@ -64,7 +69,7 @@ class InMemoryStorage(StorageBackend):
         """Update an existing capsule."""
         if capsule.id not in self.capsules:
             return False
-        capsule.updated_at = datetime.utcnow()
+        capsule.updated_at = _utc_now()
         self.capsules[capsule.id] = capsule
         return True
 
@@ -108,7 +113,9 @@ class InMemoryStorage(StorageBackend):
                 capsules = [c for c in capsules if c.last_accessed <= filter.accessed_before]
 
             # Profile scope filtering (profile_scope takes precedence, model_scope via __post_init__)
-            if filter.profile_scope is not None:
+            if filter.shared_only:
+                capsules = [c for c in capsules if getattr(c, 'profile_scope', None) is None]
+            elif filter.profile_scope is not None:
                 if filter.include_shared:
                     capsules = [
                         c for c in capsules
@@ -121,6 +128,17 @@ class InMemoryStorage(StorageBackend):
                         if getattr(c, 'profile_scope', None) == filter.profile_scope
                     ]
 
+            # Memory tier filtering
+            if filter.memory_tier is not None:
+                capsules = [
+                    c for c in capsules
+                    if getattr(c, 'memory_tier', None) == filter.memory_tier
+                ]
+
+            # Archive filtering (default: exclude archived)
+            if not filter.include_archived:
+                capsules = [c for c in capsules if not getattr(c, 'archived', False)]
+
             # Sorting
             if filter.order_by == "last_accessed":
                 capsules.sort(key=lambda c: c.last_accessed, reverse=filter.order_desc)
@@ -132,7 +150,8 @@ class InMemoryStorage(StorageBackend):
             # Pagination
             capsules = capsules[filter.offset:filter.offset + filter.limit]
         else:
-            # Default: sort by last_accessed, limit 100
+            # Default: exclude archived, sort by last_accessed, limit 100
+            capsules = [c for c in capsules if not getattr(c, 'archived', False)]
             capsules.sort(key=lambda c: c.last_accessed, reverse=True)
             capsules = capsules[:100]
 
@@ -287,10 +306,15 @@ class InMemoryStorage(StorageBackend):
         offset: int = 0,
         source: Optional[str] = None,
         include_archived: bool = False,
-        model_scope: Optional[str] = None,
+        profile_scope: Optional[str] = None,
         include_shared: bool = True,
+        # Deprecated: Use profile_scope instead
+        model_scope: Optional[str] = None,
     ) -> list[Conversation]:
         """List conversations with optional filtering."""
+        # Backward compatibility: fall back to model_scope if profile_scope not set
+        effective_scope = profile_scope if profile_scope is not None else model_scope
+
         convs = list(self.conversations.values())
 
         if source:
@@ -299,11 +323,11 @@ class InMemoryStorage(StorageBackend):
         if not include_archived:
             convs = [c for c in convs if not c.archived]
 
-        if model_scope is not None:
+        if effective_scope is not None:
             if include_shared:
-                convs = [c for c in convs if getattr(c, 'model_scope', None) == model_scope or getattr(c, 'model_scope', None) is None]
+                convs = [c for c in convs if getattr(c, 'profile_scope', None) == effective_scope or getattr(c, 'profile_scope', None) is None]
             else:
-                convs = [c for c in convs if getattr(c, 'model_scope', None) == model_scope]
+                convs = [c for c in convs if getattr(c, 'profile_scope', None) == effective_scope]
 
         # Sort by updated_at descending
         convs.sort(key=lambda c: c.updated_at, reverse=True)
@@ -314,7 +338,7 @@ class InMemoryStorage(StorageBackend):
         """Update an existing conversation."""
         if conversation.id not in self.conversations:
             return False
-        conversation.updated_at = datetime.utcnow()
+        conversation.updated_at = _utc_now()
         self.conversations[conversation.id] = conversation
         return True
 
@@ -361,7 +385,11 @@ class InMemoryStorage(StorageBackend):
         limit: int = 100,
         offset: int = 0,
     ) -> list[Message]:
-        """Get messages for a conversation."""
+        """Get messages for a conversation.
+
+        For messages that belong to a variant group, only the variant with the
+        highest variant_index (most recent) is returned.
+        """
         msgs = [
             m for m in self.messages.values()
             if m.conversation_id == conversation_id
@@ -370,7 +398,29 @@ class InMemoryStorage(StorageBackend):
         # Sort by timestamp
         msgs.sort(key=lambda m: m.timestamp)
 
-        return msgs[offset:offset + limit]
+        # For variant groups, keep only the latest variant (highest variant_index)
+        seen_groups: dict[str, Message] = {}
+        filtered: list[Message] = []
+        for m in msgs:
+            if m.variant_group_id is None:
+                filtered.append(m)
+            else:
+                existing = seen_groups.get(m.variant_group_id)
+                if existing is None or m.variant_index > existing.variant_index:
+                    seen_groups[m.variant_group_id] = m
+
+        # Re-merge variant group winners into the list in timestamp order
+        result: list[Message] = []
+        seen_group_ids: set[str] = set()
+        for m in msgs:
+            if m.variant_group_id is None:
+                result.append(m)
+            elif m.variant_group_id not in seen_group_ids:
+                # Insert the latest variant at the position of the first variant
+                result.append(seen_groups[m.variant_group_id])
+                seen_group_ids.add(m.variant_group_id)
+
+        return result[offset:offset + limit]
 
     def search_messages(
         self,
@@ -422,28 +472,76 @@ class InMemoryStorage(StorageBackend):
         return True
 
     def delete_message(self, message_id: str) -> bool:
-        """Delete a single message."""
-        if message_id not in self.messages:
+        """Delete a single message.
+
+        If the message belongs to a variant group, all messages in that
+        group are deleted to avoid leaving orphaned or incomplete groups.
+        """
+        msg = self.messages.get(message_id)
+        if msg is None:
             return False
-        del self.messages[message_id]
+
+        if msg.variant_group_id:
+            # Delete all messages in the variant group
+            ids_to_delete = [
+                m.id for m in self.messages.values()
+                if m.variant_group_id == msg.variant_group_id
+            ]
+            for mid in ids_to_delete:
+                del self.messages[mid]
+        else:
+            del self.messages[message_id]
+
         return True
 
+    def get_message_variants(self, variant_group_id: str) -> list[Message]:
+        """Get all messages in a variant group, ordered by variant_index."""
+        variants = [
+            m for m in self.messages.values()
+            if m.variant_group_id == variant_group_id
+        ]
+        variants.sort(key=lambda m: m.variant_index)
+        return variants
+
     def delete_messages_after(self, conversation_id: str, message_id: str) -> int:
-        """Delete a message and all messages after it in a conversation."""
+        """Delete a message and all messages after it in a conversation.
+
+        If any deleted message belongs to a variant group that has other
+        variants outside the deletion range, those variants are also deleted
+        to avoid leaving incomplete groups.
+        """
         msg = self.messages.get(message_id)
         if not msg:
             return 0
 
         target_time = msg.timestamp
-        msg_ids_to_delete = [
+
+        # Find messages in the direct deletion range
+        in_range_ids = set(
             m.id for m in self.messages.values()
             if m.conversation_id == conversation_id and m.timestamp >= target_time
-        ]
+        )
 
-        for mid in msg_ids_to_delete:
+        # Find variant groups that are partially in the deletion range
+        groups_in_range: set[str] = set()
+        for mid in in_range_ids:
+            m = self.messages[mid]
+            if m.variant_group_id:
+                groups_in_range.add(m.variant_group_id)
+
+        # Add orphaned variants from those groups (variants before target_time)
+        orphan_ids: set[str] = set()
+        for m in self.messages.values():
+            if (m.variant_group_id in groups_in_range
+                    and m.id not in in_range_ids):
+                orphan_ids.add(m.id)
+
+        all_ids_to_delete = in_range_ids | orphan_ids
+
+        for mid in all_ids_to_delete:
             del self.messages[mid]
 
-        return len(msg_ids_to_delete)
+        return len(all_ids_to_delete)
 
     # ========================================================================
     # Profile Operations
@@ -460,7 +558,7 @@ class InMemoryStorage(StorageBackend):
     def update_profile(self, profile: Profile) -> None:
         """Update an existing profile."""
         if profile.id in self.profiles:
-            profile.updated_at = datetime.utcnow()
+            profile.updated_at = _utc_now()
             self.profiles[profile.id] = profile
 
     def delete_profile(self, profile_id: str) -> bool:
@@ -502,7 +600,7 @@ class InMemoryStorage(StorageBackend):
         for key, value in updates.items():
             if key != "type_id":
                 self.custom_types[type_id][key] = value
-        self.custom_types[type_id]["updated_at"] = datetime.utcnow().isoformat()
+        self.custom_types[type_id]["updated_at"] = _utc_now().isoformat()
         return True
 
     def delete_custom_type(self, type_id: str) -> bool:
@@ -530,8 +628,8 @@ class InMemoryStorage(StorageBackend):
             "fields": customization.get("fields"),
             "display_template": customization.get("display_template"),
             "icon": customization.get("icon"),
-            "created_at": customization.get("created_at", datetime.utcnow().isoformat()),
-            "updated_at": datetime.utcnow().isoformat(),
+            "created_at": customization.get("created_at", _utc_now().isoformat()),
+            "updated_at": _utc_now().isoformat(),
         }
 
     def hide_builtin_type(self, type_id: str) -> bool:
@@ -542,7 +640,7 @@ class InMemoryStorage(StorageBackend):
 
         if existing:
             existing["is_hidden"] = True
-            existing["updated_at"] = datetime.utcnow().isoformat()
+            existing["updated_at"] = _utc_now().isoformat()
         else:
             self.builtin_customizations[type_id] = {
                 "type_id": type_id,
@@ -552,8 +650,8 @@ class InMemoryStorage(StorageBackend):
                 "fields": None,
                 "display_template": None,
                 "icon": None,
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
+                "created_at": _utc_now().isoformat(),
+                "updated_at": _utc_now().isoformat(),
             }
         return True
 
@@ -574,7 +672,7 @@ class InMemoryStorage(StorageBackend):
 
         if has_customizations:
             existing["is_hidden"] = False
-            existing["updated_at"] = datetime.utcnow().isoformat()
+            existing["updated_at"] = _utc_now().isoformat()
         else:
             del self.builtin_customizations[type_id]
 

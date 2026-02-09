@@ -1043,7 +1043,7 @@ class Threadlight:
         """
         # Add profile scope if an active profile exists
         if profile_scope is None and self.active_profile:
-            profile_scope = self.active_profile.memory_scope
+            profile_scope = self.active_profile.id
 
         if profile_scope:
             kwargs["profile_scope"] = profile_scope
@@ -1879,7 +1879,7 @@ class Threadlight:
         self.memory.per_profile_isolation = enabled
         # Update current profile in memory orchestrator
         if enabled and self.active_profile:
-            self.memory.current_profile = self.active_profile.memory_scope or self.active_profile.id
+            self.memory.current_profile = self.active_profile.id
         logger.info(f"Per-profile memory isolation {'enabled' if enabled else 'disabled'}")
 
     # Deprecated: kept for backward compatibility
@@ -1994,7 +1994,7 @@ class Threadlight:
     def _update_memory_profile_scope(self) -> None:
         """Update the memory orchestrator's current profile reference."""
         if self.active_profile:
-            self.memory.current_profile = self.active_profile.memory_scope or self.active_profile.id
+            self.memory.current_profile = self.active_profile.id
 
     # Deprecated: kept for backward compatibility
     def _update_memory_model_scope(self) -> None:

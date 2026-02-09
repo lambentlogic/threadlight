@@ -100,7 +100,7 @@ class ProfileInterface:
             self.tl._load_style_profile(profile.style_profile_id)
 
         # Update memory orchestrator's scope (profile takes precedence)
-        self.tl.memory.current_profile = profile.memory_scope or profile.id
+        self.tl.memory.current_profile = profile.id
         self.tl.memory.current_model = profile.primary_model
 
         logger.info(f"Switched to profile: {profile.name} ({profile.id[:8]}...)")

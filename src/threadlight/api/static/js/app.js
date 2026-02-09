@@ -1,10 +1,10 @@
 /**
  * Threadlight Web UI - Alpine.js Application
- * Version: 2026-02-01-logging-model-fix
+ * Version: 2026-02-09-quality-variants-model-persist
  */
 
 // Log when script loads to verify we're running the updated version
-console.log('[app.js] Loading Threadlight app version 2026-02-01-logging-model-fix');
+console.log('[app.js] Loading Threadlight app version 2026-02-09-quality-variants-model-persist');
 
 function threadlightApp() {
     return {
@@ -40,6 +40,12 @@ function threadlightApp() {
         editingMessageId: null,
         editedMessageContent: '',
 
+        // Message variant state (for response regeneration with history)
+        // Map of variant_group_id -> {variants: [...], currentIndex: number}
+        messageVariants: {},
+        // Tracks which message IDs have variant groups (message_id -> variant_group_id)
+        messageVariantGroups: {},
+
         // WebSocket
         ws: null,
         wsConnected: false,
@@ -48,6 +54,7 @@ function threadlightApp() {
         memories: [],
         memorySearch: '',
         memoryTypeFilter: '',
+        memoryScopeFilter: '',  // '' = auto (server decides), 'shared' = shared only, '<profile_id>' = that profile only
         selectedMemory: null,
         showCreateMemory: false,
         showProposalsModal: false,
@@ -456,6 +463,12 @@ function threadlightApp() {
                     this.chatHistory = [];
                     break;
 
+                case 'regenerate_complete':
+                    // A new variant was generated - update the message in place
+                    this.handleRegenerateComplete(data);
+                    this.isTyping = false;
+                    break;
+
                 case 'continue_response':
                     // Append the continuation as a new assistant message
                     this.messages = [...this.messages, {
@@ -807,7 +820,14 @@ function threadlightApp() {
                     profile_id: msg.profile_id,
                     profile_name: this.getProfileNameById(msg.profile_id),
                     memories: [],
+                    variant_group_id: msg.variant_group_id || null,
+                    variant_index: msg.variant_index || 0,
                 }));
+
+                // Load variant data for messages that have variant groups
+                this.messageVariants = {};
+                this.messageVariantGroups = {};
+                await this.loadAllVariants();
 
                 // Rebuild chat history for context
                 this.chatHistory = this.messages.slice(-20).map(m => ({
@@ -1231,51 +1251,224 @@ function threadlightApp() {
         },
 
         async regenerateResponse(msg) {
-            // Find the user message that came before this assistant message
-            const msgIndex = this.messages.findIndex(m => m.id === msg.id);
-            if (msgIndex <= 0) {
-                this.showToast('Cannot regenerate: no previous user message', 'error');
+            // Create a new variant of this assistant message instead of deleting it
+            if (!msg.id) {
+                this.showToast('Cannot regenerate: message has no ID', 'error');
                 return;
             }
 
-            // Find the previous user message
-            let userMsgIndex = msgIndex - 1;
-            while (userMsgIndex >= 0 && this.messages[userMsgIndex].role !== 'user') {
-                userMsgIndex--;
-            }
+            try {
+                // Call the regenerate API to set up variant group and get user message
+                const response = await fetch(`/api/messages/${msg.id}/regenerate`, {
+                    method: 'POST',
+                });
 
-            if (userMsgIndex < 0) {
-                this.showToast('Cannot regenerate: no previous user message', 'error');
-                return;
-            }
+                if (!response.ok) {
+                    const err = await response.json();
+                    this.showToast(err.detail || 'Failed to regenerate', 'error');
+                    return;
+                }
 
-            const userMessage = this.messages[userMsgIndex].content;
+                const data = await response.json();
+                const { variant_group_id, next_variant_index, user_message, conversation_id } = data;
 
-            // Delete this message and all after it
-            if (msg.id) {
-                try {
-                    await fetch(`/api/messages/${msg.id}/and-after`, {
-                        method: 'DELETE',
+                // Update the current message's variant_group_id in local state
+                const msgIndex = this.messages.findIndex(m => m.id === msg.id);
+                if (msgIndex !== -1) {
+                    this.messages = this.messages.map((m, i) => {
+                        if (i === msgIndex) {
+                            return { ...m, variant_group_id };
+                        }
+                        return m;
                     });
-                } catch (error) {
-                    console.error('Failed to delete messages from server:', error);
+                }
+
+                // Send regeneration request via WebSocket
+                if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
+                    this.isTyping = true;
+                    this.ws.send(JSON.stringify({
+                        type: 'regenerate_variant',
+                        user_message: user_message,
+                        variant_group_id: variant_group_id,
+                        next_variant_index: next_variant_index,
+                        profile_id: this.activeProfileId,
+                        conversation_id: conversation_id,
+                    }));
+                } else {
+                    this.showToast('WebSocket not connected. Cannot regenerate.', 'error');
+                }
+            } catch (error) {
+                this.showToast('Failed to regenerate: ' + error.message, 'error');
+            }
+        },
+
+        // Load all variant groups for the current conversation's messages
+        async loadAllVariants() {
+            const variantGroupIds = new Set();
+            for (const msg of this.messages) {
+                if (msg.variant_group_id) {
+                    variantGroupIds.add(msg.variant_group_id);
+                    this.messageVariantGroups[msg.id] = msg.variant_group_id;
                 }
             }
 
-            // Remove from local state
-            this.messages = this.messages.slice(0, msgIndex);
-
-            // Resend the user message
-            if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({
-                    type: 'chat',
-                    message: userMessage,
-                    profile_id: this.activeProfileId,
-                    conversation_id: this.currentConversationId,
-                }));
-            } else {
-                await this.sendMessageHTTP(userMessage);
+            // Fetch variants for each group
+            for (const groupId of variantGroupIds) {
+                // Find any message with this group ID to use for the API call
+                const msgWithGroup = this.messages.find(m => m.variant_group_id === groupId);
+                if (msgWithGroup) {
+                    await this.loadMessageVariants(msgWithGroup.id);
+                }
             }
+        },
+
+        // Load variants for a specific message
+        async loadMessageVariants(messageId) {
+            try {
+                const response = await fetch(`/api/messages/${messageId}/variants`);
+                if (!response.ok) return;
+
+                const data = await response.json();
+                if (!data.variant_group_id || data.variants.length <= 1) return;
+
+                const groupId = data.variant_group_id;
+
+                // Find which variant is currently displayed
+                const displayedMsg = this.messages.find(m => m.variant_group_id === groupId);
+                let currentIndex = data.variants.length - 1; // Default to latest
+                if (displayedMsg) {
+                    const idx = data.variants.findIndex(v => v.id === displayedMsg.id);
+                    if (idx >= 0) currentIndex = idx;
+                }
+
+                this.messageVariants[groupId] = {
+                    variants: data.variants,
+                    currentIndex: currentIndex,
+                };
+
+                // Map all variant message IDs to this group
+                for (const v of data.variants) {
+                    this.messageVariantGroups[v.id] = groupId;
+                }
+            } catch (error) {
+                console.error('Failed to load message variants:', error);
+            }
+        },
+
+        // Get variant info for a message (used by template)
+        getVariantInfo(msg) {
+            const groupId = msg.variant_group_id || this.messageVariantGroups[msg.id];
+            if (!groupId || !this.messageVariants[groupId]) return null;
+            return this.messageVariants[groupId];
+        },
+
+        // Switch to a different variant (direction: 'prev' or 'next')
+        switchToVariant(msg, direction) {
+            const groupId = msg.variant_group_id || this.messageVariantGroups[msg.id];
+            if (!groupId || !this.messageVariants[groupId]) return;
+
+            const variantData = this.messageVariants[groupId];
+            const newIndex = direction === 'prev'
+                ? Math.max(0, variantData.currentIndex - 1)
+                : Math.min(variantData.variants.length - 1, variantData.currentIndex + 1);
+
+            if (newIndex === variantData.currentIndex) return;
+
+            variantData.currentIndex = newIndex;
+            const newVariant = variantData.variants[newIndex];
+
+            // Update the message content in the messages array
+            const msgIndex = this.messages.findIndex(m =>
+                m.variant_group_id === groupId ||
+                this.messageVariantGroups[m.id] === groupId
+            );
+
+            if (msgIndex !== -1) {
+                // Create a new messages array for reactivity
+                this.messages = this.messages.map((m, i) => {
+                    if (i === msgIndex) {
+                        return {
+                            ...m,
+                            id: newVariant.id,
+                            content: newVariant.content,
+                            variant_index: newVariant.variant_index,
+                            variant_group_id: groupId,
+                        };
+                    }
+                    return m;
+                });
+            }
+
+            // Force reactivity update
+            this.messageVariants = { ...this.messageVariants };
+        },
+
+        // Handle a completed regeneration with variant data
+        handleRegenerateComplete(data) {
+            const { content, message_id, variant_group_id, variant_index, usage } = data;
+
+            // Find the message in the display that belongs to this variant group
+            const msgIndex = this.messages.findIndex(m =>
+                m.variant_group_id === variant_group_id ||
+                this.messageVariantGroups[m.id] === variant_group_id
+            );
+
+            if (msgIndex === -1) {
+                console.error('Could not find message for variant group:', variant_group_id);
+                return;
+            }
+
+            // Build the new variant object
+            const newVariant = {
+                id: message_id,
+                content: content,
+                variant_index: variant_index,
+                variant_group_id: variant_group_id,
+            };
+
+            // Update or create the variant group state
+            if (!this.messageVariants[variant_group_id]) {
+                // First regeneration - create the group with the original + new variant
+                const originalMsg = this.messages[msgIndex];
+                this.messageVariants[variant_group_id] = {
+                    variants: [
+                        {
+                            id: originalMsg.id,
+                            content: originalMsg.content,
+                            variant_index: 0,
+                            variant_group_id: variant_group_id,
+                        },
+                        newVariant,
+                    ],
+                    currentIndex: 1, // Show the new variant
+                };
+            } else {
+                // Add to existing variant group
+                this.messageVariants[variant_group_id].variants.push(newVariant);
+                this.messageVariants[variant_group_id].currentIndex =
+                    this.messageVariants[variant_group_id].variants.length - 1;
+            }
+
+            // Map the new variant's message ID to this group
+            this.messageVariantGroups[message_id] = variant_group_id;
+
+            // Update the displayed message to show the new variant
+            this.messages = this.messages.map((m, i) => {
+                if (i === msgIndex) {
+                    return {
+                        ...m,
+                        id: message_id,
+                        content: content,
+                        variant_group_id: variant_group_id,
+                        variant_index: variant_index,
+                        usage: usage || m.usage,
+                    };
+                }
+                return m;
+            });
+
+            // Force reactivity update
+            this.messageVariants = { ...this.messageVariants };
         },
 
         // Copy assistant message content to clipboard
@@ -1431,6 +1624,22 @@ function threadlightApp() {
                 if (this.memorySearch) params.append('search', this.memorySearch);
                 if (this.showArchived) params.append('include_archived', 'true');
                 params.append('limit', '100');
+
+                // Profile scope filtering
+                if (this.memoryScopeFilter === 'shared') {
+                    params.append('profile_scope', '__none__');
+                    params.append('include_shared', 'true');
+                } else if (this.memoryScopeFilter === 'all') {
+                    params.append('profile_scope', '__all__');
+                } else if (this.memoryScopeFilter) {
+                    // Specific profile ID selected
+                    params.append('profile_scope', this.memoryScopeFilter);
+                    params.append('include_shared', 'false');
+                } else if (this.activeProfileId) {
+                    // Default: explicitly send active profile ID so server doesn't rely on stale state
+                    params.append('profile_scope', this.activeProfileId);
+                }
+                // If no active profile and no filter, server returns all (no scope filter)
 
                 const response = await fetch(`/api/memories?${params}`);
                 const data = await response.json();
@@ -1990,6 +2199,71 @@ function threadlightApp() {
             }
         },
 
+        async bulkAssignToProfile() {
+            if (this.selectedMemoryIds.length === 0) return;
+
+            const profileId = this.activeProfileId;
+            if (!profileId) {
+                this.showToast('No active profile selected', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/memories/batch-assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        capsule_ids: this.selectedMemoryIds,
+                        profile_id: profileId
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) throw new Error(result.detail || 'Failed to assign memories');
+
+                const profileName = this.profiles.find(p => p.id === profileId)?.name || profileId;
+                this.showToast(`Assigned ${result.summary.successful} memories to ${profileName}`);
+                if (result.summary.failed > 0) {
+                    this.showToast(`${result.summary.failed} memories failed to assign`, 'error');
+                }
+
+                this.selectedMemoryIds = [];
+                await this.loadMemories();
+            } catch (error) {
+                this.showToast('Failed to assign memories: ' + error.message, 'error');
+            }
+        },
+
+        async bulkShareMemories() {
+            if (this.selectedMemoryIds.length === 0) return;
+
+            try {
+                const response = await fetch('/api/memories/batch-assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        capsule_ids: this.selectedMemoryIds,
+                        profile_id: null
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) throw new Error(result.detail || 'Failed to share memories');
+
+                this.showToast(`Shared ${result.summary.successful} memories across all profiles`);
+                if (result.summary.failed > 0) {
+                    this.showToast(`${result.summary.failed} memories failed to share`, 'error');
+                }
+
+                this.selectedMemoryIds = [];
+                await this.loadMemories();
+            } catch (error) {
+                this.showToast('Failed to share memories: ' + error.message, 'error');
+            }
+        },
+
         async archiveMemory(memoryId, archived = true) {
             try {
                 const response = await fetch('/api/memories/batch-archive', {
@@ -2178,7 +2452,7 @@ Provide ALL your tier assignments in ONE JSON code block:
 }
 \`\`\`
 
-After I click "Apply Suggestions", I'll parse this to update the tiers. Please briefly explain your tiering philosophy.`;
+I can hit "Apply & Continue" to see what's left, or "Apply & Conclude" when we're done. Please briefly explain your tiering philosophy.`;
 
                 this.inputMessage = message;
                 // Auto-call the list action and include results in context
@@ -2194,7 +2468,7 @@ After I click "Apply Suggestions", I'll parse this to update the tiers. Please b
             }
         },
 
-        async applyTierSuggestions() {
+        async applyTierSuggestions(continueReview = true) {
             // Parse JSON blocks from the last assistant message
             const assistantMessages = this.messages.filter(m => m.role === 'assistant');
             if (assistantMessages.length === 0) {
@@ -2254,12 +2528,29 @@ After I click "Apply Suggestions", I'll parse this to update the tiers. Please b
                 // Refresh memories list
                 await this.loadMemories();
 
-                // Auto-refresh context for Fable - send updated memory list so she can continue
-                this.inputMessage = `Applied ${updateCount} tier changes. Here's the updated memory list:`;
-                await this.sendMessage({ autoTool: { name: 'review_memory_tiers', action: 'list' } });
-
-                // Keep tier review mode active so button stays visible
-                this.isTierReviewConversation = true;
+                if (continueReview) {
+                    // Auto-refresh context - send updated memory list so they can continue
+                    this.inputMessage = `Applied ${updateCount} tier changes. Here's the updated memory list:`;
+                    await this.sendMessage({ autoTool: { name: 'review_memory_tiers', action: 'list' } });
+                    // Keep tier review mode active so button stays visible
+                    this.isTierReviewConversation = true;
+                } else {
+                    // Exit tier review mode - clear the purpose from conversation metadata
+                    this.isTierReviewConversation = false;
+                    // Update conversation to remove the purpose so buttons don't reappear
+                    if (this.currentConversationId) {
+                        try {
+                            await fetch(`/api/conversations/${this.currentConversationId}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ purpose: '' }),
+                            });
+                        } catch (e) {
+                            console.error('Failed to clear conversation purpose:', e);
+                        }
+                    }
+                    this.showToast(`Tier review complete! Updated ${updateCount} memory tiers.`);
+                }
             } catch (error) {
                 console.error('[applyTierSuggestions] Error:', error);
                 this.showToast('Failed to apply suggestions: ' + error.message, 'error');
@@ -3150,11 +3441,16 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         },
 
         async assignMemoryToProfile(memoryId, profileId = null) {
+            const effectiveProfileId = profileId || this.activeProfileId;
+            if (!effectiveProfileId) {
+                this.showToast('No active profile selected', 'error');
+                return;
+            }
             try {
                 const response = await fetch(`/api/memories/${memoryId}/assign`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ profile_id: profileId }),
+                    body: JSON.stringify({ profile_id: effectiveProfileId }),
                 });
 
                 if (!response.ok) throw new Error('Failed to assign memory');
@@ -3320,6 +3616,25 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 }
                 // Also load provider_id from config if present
                 this.currentModelProviderId = this.currentModelConfig.provider_id || '';
+
+                // Persist model change to the current conversation so it
+                // survives reloads and conversation switches
+                if (this.currentConversationId) {
+                    try {
+                        const convResponse = await fetch(`/api/conversations/${this.currentConversationId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ model: modelId }),
+                        });
+                        if (convResponse.ok) {
+                            console.log('[switchModel] Persisted model to conversation:', this.currentConversationId, modelId);
+                        } else {
+                            console.error('[switchModel] Failed to persist model to conversation:', convResponse.status, await convResponse.text());
+                        }
+                    } catch (err) {
+                        console.error('[switchModel] Failed to persist model to conversation:', err);
+                    }
+                }
 
                 // Reload config and models (preserve our selection)
                 await this.loadConfig();

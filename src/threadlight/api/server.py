@@ -157,6 +157,12 @@ class BatchArchiveRequest(BaseModel):
     archived: bool = True  # True to archive, False to unarchive
 
 
+class BatchAssignRequest(BaseModel):
+    """Batch memory scope assignment request."""
+    capsule_ids: list[str]
+    profile_id: Optional[str] = None  # None means share (remove scope)
+
+
 class MemoryTypeConversion(BaseModel):
     """Single memory type conversion."""
     memory_id: str
@@ -431,6 +437,22 @@ def get_threadlight() -> Threadlight:
     return _tl
 
 
+def _ensure_profile_active(tl: Threadlight, profile_id: Optional[str]) -> None:
+    """Switch to the given profile if it is not already active.
+
+    Silently ignores missing profiles so callers don't need their own
+    try/except blocks.
+    """
+    if not profile_id:
+        return
+    try:
+        current_profile_id = tl.active_profile.id if tl.active_profile else None
+        if profile_id != current_profile_id:
+            tl.switch_profile(profile_id)
+    except Exception as e:
+        logger.warning(f"Failed to switch profile: {e}")
+
+
 async def broadcast_message(message: dict[str, Any]) -> None:
     """Broadcast a message to all connected WebSocket clients."""
     disconnected = []
@@ -592,13 +614,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         # Activate the profile if specified so its model/provider is used
         if hasattr(request, 'profile_id') and request.profile_id:
-            try:
-                current_profile_id = tl.active_profile.id if tl.active_profile else None
-                if request.profile_id != current_profile_id:
-                    tl.switch_profile(request.profile_id)
-            except (ValueError, AttributeError):
-                # Profile not found or other error - continue without profile
-                pass
+            _ensure_profile_active(tl, request.profile_id)
 
         try:
             # Get memories that will be recalled for context
@@ -689,13 +705,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     logger.info(f"[WebSocket] Chat message received. profile_id={profile_id}, conv_id={conversation_id}, msg_len={len(message)}")
 
                     # Activate profile if specified
-                    if profile_id:
-                        try:
-                            current_profile_id = tl.active_profile.id if tl.active_profile else None
-                            if profile_id != current_profile_id:
-                                tl.switch_profile(profile_id)
-                        except Exception as e:
-                            logger.warning(f"Failed to switch profile: {e}")
+                    _ensure_profile_active(tl, profile_id)
 
                     # Determine model_id from active profile
                     model_id = None
@@ -842,13 +852,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     logger.info(f"[WebSocket] Continue request received. profile_id={profile_id}, conv_id={conversation_id}")
 
                     # Activate profile if specified
-                    if profile_id:
-                        try:
-                            current_profile_id = tl.active_profile.id if tl.active_profile else None
-                            if profile_id != current_profile_id:
-                                tl.switch_profile(profile_id)
-                        except Exception as e:
-                            logger.warning(f"Failed to switch profile: {e}")
+                    _ensure_profile_active(tl, profile_id)
 
                     # Determine model_id from active profile
                     model_id = None
@@ -899,6 +903,100 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                         await websocket.send_json({
                             "type": "error",
                             "message": str(e),
+                        })
+                    finally:
+                        await websocket.send_json({"type": "typing", "status": False})
+
+                elif data.get("type") == "regenerate_variant":
+                    # Regenerate a response as a new variant (keeps old response)
+                    profile_id = data.get("profile_id")
+                    conversation_id = data.get("conversation_id")
+                    user_message = data.get("user_message")
+                    variant_group_id = data.get("variant_group_id")
+                    next_variant_index = data.get("next_variant_index", 1)
+
+                    logger.info(f"[WebSocket] Regenerate variant request. variant_group={variant_group_id}, conv_id={conversation_id}")
+
+                    # Activate profile if specified
+                    _ensure_profile_active(tl, profile_id)
+
+                    # Determine model_id from active profile
+                    model_id = None
+                    if tl.active_profile and tl.active_profile.primary_model:
+                        model_id = tl.active_profile.primary_model
+
+                    # Get contextual tools
+                    conversation_purpose = None
+                    if conversation_id:
+                        try:
+                            conversation = tl.storage.get_conversation(conversation_id)
+                            if conversation and conversation.metadata:
+                                conversation_purpose = conversation.metadata.get("purpose")
+                        except Exception:
+                            pass
+
+                    contextual_tools = get_contextual_tools(conversation_purpose)
+
+                    # Load full conversation history for context
+                    regen_history = []
+                    if conversation_id:
+                        try:
+                            conv_messages = tl.storage.get_messages(conversation_id)
+                            for msg in conv_messages:
+                                regen_history.append({"role": msg.role, "content": msg.content})
+                        except Exception:
+                            pass
+
+                    await websocket.send_json({"type": "typing", "status": True})
+
+                    try:
+                        response = tl.chat_with_context(user_message, history=regen_history, model_id=model_id, tools=contextual_tools)
+                        full_response = response.content
+
+                        # Save the new variant to database
+                        from threadlight.storage.base import Message as StorageMessage
+                        from datetime import datetime as dt_now
+                        variant_msg = StorageMessage(
+                            id=str(uuid.uuid4()),
+                            conversation_id=conversation_id,
+                            role="assistant",
+                            content=full_response,
+                            timestamp=dt_now.utcnow(),
+                            source="local",
+                            metadata={},
+                            variant_group_id=variant_group_id,
+                            variant_index=next_variant_index,
+                        )
+                        if tl.active_profile:
+                            variant_msg.profile_id = tl.active_profile.id
+                            variant_msg.model_used = tl.active_profile.primary_model
+
+                        tl.storage.save_message(variant_msg)
+
+                        # Extract token usage
+                        usage = None
+                        if hasattr(response, 'prompt_tokens') and hasattr(response, 'completion_tokens'):
+                            usage = {
+                                "prompt_tokens": response.prompt_tokens,
+                                "completion_tokens": response.completion_tokens,
+                                "total_tokens": response.total_tokens,
+                            }
+
+                        await websocket.send_json({
+                            "type": "regenerate_complete",
+                            "content": full_response,
+                            "message_id": variant_msg.id,
+                            "variant_group_id": variant_group_id,
+                            "variant_index": next_variant_index,
+                            "usage": usage,
+                        })
+                    except Exception as e:
+                        error_msg = str(e)
+                        is_rate_limit = "rate limit" in error_msg.lower() or "429" in error_msg
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": error_msg,
+                            "is_rate_limit": is_rate_limit,
                         })
                     finally:
                         await websocket.send_json({"type": "typing", "status": False})
@@ -968,7 +1066,11 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             limit: Max memories to return
             offset: Offset for pagination
             search: Text search in content
-            profile_scope: Filter by profile scope (uses active profile if per_profile_isolation enabled)
+            profile_scope: Filter by profile scope. Accepts special values:
+                - ``__all__`` -- return all memories regardless of scope
+                - ``__none__`` -- return only shared (NULL scope) memories
+                - ``<profile_id>`` -- return memories scoped to that specific profile
+                If omitted, uses the active profile when per_profile_isolation is enabled.
             include_shared: Include memories with no profile_scope (shared)
             include_archived: Include archived memories (default: hidden)
         """
@@ -979,17 +1081,29 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         capsule_type = CapsuleType(type) if type else None
 
         # Use provided profile_scope, or active profile if isolation is enabled
+        # Special values: '__all__' = no scope filter, '__none__' = shared only (NULL scope)
+        skip_scope_filter = False
+        shared_only = False
+
+        if profile_scope == '__all__':
+            skip_scope_filter = True
+            profile_scope = None
+        elif profile_scope == '__none__':
+            shared_only = True
+            profile_scope = None
+
         effective_scope = profile_scope
-        if effective_scope is None and tl.config.memory.per_profile_isolation:
-            if tl.active_profile:
-                effective_scope = tl.active_profile.memory_scope or tl.active_profile.id
+        if effective_scope is None and not skip_scope_filter and not shared_only:
+            if tl.config.memory.per_profile_isolation and tl.active_profile:
+                effective_scope = tl.active_profile.id
 
         filter = CapsuleFilter(
             type=capsule_type,
             limit=limit,
             offset=offset,
-            profile_scope=effective_scope if tl.config.memory.per_profile_isolation else None,
+            profile_scope=effective_scope if (tl.config.memory.per_profile_isolation and not skip_scope_filter) else None,
             include_shared=include_shared,
+            shared_only=shared_only,
             include_archived=include_archived,
         )
 
@@ -1240,6 +1354,65 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     "archived": request.archived
                 })
                 results["summary"]["successful"] += 1
+
+            except Exception as e:
+                results["errors"].append({
+                    "capsule_id": capsule_id,
+                    "error": str(e)
+                })
+                results["summary"]["failed"] += 1
+
+        return results
+
+    @app.post("/api/memories/batch-assign")
+    async def batch_assign_memories(request: BatchAssignRequest):
+        """
+        Batch assign memory capsules to a profile scope.
+
+        Assigns multiple memories to a specific profile, or shares them
+        (removes profile scope) if profile_id is null.
+        Returns summary of successful assignments and any errors encountered.
+        """
+        tl = get_threadlight()
+
+        # Validate target profile exists before processing any assignments
+        if request.profile_id is not None:
+            profile = tl.get_profile(request.profile_id)
+            if not profile:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Target profile not found: {request.profile_id}"
+                )
+
+        results = {
+            "updated": [],
+            "errors": [],
+            "summary": {
+                "total": len(request.capsule_ids),
+                "successful": 0,
+                "failed": 0
+            }
+        }
+
+        for capsule_id in request.capsule_ids:
+            try:
+                if request.profile_id is None:
+                    success = tl.share_memory(capsule_id)
+                else:
+                    success = tl.assign_memory_to_profile(capsule_id, request.profile_id)
+
+                if success:
+                    results["updated"].append({
+                        "capsule_id": capsule_id,
+                        "profile_scope": request.profile_id,
+                    })
+                    results["summary"]["successful"] += 1
+                else:
+                    results["errors"].append({
+                        "capsule_id": capsule_id,
+                        "error": "Memory not found"
+                    })
+                    results["summary"]["failed"] += 1
 
             except Exception as e:
                 results["errors"].append({
@@ -4295,6 +4468,135 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         return {"status": "deleted", "count": deleted_count}
 
+    @app.get("/api/messages/{message_id}/variants")
+    async def get_message_variants_api(message_id: str):
+        """Get all variants for a message's variant group.
+
+        If the message has a variant_group_id, returns all messages in that group.
+        If not, returns just the single message (it has no variants).
+        """
+        tl = get_threadlight()
+
+        message = tl.storage.get_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        if not message.variant_group_id:
+            # No variant group - this is the only variant
+            return {
+                "variants": [message.to_dict()],
+                "variant_group_id": None,
+                "current_index": 0,
+            }
+
+        variants = tl.storage.get_message_variants(message.variant_group_id)
+        # Find the index of the requested message within the variants
+        current_index = 0
+        for i, v in enumerate(variants):
+            if v.id == message_id:
+                current_index = i
+                break
+
+        return {
+            "variants": [v.to_dict() for v in variants],
+            "variant_group_id": message.variant_group_id,
+            "current_index": current_index,
+        }
+
+    @app.post("/api/messages/{message_id}/regenerate")
+    async def regenerate_message_api(message_id: str):
+        """Prepare a message for regeneration by creating a variant group.
+
+        This assigns a variant_group_id to the message if it doesn't have one,
+        and returns the information needed for the frontend to create a new variant
+        after the LLM response comes back.
+        """
+        tl = get_threadlight()
+        from threadlight.storage.base import Message as StorageMessage
+
+        message = tl.storage.get_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        if message.role != "assistant":
+            raise HTTPException(status_code=400, detail="Can only regenerate assistant messages")
+
+        # Assign variant_group_id if this is the first regeneration
+        if not message.variant_group_id:
+            message.variant_group_id = str(uuid.uuid4())
+            message.variant_index = 0
+            tl.storage.save_message(message)  # Uses INSERT OR REPLACE
+
+        # Find the previous user message for re-sending
+        conv_messages = tl.storage.get_messages(message.conversation_id, limit=1000)
+        user_message_content = None
+        for i, m in enumerate(conv_messages):
+            if m.id == message_id and i > 0:
+                # Walk backwards to find the user message
+                for j in range(i - 1, -1, -1):
+                    if conv_messages[j].role == "user":
+                        user_message_content = conv_messages[j].content
+                        break
+                break
+
+        if not user_message_content:
+            raise HTTPException(status_code=400, detail="No previous user message found")
+
+        # Calculate next variant index
+        variants = tl.storage.get_message_variants(message.variant_group_id)
+        next_index = max(v.variant_index for v in variants) + 1
+
+        return {
+            "variant_group_id": message.variant_group_id,
+            "next_variant_index": next_index,
+            "user_message": user_message_content,
+            "conversation_id": message.conversation_id,
+        }
+
+    @app.post("/api/messages/save-variant")
+    async def save_variant_message_api(request: dict):
+        """Save a new variant message after LLM generates a response.
+
+        Expected request body:
+        {
+            "conversation_id": "...",
+            "content": "...",
+            "variant_group_id": "...",
+            "variant_index": 1,
+            "profile_id": "..." (optional),
+            "model_used": "..." (optional)
+        }
+        """
+        tl = get_threadlight()
+        from threadlight.storage.base import Message as StorageMessage
+        from datetime import datetime as dt
+
+        conversation_id = request.get("conversation_id")
+        content = request.get("content")
+        variant_group_id = request.get("variant_group_id")
+        variant_index = request.get("variant_index", 0)
+
+        if not all([conversation_id, content, variant_group_id]):
+            raise HTTPException(status_code=400, detail="Missing required fields")
+
+        message = StorageMessage(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            role="assistant",
+            content=content,
+            timestamp=dt.utcnow(),
+            source="local",
+            metadata={},
+            profile_id=request.get("profile_id"),
+            model_used=request.get("model_used"),
+            variant_group_id=variant_group_id,
+            variant_index=variant_index,
+        )
+
+        tl.storage.save_message(message)
+
+        return message.to_dict()
+
     # ========================================================================
     # Memory Type Management Endpoints
     # ========================================================================
@@ -4640,9 +4942,17 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         if scope_id is None:
             # If no scope provided, assign to active profile
             if tl.active_profile:
-                scope_id = tl.active_profile.memory_scope or tl.active_profile.id
+                scope_id = tl.active_profile.id
             else:
                 raise HTTPException(status_code=400, detail="No active profile to assign to")
+
+        # Validate target profile exists
+        profile = tl.get_profile(scope_id)
+        if not profile:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Target profile not found: {scope_id}"
+            )
 
         success = tl.assign_memory_to_profile(capsule_id, scope_id)
         if not success:
