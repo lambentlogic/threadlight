@@ -280,20 +280,31 @@ class TestThreadlightRituals:
         ritual.consent_confirmed = True
         tl.storage.save_capsule(ritual)
 
-        # Invoke the ritual
-        response = tl.invoke_ritual("/snuggle")
+        # Mock provider_manager since profiles use it for model routing
+        with patch.object(tl, 'provider_manager') as mock_pm:
+            mock_pm.complete.return_value = ProviderResponse(
+                content="*warm snuggles*",
+                finish_reason="stop",
+                model="test-model",
+            )
 
-        # Verify the mock provider was called
-        assert mock_provider.complete.called
-        call_args = mock_provider.complete.call_args
-        messages = call_args[0][0]
+            # Invoke the ritual
+            response = tl.invoke_ritual("/snuggle")
 
-        # Find system message
-        system_msg = next((m for m in messages if m.role == "system"), None)
-        assert system_msg is not None
+            # Verify the mock provider_manager was called
+            assert mock_pm.complete.called
+            call_args = mock_pm.complete.call_args
 
-        # The system message should include profile's system_prompt
-        assert "tender presence" in system_msg.content.lower()
+            # Check that messages were passed
+            assert 'messages' in call_args.kwargs or len(call_args.args) > 0
+            messages = call_args.kwargs.get('messages', call_args.args[0] if call_args.args else [])
+
+            # Find system message
+            system_msg = next((m for m in messages if m.role == "system"), None)
+            assert system_msg is not None
+
+            # The system message should include profile's system_prompt
+            assert "tender presence" in system_msg.content.lower()
 
         tl.close()
 
