@@ -931,7 +931,20 @@ class Threadlight:
             content=user_content,
         ))
 
-        response = self.provider.complete(messages)
+        # Use active profile's model configuration (not default provider)
+        model_id = None
+        if self.active_profile:
+            model_id = self.active_profile.primary_model
+
+        # Route to appropriate provider based on model configuration
+        if model_id and hasattr(self, 'provider_manager') and self.config.providers:
+            response = self.provider_manager.complete(
+                model_id=model_id,
+                messages=messages,
+            )
+        else:
+            response = self.provider.complete(messages)
+
         return response.content
 
     def clear_ritual(self) -> None:
