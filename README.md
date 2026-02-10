@@ -30,19 +30,34 @@ Threadlight enables AI companions to:
 
 ## Getting Started
 
+### Prerequisites
+
+You'll need Python 3.10 or newer installed on your computer.
+
+**Check if you have Python:**
+```bash
+python --version
+```
+
+**Don't have Python?** Download it from [python.org](https://www.python.org/downloads/)
+- Windows/Mac: Use the installer
+- Linux: Usually pre-installed, or install via your package manager
+
+**What is pip?** It's Python's package installer (comes with Python). If `pip` doesn't work, try `pip3` or `python -m pip` instead.
+
 ### Installation
 
-1. Install Threadlight:
+1. **Install Threadlight:**
    ```bash
    pip install threadlight
    ```
 
-2. Start the web server:
+2. **Start the web server:**
    ```bash
    threadlight serve
    ```
 
-3. Open your browser to `http://localhost:8745`
+3. **Open your browser to `http://localhost:8745`**
 
 That's it! You can now configure your companions through the web interface.
 
