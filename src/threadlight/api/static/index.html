@@ -277,13 +277,13 @@
 
                         <button @click="currentView = 'rituals'"
                             :class="currentView === 'rituals' ? 'bg-threadlight-elevated text-threadlight-ritual' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
-                            :title="currentView === 'chat' ? 'Commands' : ''"
+                            :title="currentView === 'chat' ? 'Invocations' : ''"
                             class="sidebar-nav-item px-4 py-2 rounded-lg text-left flex items-center gap-3 transition-colors"
                             :class="currentView === 'chat' ? 'px-3 py-1.5' : 'w-full'">
                             <svg class="w-5 h-5 flex-shrink-0" :class="currentView === 'chat' ? 'w-4 h-4' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
                             </svg>
-                            <span x-show="currentView !== 'chat'">Commands</span>
+                            <span x-show="currentView !== 'chat'">Invocations</span>
                         </button>
 
                         <button @click="currentView = 'settings'"
@@ -613,7 +613,7 @@
                                     Saved
                                 </span>
 
-                                <!-- Command Quick Access -->
+                                <!-- Invocation Quick Access -->
                                 <div class="flex gap-1 hidden md:flex">
                                     <template x-for="ritual in quickRituals" :key="ritual">
                                         <button @click="invokeRitual(ritual)"
@@ -918,7 +918,7 @@
                             <textarea
                                 x-model="inputMessage"
                                 @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); if (inputMessage.trim() && !isTyping) sendMessage(); }"
-                                placeholder="Type a message or use /command..."
+                                placeholder="Type a message or use /glimmer, /snuggle..."
                                 rows="1"
                                 class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-xl px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-none"
                                 style="max-height: 200px; overflow-y: auto;"
@@ -995,7 +995,7 @@
                                 <option value="">All Types</option>
                                 <option value="relational">Relational</option>
                                 <option value="myth_seed">Identity Phrase</option>
-                                <option value="ritual">Command</option>
+                                <option value="ritual">Invocation</option>
                                 <option value="witness">Witness</option>
                                 <option value="style">Style</option>
                                 <option value="note">Note</option>
@@ -1119,31 +1119,31 @@
                 </div>
             </template>
 
-            <!-- Commands View -->
+            <!-- Invocations View -->
             <template x-if="currentView === 'rituals'">
                 <div class="flex-1 flex flex-col overflow-hidden">
                     <header class="px-6 py-4 border-b border-threadlight-border">
-                        <h2 class="text-lg font-semibold">Custom Commands</h2>
+                        <h2 class="text-lg font-semibold">Custom Invocations</h2>
                         <p class="text-sm text-threadlight-muted">Create shortcuts for common interactions or special responses</p>
                     </header>
 
                     <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
-                        <!-- Empty state when no commands -->
+                        <!-- Empty state when no invocations -->
                         <div x-show="rituals.length === 0" class="text-center py-12 mb-8">
                             <svg class="w-16 h-16 mx-auto mb-4 text-threadlight-ritual/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
                             </svg>
-                            <h3 class="text-lg font-medium text-threadlight-muted mb-2">No custom commands yet</h3>
+                            <h3 class="text-lg font-medium text-threadlight-muted mb-2">No custom invocations yet</h3>
                             <p class="text-sm text-threadlight-muted/70 max-w-md mx-auto mb-4">
-                                Commands are custom shortcuts that trigger specific response styles.
+                                Invocations are custom shortcuts that trigger specific response styles.
                                 Use them for greetings, check-ins, or any interaction you want to personalize.
                             </p>
                             <p class="text-xs text-threadlight-muted/50 max-w-sm mx-auto">
-                                Create your first command below to get started.
+                                Create your first invocation below to get started.
                             </p>
                         </div>
 
-                        <!-- Command grid when commands exist -->
+                        <!-- Invocation grid when invocations exist -->
                         <div x-show="rituals.length > 0" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                             <template x-for="ritual in rituals" :key="ritual.id || ritual.name">
                                 <div @click="viewRitual(ritual)" class="bg-threadlight-elevated rounded-xl p-4 hover:bg-threadlight-elevated/80 transition-colors cursor-pointer">
@@ -1165,14 +1165,14 @@
                             </template>
                         </div>
 
-                        <!-- Create Custom Command -->
+                        <!-- Create Custom Invocation -->
                         <div class="mt-8 p-6 bg-threadlight-surface rounded-xl border border-dashed border-threadlight-border">
-                            <h3 class="text-lg font-medium mb-4">Create Custom Command</h3>
+                            <h3 class="text-lg font-medium mb-4">Create Custom Invocation</h3>
                             <form @submit.prevent="createRitual()" class="space-y-4">
                                 <div class="grid gap-4 md:grid-cols-2">
                                     <div>
                                         <label class="block text-sm text-threadlight-muted mb-1">Name</label>
-                                        <input type="text" x-model="newRitual.name" placeholder="/your-command"
+                                        <input type="text" x-model="newRitual.name" placeholder="/your-invocation"
                                             class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                                     </div>
                                     <div>
@@ -1183,7 +1183,7 @@
                                 </div>
                                 <div>
                                     <label class="block text-sm text-threadlight-muted mb-1">Description</label>
-                                    <input type="text" x-model="newRitual.description" placeholder="What this command does..."
+                                    <input type="text" x-model="newRitual.description" placeholder="What this invocation does..."
                                         class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                                 </div>
                                 <div>
@@ -1194,7 +1194,7 @@
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                             </svg>
                                             <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-threadlight-bg border border-threadlight-border rounded-lg text-xs text-threadlight-text w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10 shadow-lg">
-                                                Describe the tone and approach for this command. The AI will respond naturally while following this guidance.
+                                                Describe the tone and approach for this invocation. The AI will respond naturally while following this guidance.
                                             </div>
                                         </div>
                                     </div>
@@ -1203,7 +1203,7 @@
                                     <p class="text-xs text-threadlight-muted mt-1">Describe the style and tone, not the exact words to say.</p>
                                 </div>
                                 <button type="submit" class="px-6 py-2 bg-threadlight-ritual hover:bg-threadlight-ritual/80 text-white rounded-lg transition-colors">
-                                    Create Command
+                                    Create Invocation
                                 </button>
                             </form>
                         </div>
@@ -3227,7 +3227,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
             </div>
         </div>
 
-        <!-- Command Detail Modal -->
+        <!-- Invocation Detail Modal -->
         <div x-show="selectedRitual && !editingRitual" x-cloak
             x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0"
@@ -3246,7 +3246,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                 x-transition:leave-end="opacity-0 scale-95">
                 <div class="p-6">
                     <div class="flex items-center justify-between mb-4">
-                        <span class="px-3 py-1 rounded bg-indigo-500/20 text-indigo-400">Command</span>
+                        <span class="px-3 py-1 rounded bg-indigo-500/20 text-indigo-400">Invocation</span>
                         <button @click="selectedRitual = null" class="text-threadlight-muted hover:text-threadlight-text">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -3316,7 +3316,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
             </div>
         </div>
 
-        <!-- Command Edit Modal -->
+        <!-- Invocation Edit Modal -->
         <div x-show="editingRitual" x-cloak
             x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0"
@@ -3335,7 +3335,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                 x-transition:leave-end="opacity-0 scale-95">
                 <div class="p-6">
                     <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-lg font-medium">Edit Command</h3>
+                        <h3 class="text-lg font-medium">Edit Invocation</h3>
                         <button @click="editingRitual = null" class="text-threadlight-muted hover:text-threadlight-text">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -3347,31 +3347,24 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                         <div class="grid gap-4 md:grid-cols-2">
                             <div>
                                 <label class="block text-sm text-threadlight-muted mb-1">Name</label>
-                                <input type="text" x-model="editingRitual.name" placeholder="/your-command"
+                                <input type="text" x-model="editingRitual.name" placeholder="/your-invocation"
                                     class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                             </div>
                             <div>
                                 <label class="block text-sm text-threadlight-muted mb-1">Tone</label>
-                                <select x-model="editingRitual.valence"
-                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-ritual">
-                                    <option value="comforting">Comforting</option>
-                                    <option value="grounding">Grounding</option>
-                                    <option value="sacred">Sacred</option>
-                                    <option value="playful">Playful</option>
-                                    <option value="intimate">Intimate</option>
-                                    <option value="reflective">Reflective</option>
-                                </select>
+                                <input type="text" x-model="editingRitual.valence" placeholder="e.g., warm, playful, professional"
+                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                             </div>
                         </div>
                         <div>
                             <label class="block text-sm text-threadlight-muted mb-1">Trigger Phrase</label>
                             <input type="text" x-model="editingRitual.cue" placeholder="Trigger phrase (optional)"
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
-                            <p class="text-xs text-threadlight-muted mt-1">Leave empty to use the command name as the trigger.</p>
+                            <p class="text-xs text-threadlight-muted mt-1">Leave empty to use the invocation name as the trigger.</p>
                         </div>
                         <div>
                             <label class="block text-sm text-threadlight-muted mb-1">Description</label>
-                            <input type="text" x-model="editingRitual.description" placeholder="What this command does..."
+                            <input type="text" x-model="editingRitual.description" placeholder="What this invocation does..."
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-ritual">
                         </div>
                         <div>
@@ -3382,7 +3375,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
                                     <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-threadlight-bg border border-threadlight-border rounded-lg text-xs text-threadlight-text w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10 shadow-lg">
-                                        Describe the tone and approach for this command. The AI will respond naturally while following this guidance.
+                                        Describe the tone and approach for this invocation. The AI will respond naturally while following this guidance.
                                     </div>
                                 </div>
                             </div>
@@ -4363,7 +4356,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                         If no rules match, the primary model is used as fallback.
                                     </p>
                                     <div class="mt-2 text-xs text-threadlight-muted/70 space-y-1">
-                                        <p>Examples: "code" keyword routes to code model, "/" prefix routes to command model, length > 500 routes to long-context model</p>
+                                        <p>Examples: "code" keyword routes to code model, "/" prefix routes to invocation model, length > 500 routes to long-context model</p>
                                     </div>
                                 </div>
                             </div>
@@ -4599,7 +4592,7 @@ Write any instructions you want the AI to follow."
                                 placeholder="500" min="1"
                                 class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
                             <p x-show="newRoutingRule.match_type === 'regex'" class="text-xs text-threadlight-muted mt-1">
-                                Use JavaScript-compatible regex. Example: <code class="px-1 bg-threadlight-bg rounded">^/\w+</code> matches messages starting with /command
+                                Use JavaScript-compatible regex. Example: <code class="px-1 bg-threadlight-bg rounded">^/\w+</code> matches messages starting with /ritual or /invocation
                             </p>
                         </div>
 
@@ -4845,6 +4838,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260209-6"></script>
+    <script src="/static/js/app.js?v=20260210-1"></script>
 </body>
 </html>
