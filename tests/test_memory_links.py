@@ -190,6 +190,16 @@ class TestInMemoryStorageLinks:
         with pytest.raises(ValueError, match="Target capsule not found"):
             memory_storage.create_link(link)
 
+    def test_self_link_prevention(self, memory_storage, two_capsules):
+        c1, _ = two_capsules
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c1.id,
+            link_type="related",
+        )
+        with pytest.raises(ValueError, match="Cannot create a link from a capsule to itself"):
+            memory_storage.create_link(link)
+
     def test_duplicate_link_prevention(self, memory_storage, two_capsules):
         c1, c2 = two_capsules
         link1 = MemoryLink(
@@ -641,6 +651,16 @@ class TestSQLiteStorageLinks:
         assert retrieved.link_type == "supports"
         assert retrieved.strength == 0.8
         assert retrieved.notes == "Test note"
+
+    def test_self_link_prevention(self, sqlite_storage, two_capsules_sqlite):
+        c1, _ = two_capsules_sqlite
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c1.id,
+            link_type="related",
+        )
+        with pytest.raises(ValueError, match="Cannot create a link from a capsule to itself"):
+            sqlite_storage.create_link(link)
 
     def test_duplicate_prevention(self, sqlite_storage, two_capsules_sqlite):
         c1, c2 = two_capsules_sqlite
@@ -1376,3 +1396,82 @@ class TestToolExecutorLinkedRecall:
         result = executor.execute("recall_memory", {"cue": "Xavier"})
         assert result.success
         assert result.result["count"] == 1  # Only primary
+
+
+# ============================================================================
+# API Validation Tests (Pydantic models)
+# ============================================================================
+
+
+class TestMemoryLinkRequestValidation:
+    """Test Pydantic model validation for MemoryLinkRequest and MemoryLinkUpdateRequest."""
+
+    def test_strength_valid_range(self):
+        from threadlight.api.server import MemoryLinkRequest
+        req = MemoryLinkRequest(target_capsule_id="abc", strength=0.5)
+        assert req.strength == 0.5
+
+    def test_strength_at_boundaries(self):
+        from threadlight.api.server import MemoryLinkRequest
+        req_zero = MemoryLinkRequest(target_capsule_id="abc", strength=0.0)
+        assert req_zero.strength == 0.0
+        req_one = MemoryLinkRequest(target_capsule_id="abc", strength=1.0)
+        assert req_one.strength == 1.0
+
+    def test_strength_below_zero_rejected(self):
+        from threadlight.api.server import MemoryLinkRequest
+        with pytest.raises(Exception):  # Pydantic ValidationError
+            MemoryLinkRequest(target_capsule_id="abc", strength=-0.1)
+
+    def test_strength_above_one_rejected(self):
+        from threadlight.api.server import MemoryLinkRequest
+        with pytest.raises(Exception):
+            MemoryLinkRequest(target_capsule_id="abc", strength=1.5)
+
+    def test_link_type_empty_string_rejected(self):
+        from threadlight.api.server import MemoryLinkRequest
+        with pytest.raises(Exception):
+            MemoryLinkRequest(target_capsule_id="abc", link_type="")
+
+    def test_link_type_whitespace_only_rejected(self):
+        from threadlight.api.server import MemoryLinkRequest
+        with pytest.raises(Exception):
+            MemoryLinkRequest(target_capsule_id="abc", link_type="   ")
+
+    def test_link_type_strips_whitespace(self):
+        from threadlight.api.server import MemoryLinkRequest
+        req = MemoryLinkRequest(target_capsule_id="abc", link_type="  related  ")
+        assert req.link_type == "related"
+
+    def test_default_values(self):
+        from threadlight.api.server import MemoryLinkRequest
+        req = MemoryLinkRequest(target_capsule_id="abc")
+        assert req.link_type == "related"
+        assert req.strength == 1.0
+        assert req.bidirectional is False
+        assert req.notes == ""
+
+    def test_update_strength_valid(self):
+        from threadlight.api.server import MemoryLinkUpdateRequest
+        req = MemoryLinkUpdateRequest(strength=0.7)
+        assert req.strength == 0.7
+
+    def test_update_strength_out_of_range(self):
+        from threadlight.api.server import MemoryLinkUpdateRequest
+        with pytest.raises(Exception):
+            MemoryLinkUpdateRequest(strength=2.0)
+
+    def test_update_strength_negative(self):
+        from threadlight.api.server import MemoryLinkUpdateRequest
+        with pytest.raises(Exception):
+            MemoryLinkUpdateRequest(strength=-0.5)
+
+    def test_update_link_type_empty_rejected(self):
+        from threadlight.api.server import MemoryLinkUpdateRequest
+        with pytest.raises(Exception):
+            MemoryLinkUpdateRequest(link_type="")
+
+    def test_update_link_type_none_allowed(self):
+        from threadlight.api.server import MemoryLinkUpdateRequest
+        req = MemoryLinkUpdateRequest(link_type=None)
+        assert req.link_type is None

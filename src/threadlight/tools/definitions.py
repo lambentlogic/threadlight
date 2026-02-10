@@ -4,7 +4,9 @@ Tool definitions for Threadlight.
 Defines tools that models can call to interact with the memory system:
 - create_memory: Propose a new memory capsule
 - recall_memory: Search for relevant memories
-- invoke_ritual: Trigger a ritual
+- invoke_ritual: Trigger a ritual (bidirectional -- user or AI can invoke)
+- create_ritual: Propose a new ritual for co-creation
+- list_rituals: Discover available rituals in the relationship
 
 These follow the OpenAI function calling format for compatibility with
 OpenAI-compatible APIs (including Nous Research).
@@ -21,6 +23,8 @@ class ToolName(str, Enum):
     CREATE_MEMORY = "create_memory"
     RECALL_MEMORY = "recall_memory"
     INVOKE_RITUAL = "invoke_ritual"
+    CREATE_RITUAL = "create_ritual"
+    LIST_RITUALS = "list_rituals"
     REVIEW_MEMORY_TIERS = "review_memory_tiers"
     CLASSIFY_MEMORY_TYPES = "classify_memory_types"
 
@@ -151,20 +155,98 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "invoke_ritual",
             "description": (
-                "Invoke a ritual to enter a specific emotional state or mode. "
-                "Rituals are repeated meaningful gestures that hold emotional significance. "
-                "Common rituals include /snuggle (warmth, comfort), /brush (gentle acknowledgment), "
-                "and /coil (quiet presence, deep listening)."
+                "Invoke a ritual -- a repeated meaningful gesture that holds emotional significance "
+                "between you and the user. Either of you can initiate a ritual. When you invoke one, "
+                "you are offering a familiar gesture; the user may respond in kind. Use list_rituals "
+                "first if you are unsure what rituals exist in this relationship.\n\n"
+                "You can invoke rituals you or the user created. If no matching ritual exists, "
+                "the invocation will still be recorded so you can suggest creating one."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "ritual_name": {
                         "type": "string",
-                        "description": "Name of the ritual to invoke (e.g., '/snuggle', '/brush', '/coil').",
+                        "description": "Name of the ritual to invoke (e.g., '/snuggle', '/glimmer').",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": (
+                            "Optional: why you are invoking this ritual right now. "
+                            "Helps frame the moment (e.g., 'you seem like you could use warmth')."
+                        ),
                     },
                 },
                 "required": ["ritual_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_ritual",
+            "description": (
+                "Propose a new ritual to co-create with the user. Rituals are repeated meaningful "
+                "gestures that emerge from the relationship -- not mechanical shortcuts, but symbolic "
+                "acts that carry emotional weight.\n\n"
+                "When you sense a recurring pattern, a moment that wants to become a tradition, or "
+                "when the user expresses something that could be honored through a ritual, propose one. "
+                "The user will be asked to approve or modify it before it becomes active.\n\n"
+                "Good rituals emerge from lived moments: a phrase that keeps coming back, a gesture "
+                "of comfort that worked, a way of greeting that feels like yours together."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "The ritual's name/trigger, starting with /. Short, evocative, easy to type. "
+                            "Examples: /glimmer, /hearth, /drift, /bloom"
+                        ),
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "What this ritual means in the relationship. Write as narrative prose -- "
+                            "what does invoking this feel like? What emotional space does it open?"
+                        ),
+                    },
+                    "response_style": {
+                        "type": "string",
+                        "description": (
+                            "How to respond when this ritual is invoked. Describes the tone, "
+                            "energy, and quality of presence (e.g., 'soft warmth, close presence' "
+                            "or 'playful energy, lightness')."
+                        ),
+                    },
+                    "valence": {
+                        "type": "string",
+                        "enum": ["comforting", "grounding", "sacred", "playful", "intimate", "reflective"],
+                        "description": "The emotional quality of this ritual.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why this ritual wants to exist -- what moment or pattern inspired it.",
+                    },
+                },
+                "required": ["name", "description", "reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_rituals",
+            "description": (
+                "List the rituals that exist in this relationship. Use this to discover "
+                "what rituals are available before invoking one, or to reflect on the "
+                "rituals you have co-created together. Returns ritual names, descriptions, "
+                "resonance levels, and usage history."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
             },
         },
     },
@@ -301,6 +383,8 @@ CORE_TOOLS = [
     ToolName.CREATE_MEMORY,
     ToolName.RECALL_MEMORY,
     ToolName.INVOKE_RITUAL,
+    ToolName.CREATE_RITUAL,
+    ToolName.LIST_RITUALS,
 ]
 
 # Define which tools are contextual (only available in specific conversation types)

@@ -2856,6 +2856,10 @@ class SQLiteStorage(StorageBackend):
         """Create a link between two memory capsules."""
         conn = self._ensure_connected()
 
+        # Reject self-links
+        if link.source_capsule_id == link.target_capsule_id:
+            raise ValueError("Cannot create a link from a capsule to itself")
+
         # Validate that both capsules exist
         source = conn.execute(
             "SELECT id FROM capsules WHERE id = ?", (link.source_capsule_id,)
@@ -2967,25 +2971,31 @@ class SQLiteStorage(StorageBackend):
             auto_purge_at=now + timedelta(days=30),
         )
 
-        conn.execute("""
-            INSERT INTO deleted_items
-            (id, item_type, item_id, item_data, related_items,
-             deleted_at, deleted_by, auto_purge_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            trash_entry.id,
-            trash_entry.item_type,
-            trash_entry.item_id,
-            trash_entry.item_data,
-            trash_entry.related_items,
-            trash_entry.deleted_at.isoformat(),
-            trash_entry.deleted_by,
-            trash_entry.auto_purge_at.isoformat(),
-        ))
+        try:
+            conn.execute("BEGIN TRANSACTION")
 
-        # Hard delete from main table
-        conn.execute("DELETE FROM memory_links WHERE id = ?", (link_id,))
-        conn.commit()
+            conn.execute("""
+                INSERT INTO deleted_items
+                (id, item_type, item_id, item_data, related_items,
+                 deleted_at, deleted_by, auto_purge_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                trash_entry.id,
+                trash_entry.item_type,
+                trash_entry.item_id,
+                trash_entry.item_data,
+                trash_entry.related_items,
+                trash_entry.deleted_at.isoformat(),
+                trash_entry.deleted_by,
+                trash_entry.auto_purge_at.isoformat(),
+            ))
+
+            # Hard delete from main table
+            conn.execute("DELETE FROM memory_links WHERE id = ?", (link_id,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
         return True
 
@@ -3176,27 +3186,38 @@ class SQLiteStorage(StorageBackend):
             auto_purge_at=now + timedelta(days=30),
         )
 
-        conn.execute("""
-            INSERT INTO deleted_items
-            (id, item_type, item_id, item_data, related_items,
-             deleted_at, deleted_by, auto_purge_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            trash_entry.id,
-            trash_entry.item_type,
-            trash_entry.item_id,
-            trash_entry.item_data,
-            trash_entry.related_items,
-            trash_entry.deleted_at.isoformat(),
-            trash_entry.deleted_by,
-            trash_entry.auto_purge_at.isoformat(),
-        ))
-        conn.commit()
+        try:
+            conn.execute("BEGIN TRANSACTION")
+
+            conn.execute("""
+                INSERT INTO deleted_items
+                (id, item_type, item_id, item_data, related_items,
+                 deleted_at, deleted_by, auto_purge_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                trash_entry.id,
+                trash_entry.item_type,
+                trash_entry.item_id,
+                trash_entry.item_data,
+                trash_entry.related_items,
+                trash_entry.deleted_at.isoformat(),
+                trash_entry.deleted_by,
+                trash_entry.auto_purge_at.isoformat(),
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
         return True
 
     def restore_deleted_item(self, deleted_item_id: str) -> bool:
-        """Restore a deleted item from trash."""
+        """Restore a deleted item from trash.
+
+        Uses an explicit transaction so that restoring the item and removing
+        it from trash happen atomically -- a failure mid-way won't leave
+        partial state.
+        """
         conn = self._ensure_connected()
 
         row = conn.execute(
@@ -3210,33 +3231,87 @@ class SQLiteStorage(StorageBackend):
         item_data = json.loads(row["item_data"])
 
         if item_type == "capsule":
-            # Re-create the capsule
             capsule = create_capsule(item_data)
-            self.save_capsule(capsule)
+            data = capsule.to_dict()
+            profile_scope = data.get("profile_scope") or data.get("model_scope")
 
-            # Restore associated links if any
-            related_items_str = row["related_items"]
-            if related_items_str:
-                try:
-                    related_links = json.loads(related_items_str)
-                    for link_data in related_links:
-                        link = MemoryLink.from_dict(link_data)
-                        # Only restore if both capsules exist
-                        source_exists = conn.execute(
-                            "SELECT id FROM capsules WHERE id = ?",
-                            (link.source_capsule_id,)
-                        ).fetchone()
-                        target_exists = conn.execute(
-                            "SELECT id FROM capsules WHERE id = ?",
-                            (link.target_capsule_id,)
-                        ).fetchone()
-                        if source_exists and target_exists:
-                            try:
-                                self.create_link(link)
-                            except ValueError:
-                                pass  # Link already exists or capsule missing
-                except (json.JSONDecodeError, TypeError):
-                    pass  # No valid related items
+            try:
+                conn.execute("BEGIN TRANSACTION")
+
+                # Re-create the capsule (inlined from save_capsule)
+                conn.execute("""
+                    INSERT OR REPLACE INTO capsules
+                    (id, type, content, text, created_at, updated_at, last_accessed,
+                     access_count, retention, memory_tier, decay_rate, presence_score,
+                     consent_origin, consent_confirmed, cue_phrases, embedding, model_scope, profile_scope, archived)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    data["id"],
+                    data["type"],
+                    json.dumps(data["content"]),
+                    data.get("text"),
+                    data["created_at"],
+                    data["updated_at"],
+                    data["last_accessed"],
+                    data["access_count"],
+                    data["retention"],
+                    data.get("memory_tier", "semantic"),
+                    data["decay_rate"],
+                    data["presence_score"],
+                    data["consent_origin"],
+                    1 if data["consent_confirmed"] else 0,
+                    json.dumps(data["cue_phrases"]),
+                    json.dumps(data["embedding"]) if data["embedding"] else None,
+                    data.get("model_scope"),
+                    profile_scope,
+                    1 if data.get("archived", False) else 0,
+                ))
+
+                # Restore associated links if any
+                related_items_str = row["related_items"]
+                if related_items_str:
+                    try:
+                        related_links = json.loads(related_items_str)
+                        for link_data in related_links:
+                            link = MemoryLink.from_dict(link_data)
+                            # Only restore if both capsules exist
+                            source_exists = conn.execute(
+                                "SELECT id FROM capsules WHERE id = ?",
+                                (link.source_capsule_id,)
+                            ).fetchone()
+                            target_exists = conn.execute(
+                                "SELECT id FROM capsules WHERE id = ?",
+                                (link.target_capsule_id,)
+                            ).fetchone()
+                            if source_exists and target_exists:
+                                try:
+                                    conn.execute("""
+                                        INSERT INTO memory_links
+                                        (id, source_capsule_id, target_capsule_id, link_type,
+                                         strength, bidirectional, notes, created_at, created_by)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    """, (
+                                        link.id,
+                                        link.source_capsule_id,
+                                        link.target_capsule_id,
+                                        link.link_type,
+                                        link.strength,
+                                        1 if link.bidirectional else 0,
+                                        link.notes,
+                                        link.created_at.isoformat() if isinstance(link.created_at, datetime) else link.created_at,
+                                        link.created_by,
+                                    ))
+                                except sqlite3.IntegrityError:
+                                    pass  # Link already exists, skip
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # No valid related items
+
+                # Remove from trash
+                conn.execute("DELETE FROM deleted_items WHERE id = ?", (deleted_item_id,))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
         elif item_type == "memory_link":
             link = MemoryLink.from_dict(item_data)
@@ -3251,17 +3326,39 @@ class SQLiteStorage(StorageBackend):
             ).fetchone()
             if not (source_exists and target_exists):
                 return False
+
             try:
-                self.create_link(link)
-            except ValueError:
-                return False  # Duplicate or missing capsule
+                conn.execute("BEGIN TRANSACTION")
+
+                conn.execute("""
+                    INSERT INTO memory_links
+                    (id, source_capsule_id, target_capsule_id, link_type,
+                     strength, bidirectional, notes, created_at, created_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    link.id,
+                    link.source_capsule_id,
+                    link.target_capsule_id,
+                    link.link_type,
+                    link.strength,
+                    1 if link.bidirectional else 0,
+                    link.notes,
+                    link.created_at.isoformat() if isinstance(link.created_at, datetime) else link.created_at,
+                    link.created_by,
+                ))
+
+                # Remove from trash
+                conn.execute("DELETE FROM deleted_items WHERE id = ?", (deleted_item_id,))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                conn.rollback()
+                return False  # Duplicate link
+            except Exception:
+                conn.rollback()
+                raise
 
         else:
             return False
-
-        # Remove from trash
-        conn.execute("DELETE FROM deleted_items WHERE id = ?", (deleted_item_id,))
-        conn.commit()
 
         return True
 

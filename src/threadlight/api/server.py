@@ -21,7 +21,7 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import StreamingResponse, HTMLResponse
     from fastapi.staticfiles import StaticFiles
-    from pydantic import BaseModel
+    from pydantic import BaseModel, Field, field_validator
 except ImportError:
     raise ImportError(
         "Server dependencies not installed. "
@@ -178,6 +178,7 @@ class BatchTypeConversionRequest(BaseModel):
 class RitualInvokeRequest(BaseModel):
     ritual_name: str
     context: Optional[str] = None
+    initiated_by: str = "user"  # "user" or "companion"
 
 
 class SessionCreateRequest(BaseModel):
@@ -425,17 +426,31 @@ class MemoryLinkRequest(BaseModel):
     """Request model for creating a memory link."""
     target_capsule_id: str
     link_type: str = "related"
-    strength: float = 1.0
+    strength: float = Field(default=1.0, ge=0.0, le=1.0)
     bidirectional: bool = False
     notes: str = ""
+
+    @field_validator("link_type")
+    @classmethod
+    def link_type_non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("link_type must be a non-empty string")
+        return v.strip()
 
 
 class MemoryLinkUpdateRequest(BaseModel):
     """Request model for updating a memory link."""
     link_type: Optional[str] = None
-    strength: Optional[float] = None
+    strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     bidirectional: Optional[bool] = None
     notes: Optional[str] = None
+
+    @field_validator("link_type")
+    @classmethod
+    def link_type_non_empty(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and (not v or not v.strip()):
+            raise ValueError("link_type must be a non-empty string")
+        return v.strip() if v is not None else v
 
 
 # ============================================================================
@@ -842,12 +857,19 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
                 elif data.get("type") == "ritual":
                     ritual_name = data.get("name", "")
+                    initiated_by = data.get("initiated_by", "user")
+                    ritual_context = data.get("context")
                     try:
-                        response = tl.invoke_ritual(ritual_name)
+                        response = tl.invoke_ritual(
+                            ritual_name,
+                            initiated_by=initiated_by,
+                            context=ritual_context,
+                        )
                         await websocket.send_json({
                             "type": "ritual_response",
                             "ritual": ritual_name,
                             "content": response,
+                            "initiated_by": initiated_by,
                         })
                     except Exception as e:
                         await websocket.send_json({
@@ -1622,18 +1644,27 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     @app.post("/api/rituals/invoke")
     async def invoke_ritual(request: RitualInvokeRequest):
-        """Invoke a ritual."""
+        """Invoke a ritual. Supports bidirectional invocation."""
         tl = get_threadlight()
 
         try:
-            response = tl.invoke_ritual(request.ritual_name)
-            result = tl.memory.invoke_ritual(request.ritual_name)
+            response = tl.invoke_ritual(
+                request.ritual_name,
+                initiated_by=request.initiated_by,
+                context=request.context,
+            )
+            result = tl.memory.invoke_ritual(
+                request.ritual_name,
+                initiated_by=request.initiated_by,
+                context=request.context,
+            )
 
             return {
                 "ritual": request.ritual_name,
                 "response": response,
                 "matched": result.matched,
                 "state_effects": result.state_effects,
+                "initiated_by": request.initiated_by,
             }
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -5284,6 +5315,12 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     @app.post("/api/memories/{capsule_id}/links")
     async def create_memory_link(capsule_id: str, request: MemoryLinkRequest):
         """Create a link between two memory capsules."""
+        if capsule_id == request.target_capsule_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot create a link from a capsule to itself",
+            )
+
         tl = get_threadlight()
 
         try:
@@ -5311,6 +5348,13 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         link_type: Optional[str] = None,
     ):
         """Get links for a memory capsule."""
+        _VALID_DIRECTIONS = ("outgoing", "incoming", "both")
+        if direction not in _VALID_DIRECTIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid direction '{direction}'. Must be one of: {', '.join(_VALID_DIRECTIONS)}",
+            )
+
         tl = get_threadlight()
 
         link_types = [link_type] if link_type else None
@@ -5331,7 +5375,25 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         depth: int = 1,
     ):
         """Get capsules linked to a given capsule with metadata."""
+        _VALID_DIRECTIONS = ("outgoing", "incoming", "both")
+        if direction not in _VALID_DIRECTIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid direction '{direction}'. Must be one of: {', '.join(_VALID_DIRECTIONS)}",
+            )
+
         tl = get_threadlight()
+
+        # Cap depth at configured max (default 3) to prevent expensive traversals
+        max_depth = getattr(tl.config.memory, "max_link_depth", 3)
+        max_allowed = max(max_depth, 3)  # At least 3, or whatever config says
+        if depth < 1:
+            raise HTTPException(status_code=400, detail="depth must be at least 1")
+        if depth > max_allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"depth must not exceed {max_allowed}",
+            )
 
         link_types = [link_type] if link_type else None
         results = tl.get_linked_capsules(capsule_id, direction, link_types, depth)
@@ -5356,6 +5418,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         """Delete a memory link (moves to trash)."""
         tl = get_threadlight()
 
+        # Verify the link exists and belongs to this capsule
+        link = tl.storage.get_link(link_id)
+        if link is None:
+            raise HTTPException(status_code=404, detail="Link not found")
+        if link.source_capsule_id != capsule_id and link.target_capsule_id != capsule_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Link does not belong to the specified capsule",
+            )
+
         success = tl.delete_memory_link(link_id)
         if not success:
             raise HTTPException(status_code=404, detail="Link not found")
@@ -5374,6 +5446,13 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         link = tl.storage.get_link(link_id)
         if link is None:
             raise HTTPException(status_code=404, detail="Link not found")
+
+        # Verify the link belongs to this capsule
+        if link.source_capsule_id != capsule_id and link.target_capsule_id != capsule_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Link does not belong to the specified capsule",
+            )
 
         # Apply updates
         if request.link_type is not None:
@@ -5409,6 +5488,12 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         limit: int = 50,
     ):
         """List recently deleted items."""
+        if limit < 1 or limit > 200:
+            raise HTTPException(
+                status_code=400,
+                detail="limit must be between 1 and 200",
+            )
+
         tl = get_threadlight()
 
         items = tl.list_deleted_items(item_type, limit)

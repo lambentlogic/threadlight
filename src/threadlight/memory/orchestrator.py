@@ -112,6 +112,8 @@ class RitualInvocation:
     response_template: Optional[str] = None
     state_effects: dict[str, Any] = field(default_factory=dict)
     matched: bool = False
+    initiated_by: str = "user"  # "user" or "companion"
+    context: Optional[str] = None  # Why this ritual was invoked now
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,6 +122,8 @@ class RitualInvocation:
             "response_template": self.response_template,
             "state_effects": self.state_effects,
             "matched": self.matched,
+            "initiated_by": self.initiated_by,
+            "context": self.context,
         }
 
 
@@ -386,6 +390,9 @@ class MemoryOrchestrator:
         """
         Delete a capsule.
 
+        Moves the capsule to trash (for potential restoration) before
+        permanently removing it from active storage.
+
         Args:
             capsule_id: ID of capsule to delete
             force: If False, prevents deleting sacred memories
@@ -398,6 +405,13 @@ class MemoryOrchestrator:
             if capsule and capsule.retention == RetentionPolicy.SACRED:
                 logger.warning(f"Cannot delete sacred capsule {capsule_id} without force=True")
                 return False
+
+        # Move to trash before deletion so it can be restored later
+        if hasattr(self.storage, 'move_capsule_to_trash'):
+            try:
+                self.storage.move_capsule_to_trash(capsule_id)
+            except Exception as e:
+                logger.warning(f"Failed to move capsule {capsule_id} to trash: {e}")
 
         return self.storage.delete_capsule(capsule_id)
 
@@ -918,17 +932,21 @@ class MemoryOrchestrator:
         self,
         ritual_trigger: str,
         context: Optional[str] = None,
+        initiated_by: str = "user",
     ) -> RitualInvocation:
         """
         Invoke a ritual by its trigger phrase or name.
 
         Rituals are repeated acts that hold emotion across time.
         When invoked, they trigger specific response patterns and
-        may modify the current conversational state.
+        may modify the current conversational state. Either the user
+        or the AI companion can initiate a ritual.
 
         Args:
             ritual_trigger: The trigger phrase (e.g., "/snuggle", "tea-time")
-            context: Optional additional context for the ritual
+            context: Optional additional context for the ritual -- why it
+                     is being invoked right now
+            initiated_by: Who initiated this ritual ("user" or "companion")
 
         Returns:
             RitualInvocation with ritual details and response template
@@ -938,7 +956,11 @@ class MemoryOrchestrator:
             if result.matched:
                 print(result.response_template)
         """
-        result = RitualInvocation(ritual_name=ritual_trigger)
+        result = RitualInvocation(
+            ritual_name=ritual_trigger,
+            initiated_by=initiated_by,
+            context=context,
+        )
 
         # Find matching ritual capsule
         ritual_filter = CapsuleFilter(
@@ -974,7 +996,7 @@ class MemoryOrchestrator:
                     self._current_session.record_ritual(ritual_trigger)
                     self._current_session.record_access(ritual.id)
 
-                logger.info(f"Ritual invoked: {ritual_trigger} -> {ritual.id}")
+                logger.info(f"Ritual invoked: {ritual_trigger} -> {ritual.id} (by {initiated_by})")
                 break
 
         if not result.matched:
@@ -984,6 +1006,22 @@ class MemoryOrchestrator:
                 self._current_session.record_ritual(ritual_trigger)
 
         return result
+
+    def list_rituals(self) -> list[MemoryCapsule]:
+        """
+        List all available rituals.
+
+        Returns ritual capsules that have been confirmed (active).
+        Profile scoping is handled by the caller if needed.
+
+        Returns:
+            List of ritual capsules
+        """
+        ritual_filter = CapsuleFilter(
+            type=CapsuleType.RITUAL,
+            consent_confirmed=True,
+        )
+        return self.storage.list_capsules(ritual_filter)
 
     def get_active_ritual(self) -> Optional[str]:
         """Get the currently active ritual, if any."""

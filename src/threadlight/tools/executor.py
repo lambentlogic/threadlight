@@ -116,6 +116,10 @@ class ToolExecutor:
                 return self._execute_recall_memory(arguments)
             elif tool_name == ToolName.INVOKE_RITUAL.value:
                 return self._execute_invoke_ritual(arguments)
+            elif tool_name == ToolName.CREATE_RITUAL.value:
+                return self._execute_create_ritual(arguments)
+            elif tool_name == ToolName.LIST_RITUALS.value:
+                return self._execute_list_rituals(arguments)
             elif tool_name == ToolName.REVIEW_MEMORY_TIERS.value:
                 return self._execute_review_memory_tiers(arguments)
             elif tool_name == ToolName.CLASSIFY_MEMORY_TYPES.value:
@@ -332,8 +336,14 @@ class ToolExecutor:
         )
 
     def _execute_invoke_ritual(self, arguments: dict[str, Any]) -> ToolResult:
-        """Execute invoke_ritual tool call."""
+        """Execute invoke_ritual tool call.
+
+        When the AI companion calls this tool, it is initiating a ritual
+        (initiated_by="companion"). When the user types a ritual trigger
+        in chat, it flows through the websocket handler instead.
+        """
         ritual_name = arguments.get("ritual_name")
+        context = arguments.get("context")
 
         if not ritual_name:
             return ToolResult(
@@ -346,25 +356,201 @@ class ToolExecutor:
         if not ritual_name.startswith("/"):
             ritual_name = "/" + ritual_name
 
-        # Invoke the ritual
-        invocation = self.memory.invoke_ritual(ritual_name)
+        # When the model calls invoke_ritual, it is the companion initiating
+        invocation = self.memory.invoke_ritual(
+            ritual_name,
+            context=context,
+            initiated_by="companion",
+        )
 
         result = {
             "ritual_name": ritual_name,
             "matched": invocation.matched,
+            "initiated_by": "companion",
         }
+
+        if context:
+            result["context"] = context
 
         if invocation.matched:
             result["response_template"] = invocation.response_template
             result["state_effects"] = invocation.state_effects
             if invocation.capsule:
                 result["capsule_id"] = invocation.capsule.id[:8]
+                # Include ritual description so the model can frame the invocation
+                capsule = invocation.capsule
+                result["description"] = getattr(capsule, 'description', '')
+                result["valence"] = getattr(capsule, 'valence', '')
+                result["response_style"] = getattr(capsule, 'response_style', '')
+                # Include resonance info
+                resonance = getattr(capsule, 'resonance', None)
+                if resonance and resonance.total_invocations > 0:
+                    result["resonance"] = resonance.get_resonance_description()
+                    result["total_invocations"] = resonance.total_invocations
+        else:
+            result["suggestion"] = (
+                f"No ritual named '{ritual_name}' exists yet. "
+                "You could propose creating it with create_ritual."
+            )
 
         return ToolResult(
             tool_name=ToolName.INVOKE_RITUAL.value,
             success=True,
             result=result,
             display_message=invocation.response_template or f"Ritual invoked: {ritual_name}",
+        )
+
+    def _execute_create_ritual(self, arguments: dict[str, Any]) -> ToolResult:
+        """Execute create_ritual tool call.
+
+        Creates a ritual proposal that the user must approve. This follows
+        the same consent pattern as create_memory -- the AI proposes, the
+        user confirms. Rituals are stored as capsules with type=ritual.
+        """
+        name = arguments.get("name", "")
+        description = arguments.get("description", "")
+        response_style = arguments.get("response_style", "")
+        valence = arguments.get("valence", "comforting")
+        reason = arguments.get("reason", "")
+
+        if not name:
+            return ToolResult(
+                tool_name=ToolName.CREATE_RITUAL.value,
+                success=False,
+                error="name is required (e.g., '/glimmer')",
+            )
+
+        if not description:
+            return ToolResult(
+                tool_name=ToolName.CREATE_RITUAL.value,
+                success=False,
+                error="description is required -- what does this ritual mean?",
+            )
+
+        # Ensure name starts with /
+        if not name.startswith("/"):
+            name = "/" + name
+
+        # Validate valence
+        valid_valences = ["comforting", "grounding", "sacred", "playful", "intimate", "reflective"]
+        if valence not in valid_valences:
+            valence = "comforting"
+
+        # Build ritual content
+        content = {
+            "name": name,
+            "cue": name,
+            "description": description,
+            "response_style": response_style,
+            "valence": valence,
+        }
+
+        # Build narrative text for the ritual
+        text = description
+        if response_style:
+            text += f" When invoked, respond with {response_style}."
+
+        content["text"] = text
+
+        if self.require_consent:
+            # Create a proposal -- user must approve the ritual
+            proposal = self.memory.propose(
+                type="ritual",
+                content=content,
+                source_message=reason,
+                memory_tier="anchored_decaying",  # Rituals should persist
+            )
+
+            return ToolResult(
+                tool_name=ToolName.CREATE_RITUAL.value,
+                success=True,
+                result={
+                    "name": name,
+                    "description": description,
+                    "response_style": response_style,
+                    "valence": valence,
+                    "reason": reason,
+                    "status": "proposed",
+                    "message": (
+                        f"Ritual '{name}' has been proposed. "
+                        "The user will be asked to approve it."
+                    ),
+                },
+                requires_consent=True,
+                proposal_id=proposal.id,
+                display_message=f"Proposing new ritual: {name}",
+            )
+        else:
+            # Direct creation (trusted context)
+            capsule = self.memory.create(
+                type="ritual",
+                content=content,
+                consent_confirmed=True,
+                consent_origin="model_direct",
+                memory_tier="anchored_decaying",
+            )
+
+            # Enable resonance tracking on new rituals
+            if hasattr(capsule, 'enable_resonance_tracking'):
+                capsule.enable_resonance_tracking()
+                self.memory.storage.update_capsule(capsule)
+
+            return ToolResult(
+                tool_name=ToolName.CREATE_RITUAL.value,
+                success=True,
+                result={
+                    "name": name,
+                    "capsule_id": capsule.id[:8],
+                    "description": description,
+                    "response_style": response_style,
+                    "valence": valence,
+                    "status": "created",
+                },
+                display_message=f"Ritual created: {name}",
+            )
+
+    def _execute_list_rituals(self, arguments: dict[str, Any]) -> ToolResult:
+        """Execute list_rituals tool call.
+
+        Returns all available rituals so the AI companion can discover
+        what rituals exist in this relationship.
+        """
+        rituals = self.memory.list_rituals()
+
+        ritual_list = []
+        for ritual in rituals:
+            ritual_info = {
+                "name": getattr(ritual, 'name', ''),
+                "description": getattr(ritual, 'description', ''),
+                "valence": getattr(ritual, 'valence', ''),
+                "response_style": getattr(ritual, 'response_style', ''),
+            }
+
+            # Include resonance info if tracked
+            resonance = getattr(ritual, 'resonance', None)
+            if resonance and resonance.total_invocations > 0:
+                ritual_info["resonance"] = resonance.get_resonance_description()
+                ritual_info["total_invocations"] = resonance.total_invocations
+                ritual_info["meaningful_uses"] = resonance.meaningful_uses
+            else:
+                ritual_info["resonance"] = "not yet invoked"
+                ritual_info["total_invocations"] = 0
+
+            ritual_list.append(ritual_info)
+
+        return ToolResult(
+            tool_name=ToolName.LIST_RITUALS.value,
+            success=True,
+            result={
+                "count": len(ritual_list),
+                "rituals": ritual_list,
+                "message": (
+                    f"Found {len(ritual_list)} ritual(s) in this relationship."
+                    if ritual_list
+                    else "No rituals exist yet. You can propose one with create_ritual."
+                ),
+            },
+            display_message=f"Found {len(ritual_list)} ritual(s)",
         )
 
     def _execute_review_memory_tiers(self, arguments: dict[str, Any]) -> ToolResult:

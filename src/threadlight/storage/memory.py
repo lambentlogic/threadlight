@@ -708,6 +708,10 @@ class InMemoryStorage(StorageBackend):
 
     def create_link(self, link: MemoryLink) -> str:
         """Create a link between two memory capsules."""
+        # Reject self-links
+        if link.source_capsule_id == link.target_capsule_id:
+            raise ValueError("Cannot create a link from a capsule to itself")
+
         # Validate capsules exist
         if link.source_capsule_id not in self.capsules:
             raise ValueError(f"Source capsule not found: {link.source_capsule_id}")

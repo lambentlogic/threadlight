@@ -720,7 +720,8 @@ class StorageBackend(ABC):
             The link ID
 
         Raises:
-            ValueError: If source or target capsule does not exist,
+            ValueError: If source and target are the same capsule (self-link),
+                        if source or target capsule does not exist,
                         or if a duplicate link exists (same source+target+type)
         """
         pass

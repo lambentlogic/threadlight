@@ -772,13 +772,24 @@ class Threadlight:
 
     # === Ritual Interface ===
 
-    def invoke_ritual(self, ritual_name: str) -> str:
+    def invoke_ritual(
+        self,
+        ritual_name: str,
+        initiated_by: str = "user",
+        context: Optional[str] = None,
+    ) -> str:
         """
         Invoke a ritual by name.
 
         Rituals are repeated acts that hold emotion across time.
         This method finds the matching ritual, composes context with the
         ritual's guidance, and lets the model respond naturally.
+
+        Rituals are bidirectional -- either the user or the AI companion
+        can initiate them. The response adapts based on who initiated:
+        - User initiates: The companion responds to the gesture
+        - Companion initiates: The companion offers the gesture, framing
+          why they are reaching for this ritual now
 
         Rituals happen within the relationship, not in isolation. The context
         includes:
@@ -790,15 +801,23 @@ class Threadlight:
 
         Args:
             ritual_name: The ritual trigger (e.g., "/snuggle", "/coil")
+            initiated_by: Who is invoking ("user" or "companion")
+            context: Why this ritual is being invoked now (optional)
 
         Returns:
             Model-generated response honoring the ritual's guidance
 
         Example:
             response = tl.invoke_ritual("/snuggle")
+            response = tl.invoke_ritual("/glimmer", initiated_by="companion",
+                                        context="you seem like you could use some light")
         """
         # Use orchestrator to invoke ritual (handles state tracking)
-        result = self.memory.invoke_ritual(ritual_name)
+        result = self.memory.invoke_ritual(
+            ritual_name,
+            context=context,
+            initiated_by=initiated_by,
+        )
 
         if not result.matched:
             return f"No ritual found for '{ritual_name}'"
@@ -865,9 +884,21 @@ class Threadlight:
         if profile_philosophy:
             system_parts.append(f"## Your Approach\n{profile_philosophy}")
 
-        # Include ritual guidance with approach
+        # Include ritual guidance with approach and directionality
         ritual_section = "## Ritual Invoked\n"
-        ritual_section += f"A ritual has been invoked. Respond naturally while honoring this guidance.\n\n"
+
+        if initiated_by == "companion":
+            ritual_section += (
+                "You are initiating this ritual -- offering a familiar gesture to the user. "
+                "Frame your response as an invitation or offering, not a reaction.\n\n"
+            )
+            if context:
+                ritual_section += f"(Why you are reaching for this ritual: {context})\n\n"
+        else:
+            ritual_section += (
+                "The user has invoked a ritual. Respond naturally while honoring this guidance.\n\n"
+            )
+
         ritual_section += ritual_context.memory_context
 
         if approach_to_rituals:
@@ -888,9 +919,16 @@ class Threadlight:
             role="system",
             content=system_message
         ))
+
+        # Frame the user message based on who initiated
+        if initiated_by == "companion":
+            user_content = f"[You are offering {ritual_name}]"
+        else:
+            user_content = ritual_name
+
         messages.append(ProviderMessage(
             role="user",
-            content=ritual_name
+            content=user_content,
         ))
 
         response = self.provider.complete(messages)
