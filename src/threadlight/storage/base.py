@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import uuid
 
 
 def _utc_now() -> datetime:
@@ -247,6 +248,147 @@ class MemoryProposal:
     source_message: str = ""
     status: str = "pending"  # pending, confirmed, rejected
     memory_tier: str = "semantic"  # strictly_anchored, anchored_decaying, semantic
+
+
+# ============================================================================
+# Memory Link Data Classes
+# ============================================================================
+
+
+@dataclass
+class MemoryLink:
+    """An explicit relational link between two memory capsules.
+
+    Links represent typed relationships between memories, enabling
+    traversal of connected memory graphs. Links can be directional
+    (source -> target) or bidirectional.
+
+    Attributes:
+        id: Unique identifier for the link
+        source_capsule_id: ID of the source capsule
+        target_capsule_id: ID of the target capsule
+        link_type: Relationship type (e.g., 'related', 'contradicts', 'supports')
+        strength: Link strength from 0.0 to 1.0
+        bidirectional: Whether the link applies in both directions
+        notes: Optional human-readable notes about the relationship
+        created_at: When the link was created
+        created_by: Who created the link ('user', 'system', etc.)
+    """
+
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    source_capsule_id: str = ""
+    target_capsule_id: str = ""
+    link_type: str = "related"
+    strength: float = 1.0
+    bidirectional: bool = False
+    notes: str = ""
+    created_at: datetime = field(default_factory=_utc_now)
+    created_by: str = "user"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize link to dictionary."""
+        return {
+            "id": self.id,
+            "source_capsule_id": self.source_capsule_id,
+            "target_capsule_id": self.target_capsule_id,
+            "link_type": self.link_type,
+            "strength": self.strength,
+            "bidirectional": self.bidirectional,
+            "notes": self.notes,
+            "created_at": self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
+            "created_by": self.created_by,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MemoryLink":
+        """Deserialize link from dictionary."""
+        created_at = data.get("created_at", "")
+        if isinstance(created_at, str) and created_at:
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        else:
+            created_at = _utc_now()
+
+        return cls(
+            id=data.get("id", str(uuid.uuid4())),
+            source_capsule_id=data.get("source_capsule_id", ""),
+            target_capsule_id=data.get("target_capsule_id", ""),
+            link_type=data.get("link_type", "related"),
+            strength=data.get("strength", 1.0),
+            bidirectional=data.get("bidirectional", False),
+            notes=data.get("notes", ""),
+            created_at=created_at,
+            created_by=data.get("created_by", "user"),
+        )
+
+
+@dataclass
+class DeletedItem:
+    """A deleted item stored in the trash/recycle bin for potential restoration.
+
+    Deleted capsules and links are serialized and stored here before being
+    hard-deleted from their main tables. Items are auto-purged after a
+    configurable retention period (default 30 days).
+
+    Attributes:
+        id: Unique identifier for the trash entry
+        item_type: Type of deleted item ('capsule', 'memory_link')
+        item_id: Original ID of the deleted item
+        item_data: JSON-serialized representation of the deleted item
+        related_items: JSON-serialized related items (e.g., links for a capsule)
+        deleted_at: When the item was deleted
+        deleted_by: Who deleted the item
+        auto_purge_at: When this item should be permanently removed
+    """
+
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    item_type: str = ""  # 'capsule', 'memory_link'
+    item_id: str = ""  # original ID
+    item_data: str = ""  # JSON serialized object
+    related_items: str = ""  # JSON array of related items
+    deleted_at: datetime = field(default_factory=_utc_now)
+    deleted_by: str = ""
+    auto_purge_at: datetime = field(
+        default_factory=lambda: _utc_now() + timedelta(days=30)
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize deleted item to dictionary."""
+        return {
+            "id": self.id,
+            "item_type": self.item_type,
+            "item_id": self.item_id,
+            "item_data": self.item_data,
+            "related_items": self.related_items,
+            "deleted_at": self.deleted_at.isoformat() if isinstance(self.deleted_at, datetime) else self.deleted_at,
+            "deleted_by": self.deleted_by,
+            "auto_purge_at": self.auto_purge_at.isoformat() if isinstance(self.auto_purge_at, datetime) else self.auto_purge_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "DeletedItem":
+        """Deserialize deleted item from dictionary."""
+        deleted_at = data.get("deleted_at", "")
+        if isinstance(deleted_at, str) and deleted_at:
+            deleted_at = datetime.fromisoformat(deleted_at.replace("Z", "+00:00"))
+        else:
+            deleted_at = _utc_now()
+
+        auto_purge_at = data.get("auto_purge_at", "")
+        if isinstance(auto_purge_at, str) and auto_purge_at:
+            auto_purge_at = datetime.fromisoformat(auto_purge_at.replace("Z", "+00:00"))
+        else:
+            auto_purge_at = _utc_now() + timedelta(days=30)
+
+        return cls(
+            id=data.get("id", str(uuid.uuid4())),
+            item_type=data.get("item_type", ""),
+            item_id=data.get("item_id", ""),
+            item_data=data.get("item_data", ""),
+            related_items=data.get("related_items", ""),
+            deleted_at=deleted_at,
+            deleted_by=data.get("deleted_by", ""),
+            auto_purge_at=auto_purge_at,
+        )
 
 
 class StorageBackend(ABC):
@@ -559,5 +701,169 @@ class StorageBackend(ABC):
 
         Returns:
             List of all profiles
+        """
+        pass
+
+    # ========================================================================
+    # Memory Link Operations
+    # ========================================================================
+
+    @abstractmethod
+    def create_link(self, link: MemoryLink) -> str:
+        """
+        Create a link between two memory capsules.
+
+        Args:
+            link: The MemoryLink to create
+
+        Returns:
+            The link ID
+
+        Raises:
+            ValueError: If source or target capsule does not exist,
+                        or if a duplicate link exists (same source+target+type)
+        """
+        pass
+
+    @abstractmethod
+    def get_link(self, link_id: str) -> Optional[MemoryLink]:
+        """
+        Get a link by ID.
+
+        Args:
+            link_id: The link ID
+
+        Returns:
+            The MemoryLink, or None if not found
+        """
+        pass
+
+    @abstractmethod
+    def get_links_for_capsule(
+        self,
+        capsule_id: str,
+        direction: str = "both",
+        link_types: Optional[list[str]] = None,
+    ) -> list[MemoryLink]:
+        """
+        Get all links for a capsule.
+
+        Args:
+            capsule_id: The capsule ID
+            direction: 'outgoing' (source), 'incoming' (target), or 'both'
+            link_types: Optional filter by link type(s)
+
+        Returns:
+            List of matching MemoryLinks
+        """
+        pass
+
+    @abstractmethod
+    def delete_link(self, link_id: str) -> bool:
+        """
+        Delete a link (moves to trash).
+
+        Args:
+            link_id: The link ID to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        pass
+
+    @abstractmethod
+    def update_link(self, link: MemoryLink) -> bool:
+        """
+        Update an existing link.
+
+        Args:
+            link: The MemoryLink with updated fields
+
+        Returns:
+            True if updated, False if not found
+        """
+        pass
+
+    @abstractmethod
+    def get_linked_capsules(
+        self,
+        capsule_id: str,
+        direction: str = "both",
+        link_types: Optional[list[str]] = None,
+        depth: int = 1,
+    ) -> list[tuple[MemoryCapsule, MemoryLink, int]]:
+        """
+        Get capsules linked to a given capsule, with optional depth traversal.
+
+        Args:
+            capsule_id: The starting capsule ID
+            direction: 'outgoing', 'incoming', or 'both'
+            link_types: Optional filter by link type(s)
+            depth: Maximum traversal depth (1 = direct links only)
+
+        Returns:
+            List of (capsule, link, depth) tuples where depth indicates
+            how many hops away the capsule is
+        """
+        pass
+
+    @abstractmethod
+    def list_link_types(self) -> list[str]:
+        """
+        List all distinct link types currently in use.
+
+        Returns:
+            List of link type strings
+        """
+        pass
+
+    # ========================================================================
+    # Trash / Deleted Items Operations
+    # ========================================================================
+
+    @abstractmethod
+    def restore_deleted_item(self, deleted_item_id: str) -> bool:
+        """
+        Restore a deleted item from trash.
+
+        Deserializes the item from the deleted_items table and re-inserts
+        it into the appropriate main table.
+
+        Args:
+            deleted_item_id: The trash entry ID
+
+        Returns:
+            True if restored, False if not found
+        """
+        pass
+
+    @abstractmethod
+    def list_deleted_items(
+        self,
+        item_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[DeletedItem]:
+        """
+        List items in the trash.
+
+        Args:
+            item_type: Optional filter by type ('capsule', 'memory_link')
+            limit: Maximum items to return
+
+        Returns:
+            List of DeletedItem entries, newest first
+        """
+        pass
+
+    @abstractmethod
+    def purge_old_deleted_items(self, older_than_days: int = 30) -> int:
+        """
+        Permanently remove deleted items older than the specified age.
+
+        Args:
+            older_than_days: Remove items deleted more than this many days ago
+
+        Returns:
+            Number of items permanently purged
         """
         pass

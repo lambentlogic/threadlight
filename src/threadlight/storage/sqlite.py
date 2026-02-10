@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def _utc_now() -> datetime:
@@ -24,6 +24,8 @@ from threadlight.storage.base import (
     StorageBackend,
     CapsuleFilter,
     MemoryProposal,
+    MemoryLink,
+    DeletedItem,
     Message,
     Conversation,
     MessageSearchResult,
@@ -412,6 +414,55 @@ class SQLiteStorage(StorageBackend):
             self.conn.commit()
         if 'variant_index' not in msg_cols_latest:
             self.conn.execute("ALTER TABLE messages ADD COLUMN variant_index INTEGER DEFAULT 0")
+            self.conn.commit()
+
+        # Migration: Create memory_links table for inter-memory threads
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memory_links'"
+        )
+        if cursor.fetchone() is None:
+            self.conn.executescript("""
+                CREATE TABLE memory_links (
+                    id TEXT PRIMARY KEY,
+                    source_capsule_id TEXT NOT NULL,
+                    target_capsule_id TEXT NOT NULL,
+                    link_type TEXT NOT NULL,
+                    strength REAL DEFAULT 1.0,
+                    bidirectional INTEGER DEFAULT 0,
+                    notes TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT,
+                    FOREIGN KEY (source_capsule_id) REFERENCES capsules(id) ON DELETE CASCADE,
+                    FOREIGN KEY (target_capsule_id) REFERENCES capsules(id) ON DELETE CASCADE,
+                    UNIQUE(source_capsule_id, target_capsule_id, link_type)
+                );
+
+                CREATE INDEX idx_links_source ON memory_links(source_capsule_id);
+                CREATE INDEX idx_links_target ON memory_links(target_capsule_id);
+                CREATE INDEX idx_links_type ON memory_links(link_type);
+            """)
+            self.conn.commit()
+
+        # Migration: Create deleted_items table for trash/recycle bin
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='deleted_items'"
+        )
+        if cursor.fetchone() is None:
+            self.conn.executescript("""
+                CREATE TABLE deleted_items (
+                    id TEXT PRIMARY KEY,
+                    item_type TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    item_data TEXT NOT NULL,
+                    related_items TEXT,
+                    deleted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    deleted_by TEXT,
+                    auto_purge_at TEXT
+                );
+
+                CREATE INDEX idx_deleted_items_type ON deleted_items(item_type);
+                CREATE INDEX idx_deleted_items_purge ON deleted_items(auto_purge_at);
+            """)
             self.conn.commit()
 
     def _migrate_populate_text(self) -> int:
@@ -2795,4 +2846,492 @@ class SQLiteStorage(StorageBackend):
             created_at=created_at,
             updated_at=updated_at,
             last_used_at=last_used_at,
+        )
+
+    # ========================================================================
+    # Memory Link Operations
+    # ========================================================================
+
+    def create_link(self, link: MemoryLink) -> str:
+        """Create a link between two memory capsules."""
+        conn = self._ensure_connected()
+
+        # Validate that both capsules exist
+        source = conn.execute(
+            "SELECT id FROM capsules WHERE id = ?", (link.source_capsule_id,)
+        ).fetchone()
+        if source is None:
+            raise ValueError(f"Source capsule not found: {link.source_capsule_id}")
+
+        target = conn.execute(
+            "SELECT id FROM capsules WHERE id = ?", (link.target_capsule_id,)
+        ).fetchone()
+        if target is None:
+            raise ValueError(f"Target capsule not found: {link.target_capsule_id}")
+
+        try:
+            conn.execute("""
+                INSERT INTO memory_links
+                (id, source_capsule_id, target_capsule_id, link_type,
+                 strength, bidirectional, notes, created_at, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                link.id,
+                link.source_capsule_id,
+                link.target_capsule_id,
+                link.link_type,
+                link.strength,
+                1 if link.bidirectional else 0,
+                link.notes,
+                link.created_at.isoformat() if isinstance(link.created_at, datetime) else link.created_at,
+                link.created_by,
+            ))
+            conn.commit()
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise ValueError(
+                    f"Duplicate link: {link.source_capsule_id} -> "
+                    f"{link.target_capsule_id} ({link.link_type})"
+                )
+            raise
+
+        return link.id
+
+    def get_link(self, link_id: str) -> Optional[MemoryLink]:
+        """Get a link by ID."""
+        conn = self._ensure_connected()
+
+        row = conn.execute(
+            "SELECT * FROM memory_links WHERE id = ?", (link_id,)
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        return self._row_to_link(row)
+
+    def get_links_for_capsule(
+        self,
+        capsule_id: str,
+        direction: str = "both",
+        link_types: Optional[list[str]] = None,
+    ) -> list[MemoryLink]:
+        """Get all links for a capsule with direction filtering."""
+        conn = self._ensure_connected()
+
+        if direction == "outgoing":
+            query = "SELECT * FROM memory_links WHERE source_capsule_id = ?"
+            params: list[Any] = [capsule_id]
+        elif direction == "incoming":
+            query = "SELECT * FROM memory_links WHERE target_capsule_id = ?"
+            params = [capsule_id]
+        else:
+            # 'both' - include links where capsule is source or target,
+            # plus bidirectional links pointing at this capsule
+            query = """
+                SELECT * FROM memory_links
+                WHERE source_capsule_id = ?
+                   OR target_capsule_id = ?
+            """
+            params = [capsule_id, capsule_id]
+
+        if link_types:
+            placeholders = ",".join("?" * len(link_types))
+            query += f" AND link_type IN ({placeholders})"
+            params.extend(link_types)
+
+        query += " ORDER BY created_at DESC"
+
+        rows = conn.execute(query, params).fetchall()
+        return [self._row_to_link(row) for row in rows]
+
+    def delete_link(self, link_id: str) -> bool:
+        """Delete a link (moves to trash first)."""
+        conn = self._ensure_connected()
+
+        # Get the link before deleting
+        link = self.get_link(link_id)
+        if link is None:
+            return False
+
+        # Move to trash
+        from datetime import timedelta
+        now = _utc_now()
+        trash_entry = DeletedItem(
+            item_type="memory_link",
+            item_id=link.id,
+            item_data=json.dumps(link.to_dict()),
+            related_items="",
+            deleted_at=now,
+            deleted_by="user",
+            auto_purge_at=now + timedelta(days=30),
+        )
+
+        conn.execute("""
+            INSERT INTO deleted_items
+            (id, item_type, item_id, item_data, related_items,
+             deleted_at, deleted_by, auto_purge_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            trash_entry.id,
+            trash_entry.item_type,
+            trash_entry.item_id,
+            trash_entry.item_data,
+            trash_entry.related_items,
+            trash_entry.deleted_at.isoformat(),
+            trash_entry.deleted_by,
+            trash_entry.auto_purge_at.isoformat(),
+        ))
+
+        # Hard delete from main table
+        conn.execute("DELETE FROM memory_links WHERE id = ?", (link_id,))
+        conn.commit()
+
+        return True
+
+    def update_link(self, link: MemoryLink) -> bool:
+        """Update an existing link."""
+        conn = self._ensure_connected()
+
+        result = conn.execute("""
+            UPDATE memory_links SET
+                link_type = ?,
+                strength = ?,
+                bidirectional = ?,
+                notes = ?,
+                created_by = ?
+            WHERE id = ?
+        """, (
+            link.link_type,
+            link.strength,
+            1 if link.bidirectional else 0,
+            link.notes,
+            link.created_by,
+            link.id,
+        ))
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def get_linked_capsules(
+        self,
+        capsule_id: str,
+        direction: str = "both",
+        link_types: Optional[list[str]] = None,
+        depth: int = 1,
+    ) -> list[tuple[MemoryCapsule, MemoryLink, int]]:
+        """Get capsules linked to a given capsule with recursive depth traversal."""
+        conn = self._ensure_connected()
+
+        if depth < 1:
+            return []
+
+        if depth == 1:
+            # Simple case: direct links only (no CTE needed)
+            return self._get_direct_linked_capsules(capsule_id, direction, link_types)
+
+        # Recursive CTE for multi-hop traversal with cycle detection
+        # Build direction conditions for the CTE
+        if direction == "outgoing":
+            base_condition = "ml.source_capsule_id = ?"
+            next_id_expr = "ml.target_capsule_id"
+            join_condition = "ml.source_capsule_id = r.linked_capsule_id"
+        elif direction == "incoming":
+            base_condition = "ml.target_capsule_id = ?"
+            next_id_expr = "ml.source_capsule_id"
+            join_condition = "ml.target_capsule_id = r.linked_capsule_id"
+        else:
+            # Both directions
+            base_condition = "(ml.source_capsule_id = ? OR (ml.target_capsule_id = ? AND ml.bidirectional = 1))"
+            next_id_expr = "CASE WHEN ml.source_capsule_id = ? THEN ml.target_capsule_id ELSE ml.source_capsule_id END"
+            join_condition = (
+                "(ml.source_capsule_id = r.linked_capsule_id "
+                "OR (ml.target_capsule_id = r.linked_capsule_id AND ml.bidirectional = 1))"
+            )
+
+        # For simplicity, use the iterative approach for 'both' direction
+        # to handle the complex CASE expressions cleanly
+        results: list[tuple[MemoryCapsule, MemoryLink, int]] = []
+        visited: set[str] = {capsule_id}
+        current_ids = [capsule_id]
+
+        for current_depth in range(1, depth + 1):
+            if not current_ids:
+                break
+
+            next_ids: list[str] = []
+            for cid in current_ids:
+                links = self.get_links_for_capsule(cid, direction, link_types)
+                for link in links:
+                    # Determine the "other" capsule ID
+                    if link.source_capsule_id == cid:
+                        other_id = link.target_capsule_id
+                    elif link.target_capsule_id == cid:
+                        if direction == "outgoing" and not link.bidirectional:
+                            continue
+                        other_id = link.source_capsule_id
+                    else:
+                        continue
+
+                    if other_id in visited:
+                        continue
+
+                    capsule = self.get_capsule(other_id)
+                    if capsule is not None:
+                        results.append((capsule, link, current_depth))
+                        visited.add(other_id)
+                        next_ids.append(other_id)
+
+            current_ids = next_ids
+
+        return results
+
+    def _get_direct_linked_capsules(
+        self,
+        capsule_id: str,
+        direction: str,
+        link_types: Optional[list[str]],
+    ) -> list[tuple[MemoryCapsule, MemoryLink, int]]:
+        """Get directly linked capsules (depth=1 helper)."""
+        links = self.get_links_for_capsule(capsule_id, direction, link_types)
+        results: list[tuple[MemoryCapsule, MemoryLink, int]] = []
+
+        for link in links:
+            # Determine the "other" capsule
+            if link.source_capsule_id == capsule_id:
+                other_id = link.target_capsule_id
+            elif link.target_capsule_id == capsule_id:
+                if direction == "outgoing" and not link.bidirectional:
+                    continue
+                other_id = link.source_capsule_id
+            else:
+                continue
+
+            capsule = self.get_capsule(other_id)
+            if capsule is not None:
+                results.append((capsule, link, 1))
+
+        return results
+
+    def list_link_types(self) -> list[str]:
+        """List all distinct link types currently in use."""
+        conn = self._ensure_connected()
+
+        rows = conn.execute(
+            "SELECT DISTINCT link_type FROM memory_links ORDER BY link_type"
+        ).fetchall()
+
+        return [row["link_type"] for row in rows]
+
+    def _row_to_link(self, row: sqlite3.Row) -> MemoryLink:
+        """Convert a database row to a MemoryLink."""
+        created_at = row["created_at"]
+        if isinstance(created_at, str) and created_at:
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        else:
+            created_at = _utc_now()
+
+        return MemoryLink(
+            id=row["id"],
+            source_capsule_id=row["source_capsule_id"],
+            target_capsule_id=row["target_capsule_id"],
+            link_type=row["link_type"],
+            strength=row["strength"],
+            bidirectional=bool(row["bidirectional"]),
+            notes=row["notes"] or "",
+            created_at=created_at,
+            created_by=row["created_by"] or "user",
+        )
+
+    # ========================================================================
+    # Trash / Deleted Items Operations
+    # ========================================================================
+
+    def move_capsule_to_trash(self, capsule_id: str) -> bool:
+        """Move a capsule and its links to trash before deletion.
+
+        This is called internally when a capsule is being deleted to preserve
+        the capsule and its associated links for potential restoration.
+        """
+        conn = self._ensure_connected()
+
+        capsule = self.get_capsule(capsule_id)
+        if capsule is None:
+            return False
+
+        # Get all links for this capsule
+        links = self.get_links_for_capsule(capsule_id, direction="both")
+        links_data = [link.to_dict() for link in links]
+
+        # Serialize and store in trash
+        from datetime import timedelta
+        now = _utc_now()
+        trash_entry = DeletedItem(
+            item_type="capsule",
+            item_id=capsule_id,
+            item_data=json.dumps(capsule.to_dict()),
+            related_items=json.dumps(links_data) if links_data else "",
+            deleted_at=now,
+            deleted_by="user",
+            auto_purge_at=now + timedelta(days=30),
+        )
+
+        conn.execute("""
+            INSERT INTO deleted_items
+            (id, item_type, item_id, item_data, related_items,
+             deleted_at, deleted_by, auto_purge_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            trash_entry.id,
+            trash_entry.item_type,
+            trash_entry.item_id,
+            trash_entry.item_data,
+            trash_entry.related_items,
+            trash_entry.deleted_at.isoformat(),
+            trash_entry.deleted_by,
+            trash_entry.auto_purge_at.isoformat(),
+        ))
+        conn.commit()
+
+        return True
+
+    def restore_deleted_item(self, deleted_item_id: str) -> bool:
+        """Restore a deleted item from trash."""
+        conn = self._ensure_connected()
+
+        row = conn.execute(
+            "SELECT * FROM deleted_items WHERE id = ?", (deleted_item_id,)
+        ).fetchone()
+
+        if row is None:
+            return False
+
+        item_type = row["item_type"]
+        item_data = json.loads(row["item_data"])
+
+        if item_type == "capsule":
+            # Re-create the capsule
+            capsule = create_capsule(item_data)
+            self.save_capsule(capsule)
+
+            # Restore associated links if any
+            related_items_str = row["related_items"]
+            if related_items_str:
+                try:
+                    related_links = json.loads(related_items_str)
+                    for link_data in related_links:
+                        link = MemoryLink.from_dict(link_data)
+                        # Only restore if both capsules exist
+                        source_exists = conn.execute(
+                            "SELECT id FROM capsules WHERE id = ?",
+                            (link.source_capsule_id,)
+                        ).fetchone()
+                        target_exists = conn.execute(
+                            "SELECT id FROM capsules WHERE id = ?",
+                            (link.target_capsule_id,)
+                        ).fetchone()
+                        if source_exists and target_exists:
+                            try:
+                                self.create_link(link)
+                            except ValueError:
+                                pass  # Link already exists or capsule missing
+                except (json.JSONDecodeError, TypeError):
+                    pass  # No valid related items
+
+        elif item_type == "memory_link":
+            link = MemoryLink.from_dict(item_data)
+            # Only restore if both capsules still exist
+            source_exists = conn.execute(
+                "SELECT id FROM capsules WHERE id = ?",
+                (link.source_capsule_id,)
+            ).fetchone()
+            target_exists = conn.execute(
+                "SELECT id FROM capsules WHERE id = ?",
+                (link.target_capsule_id,)
+            ).fetchone()
+            if not (source_exists and target_exists):
+                return False
+            try:
+                self.create_link(link)
+            except ValueError:
+                return False  # Duplicate or missing capsule
+
+        else:
+            return False
+
+        # Remove from trash
+        conn.execute("DELETE FROM deleted_items WHERE id = ?", (deleted_item_id,))
+        conn.commit()
+
+        return True
+
+    def list_deleted_items(
+        self,
+        item_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[DeletedItem]:
+        """List items in the trash."""
+        conn = self._ensure_connected()
+
+        query = "SELECT * FROM deleted_items"
+        params: list[Any] = []
+
+        if item_type:
+            query += " WHERE item_type = ?"
+            params.append(item_type)
+
+        query += " ORDER BY deleted_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(query, params).fetchall()
+        return [self._row_to_deleted_item(row) for row in rows]
+
+    def purge_old_deleted_items(self, older_than_days: int = 30) -> int:
+        """Permanently remove deleted items older than the specified age."""
+        conn = self._ensure_connected()
+
+        cutoff = (_utc_now() - timedelta(days=older_than_days)).isoformat()
+
+        result = conn.execute(
+            "DELETE FROM deleted_items WHERE auto_purge_at <= ?",
+            (cutoff,)
+        )
+        conn.commit()
+
+        return result.rowcount
+
+    def permanently_delete_trash_item(self, deleted_item_id: str) -> bool:
+        """Permanently delete a single item from the trash (no restore possible)."""
+        conn = self._ensure_connected()
+
+        result = conn.execute(
+            "DELETE FROM deleted_items WHERE id = ?", (deleted_item_id,)
+        )
+        conn.commit()
+
+        return result.rowcount > 0
+
+    def _row_to_deleted_item(self, row: sqlite3.Row) -> DeletedItem:
+        """Convert a database row to a DeletedItem."""
+        deleted_at = row["deleted_at"]
+        if isinstance(deleted_at, str) and deleted_at:
+            deleted_at = datetime.fromisoformat(deleted_at.replace("Z", "+00:00"))
+        else:
+            deleted_at = _utc_now()
+
+        auto_purge_at = row["auto_purge_at"]
+        if isinstance(auto_purge_at, str) and auto_purge_at:
+            auto_purge_at = datetime.fromisoformat(auto_purge_at.replace("Z", "+00:00"))
+        else:
+            auto_purge_at = _utc_now() + timedelta(days=30)
+
+        return DeletedItem(
+            id=row["id"],
+            item_type=row["item_type"],
+            item_id=row["item_id"],
+            item_data=row["item_data"],
+            related_items=row["related_items"] or "",
+            deleted_at=deleted_at,
+            deleted_by=row["deleted_by"] or "",
+            auto_purge_at=auto_purge_at,
         )

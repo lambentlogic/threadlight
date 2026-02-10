@@ -6,7 +6,7 @@ Useful for testing and ephemeral sessions.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def _utc_now() -> datetime:
@@ -21,6 +21,8 @@ from threadlight.storage.base import (
     StorageBackend,
     CapsuleFilter,
     MemoryProposal,
+    MemoryLink,
+    DeletedItem,
     Message,
     Conversation,
     MessageSearchResult,
@@ -39,6 +41,8 @@ class InMemoryStorage(StorageBackend):
         self.profiles: dict[str, Profile] = {}
         self.custom_types: dict[str, dict[str, Any]] = {}
         self.builtin_customizations: dict[str, dict[str, Any]] = {}
+        self.memory_links: dict[str, MemoryLink] = {}
+        self.deleted_items: dict[str, DeletedItem] = {}
 
     def initialize(self) -> None:
         """Nothing to initialize for in-memory storage."""
@@ -53,6 +57,8 @@ class InMemoryStorage(StorageBackend):
         self.profiles.clear()
         self.custom_types.clear()
         self.builtin_customizations.clear()
+        self.memory_links.clear()
+        self.deleted_items.clear()
 
     # Capsule CRUD
 
@@ -694,4 +700,258 @@ class InMemoryStorage(StorageBackend):
         if type_id not in self.builtin_customizations:
             return False
         del self.builtin_customizations[type_id]
+        return True
+
+    # ========================================================================
+    # Memory Link Operations
+    # ========================================================================
+
+    def create_link(self, link: MemoryLink) -> str:
+        """Create a link between two memory capsules."""
+        # Validate capsules exist
+        if link.source_capsule_id not in self.capsules:
+            raise ValueError(f"Source capsule not found: {link.source_capsule_id}")
+        if link.target_capsule_id not in self.capsules:
+            raise ValueError(f"Target capsule not found: {link.target_capsule_id}")
+
+        # Check for duplicate (same source + target + type)
+        for existing in self.memory_links.values():
+            if (existing.source_capsule_id == link.source_capsule_id
+                    and existing.target_capsule_id == link.target_capsule_id
+                    and existing.link_type == link.link_type):
+                raise ValueError(
+                    f"Duplicate link: {link.source_capsule_id} -> "
+                    f"{link.target_capsule_id} ({link.link_type})"
+                )
+
+        if not link.id:
+            link.id = str(uuid.uuid4())
+
+        self.memory_links[link.id] = link
+        return link.id
+
+    def get_link(self, link_id: str) -> Optional[MemoryLink]:
+        """Get a link by ID."""
+        return self.memory_links.get(link_id)
+
+    def get_links_for_capsule(
+        self,
+        capsule_id: str,
+        direction: str = "both",
+        link_types: Optional[list[str]] = None,
+    ) -> list[MemoryLink]:
+        """Get all links for a capsule with direction filtering."""
+        results = []
+
+        for link in self.memory_links.values():
+            if direction == "outgoing":
+                if link.source_capsule_id != capsule_id:
+                    continue
+            elif direction == "incoming":
+                if link.target_capsule_id != capsule_id:
+                    continue
+            else:  # both
+                if (link.source_capsule_id != capsule_id
+                        and link.target_capsule_id != capsule_id):
+                    continue
+
+            if link_types and link.link_type not in link_types:
+                continue
+
+            results.append(link)
+
+        # Sort by created_at descending
+        results.sort(key=lambda l: l.created_at, reverse=True)
+        return results
+
+    def delete_link(self, link_id: str) -> bool:
+        """Delete a link (moves to trash)."""
+        link = self.memory_links.get(link_id)
+        if link is None:
+            return False
+
+        # Move to trash
+        import json
+        now = _utc_now()
+        trash_entry = DeletedItem(
+            item_type="memory_link",
+            item_id=link.id,
+            item_data=json.dumps(link.to_dict()),
+            related_items="",
+            deleted_at=now,
+            deleted_by="user",
+            auto_purge_at=now + timedelta(days=30),
+        )
+        self.deleted_items[trash_entry.id] = trash_entry
+
+        # Hard delete from main storage
+        del self.memory_links[link_id]
+        return True
+
+    def update_link(self, link: MemoryLink) -> bool:
+        """Update an existing link."""
+        if link.id not in self.memory_links:
+            return False
+        self.memory_links[link.id] = link
+        return True
+
+    def get_linked_capsules(
+        self,
+        capsule_id: str,
+        direction: str = "both",
+        link_types: Optional[list[str]] = None,
+        depth: int = 1,
+    ) -> list[tuple[MemoryCapsule, MemoryLink, int]]:
+        """Get capsules linked to a given capsule with depth traversal."""
+        if depth < 1:
+            return []
+
+        results: list[tuple[MemoryCapsule, MemoryLink, int]] = []
+        visited: set[str] = {capsule_id}
+        current_ids = [capsule_id]
+
+        for current_depth in range(1, depth + 1):
+            if not current_ids:
+                break
+
+            next_ids: list[str] = []
+            for cid in current_ids:
+                links = self.get_links_for_capsule(cid, direction, link_types)
+                for link in links:
+                    # Determine the "other" capsule ID
+                    if link.source_capsule_id == cid:
+                        other_id = link.target_capsule_id
+                    elif link.target_capsule_id == cid:
+                        if direction == "outgoing" and not link.bidirectional:
+                            continue
+                        other_id = link.source_capsule_id
+                    else:
+                        continue
+
+                    if other_id in visited:
+                        continue
+
+                    capsule = self.capsules.get(other_id)
+                    if capsule is not None:
+                        results.append((capsule, link, current_depth))
+                        visited.add(other_id)
+                        next_ids.append(other_id)
+
+            current_ids = next_ids
+
+        return results
+
+    def list_link_types(self) -> list[str]:
+        """List all distinct link types currently in use."""
+        types = set()
+        for link in self.memory_links.values():
+            types.add(link.link_type)
+        return sorted(types)
+
+    # ========================================================================
+    # Trash / Deleted Items Operations
+    # ========================================================================
+
+    def move_capsule_to_trash(self, capsule_id: str) -> bool:
+        """Move a capsule and its links to trash before deletion."""
+        import json
+
+        capsule = self.capsules.get(capsule_id)
+        if capsule is None:
+            return False
+
+        # Get all links for this capsule
+        links = self.get_links_for_capsule(capsule_id, direction="both")
+        links_data = [link.to_dict() for link in links]
+
+        now = _utc_now()
+        trash_entry = DeletedItem(
+            item_type="capsule",
+            item_id=capsule_id,
+            item_data=json.dumps(capsule.to_dict()),
+            related_items=json.dumps(links_data) if links_data else "",
+            deleted_at=now,
+            deleted_by="user",
+            auto_purge_at=now + timedelta(days=30),
+        )
+        self.deleted_items[trash_entry.id] = trash_entry
+        return True
+
+    def restore_deleted_item(self, deleted_item_id: str) -> bool:
+        """Restore a deleted item from trash."""
+        import json
+
+        item = self.deleted_items.get(deleted_item_id)
+        if item is None:
+            return False
+
+        item_data = json.loads(item.item_data)
+
+        if item.item_type == "capsule":
+            capsule = create_capsule(item_data)
+            self.capsules[capsule.id] = capsule
+
+            # Restore associated links
+            if item.related_items:
+                try:
+                    related_links = json.loads(item.related_items)
+                    for link_data in related_links:
+                        link = MemoryLink.from_dict(link_data)
+                        if (link.source_capsule_id in self.capsules
+                                and link.target_capsule_id in self.capsules):
+                            try:
+                                self.create_link(link)
+                            except ValueError:
+                                pass
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        elif item.item_type == "memory_link":
+            link = MemoryLink.from_dict(item_data)
+            if (link.source_capsule_id not in self.capsules
+                    or link.target_capsule_id not in self.capsules):
+                return False
+            try:
+                self.create_link(link)
+            except ValueError:
+                return False
+        else:
+            return False
+
+        del self.deleted_items[deleted_item_id]
+        return True
+
+    def list_deleted_items(
+        self,
+        item_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[DeletedItem]:
+        """List items in the trash."""
+        items = list(self.deleted_items.values())
+
+        if item_type:
+            items = [i for i in items if i.item_type == item_type]
+
+        items.sort(key=lambda i: i.deleted_at, reverse=True)
+        return items[:limit]
+
+    def purge_old_deleted_items(self, older_than_days: int = 30) -> int:
+        """Permanently remove deleted items older than the specified age."""
+        cutoff = _utc_now() - timedelta(days=older_than_days)
+
+        to_purge = [
+            item_id for item_id, item in self.deleted_items.items()
+            if item.auto_purge_at <= cutoff
+        ]
+
+        for item_id in to_purge:
+            del self.deleted_items[item_id]
+
+        return len(to_purge)
+
+    def permanently_delete_trash_item(self, deleted_item_id: str) -> bool:
+        """Permanently delete a single item from the trash."""
+        if deleted_item_id not in self.deleted_items:
+            return False
+        del self.deleted_items[deleted_item_id]
         return True

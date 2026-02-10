@@ -35,7 +35,7 @@ from threadlight.capsules.base import (
 from threadlight.capsules.custom_types import CustomTypeDefinition
 from threadlight.capsules.style import StyleProfile, BUILTIN_STYLES
 from threadlight.storage import create_storage, StorageBackend
-from threadlight.storage.base import Conversation, Message, MessageSearchResult
+from threadlight.storage.base import Conversation, Message, MessageSearchResult, MemoryLink, DeletedItem
 from threadlight.providers import create_provider, BaseProvider, ProviderManager
 from threadlight.providers.base import ProviderMessage, ProviderResponse
 from threadlight.context.composer import ContextComposer, ComposedContext
@@ -2000,6 +2000,128 @@ class Threadlight:
     def _update_memory_model_scope(self) -> None:
         """Deprecated: Use _update_memory_profile_scope instead."""
         self.memory.current_model = self.config.provider.model
+
+    # === Memory Links ===
+
+    def create_memory_link(
+        self,
+        source_id: str,
+        target_id: str,
+        link_type: str = "related",
+        strength: float = 1.0,
+        bidirectional: bool = False,
+        notes: str = "",
+        created_by: str = "user",
+    ) -> str:
+        """
+        Create a link between two memory capsules.
+
+        Args:
+            source_id: ID of the source capsule
+            target_id: ID of the target capsule
+            link_type: Relationship type (e.g., 'related', 'contradicts', 'supports')
+            strength: Link strength from 0.0 to 1.0
+            bidirectional: Whether the link applies in both directions
+            notes: Optional notes about the relationship
+            created_by: Who created the link
+
+        Returns:
+            The link ID
+
+        Raises:
+            ValueError: If capsules don't exist or duplicate link
+        """
+        link = MemoryLink(
+            source_capsule_id=source_id,
+            target_capsule_id=target_id,
+            link_type=link_type,
+            strength=strength,
+            bidirectional=bidirectional,
+            notes=notes,
+            created_by=created_by,
+        )
+        return self.storage.create_link(link)
+
+    def get_memory_links(
+        self,
+        capsule_id: str,
+        direction: str = "both",
+        link_types: Optional[list[str]] = None,
+    ) -> list[MemoryLink]:
+        """
+        Get links for a memory capsule.
+
+        Args:
+            capsule_id: The capsule ID
+            direction: 'outgoing', 'incoming', or 'both'
+            link_types: Optional filter by link type(s)
+
+        Returns:
+            List of MemoryLinks
+        """
+        return self.storage.get_links_for_capsule(capsule_id, direction, link_types)
+
+    def get_linked_capsules(
+        self,
+        capsule_id: str,
+        direction: str = "both",
+        link_types: Optional[list[str]] = None,
+        depth: int = 1,
+    ) -> list[tuple]:
+        """
+        Get capsules linked to a given capsule.
+
+        Args:
+            capsule_id: The starting capsule ID
+            direction: 'outgoing', 'incoming', or 'both'
+            link_types: Optional filter by link type(s)
+            depth: Maximum traversal depth (1 = direct links only)
+
+        Returns:
+            List of (capsule, link, depth) tuples
+        """
+        return self.storage.get_linked_capsules(capsule_id, direction, link_types, depth)
+
+    def delete_memory_link(self, link_id: str) -> bool:
+        """
+        Delete a memory link (moves to trash for potential restoration).
+
+        Args:
+            link_id: The link ID to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return self.storage.delete_link(link_id)
+
+    def restore_deleted_item(self, deleted_item_id: str) -> bool:
+        """
+        Restore a deleted item from the trash.
+
+        Args:
+            deleted_item_id: The trash entry ID
+
+        Returns:
+            True if restored, False if not found
+        """
+        return self.storage.restore_deleted_item(deleted_item_id)
+
+    def list_deleted_items(
+        self,
+        item_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[DeletedItem]:
+        """
+        List items in the trash.
+
+        Args:
+            item_type: Optional filter ('capsule', 'memory_link')
+            limit: Maximum items to return
+
+        Returns:
+            List of DeletedItem entries
+        """
+        return self.storage.list_deleted_items(item_type, limit)
 
     # === Group Chat Support ===
     # Delegated to GroupChatManager for implementation

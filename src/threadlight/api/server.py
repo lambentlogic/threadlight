@@ -421,6 +421,23 @@ class ModelProviderRequest(BaseModel):
     provider_id: Optional[str] = None  # Provider ID or None to use default
 
 
+class MemoryLinkRequest(BaseModel):
+    """Request model for creating a memory link."""
+    target_capsule_id: str
+    link_type: str = "related"
+    strength: float = 1.0
+    bidirectional: bool = False
+    notes: str = ""
+
+
+class MemoryLinkUpdateRequest(BaseModel):
+    """Request model for updating a memory link."""
+    link_type: Optional[str] = None
+    strength: Optional[float] = None
+    bidirectional: Optional[bool] = None
+    notes: Optional[str] = None
+
+
 # ============================================================================
 # Global State
 # ============================================================================
@@ -5260,6 +5277,168 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Import failed: {str(e)}")
 
+    # ========================================================================
+    # Memory Link Endpoints
+    # ========================================================================
+
+    @app.post("/api/memories/{capsule_id}/links")
+    async def create_memory_link(capsule_id: str, request: MemoryLinkRequest):
+        """Create a link between two memory capsules."""
+        tl = get_threadlight()
+
+        try:
+            link_id = tl.create_memory_link(
+                source_id=capsule_id,
+                target_id=request.target_capsule_id,
+                link_type=request.link_type,
+                strength=request.strength,
+                bidirectional=request.bidirectional,
+                notes=request.notes,
+            )
+
+            link = tl.storage.get_link(link_id)
+            if link is None:
+                raise HTTPException(status_code=500, detail="Link created but not found")
+
+            return _link_to_dict(link)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/memories/{capsule_id}/links")
+    async def get_memory_links(
+        capsule_id: str,
+        direction: str = "both",
+        link_type: Optional[str] = None,
+    ):
+        """Get links for a memory capsule."""
+        tl = get_threadlight()
+
+        link_types = [link_type] if link_type else None
+        links = tl.get_memory_links(capsule_id, direction, link_types)
+
+        return {
+            "links": [_link_to_dict(link) for link in links],
+            "count": len(links),
+            "capsule_id": capsule_id,
+            "direction": direction,
+        }
+
+    @app.get("/api/memories/{capsule_id}/linked-capsules")
+    async def get_linked_capsules(
+        capsule_id: str,
+        direction: str = "both",
+        link_type: Optional[str] = None,
+        depth: int = 1,
+    ):
+        """Get capsules linked to a given capsule with metadata."""
+        tl = get_threadlight()
+
+        link_types = [link_type] if link_type else None
+        results = tl.get_linked_capsules(capsule_id, direction, link_types, depth)
+
+        items = []
+        for capsule, link, hop_depth in results:
+            items.append({
+                "capsule": _capsule_to_dict(capsule),
+                "link": _link_to_dict(link),
+                "depth": hop_depth,
+            })
+
+        return {
+            "linked_capsules": items,
+            "count": len(items),
+            "capsule_id": capsule_id,
+            "depth": depth,
+        }
+
+    @app.delete("/api/memories/{capsule_id}/links/{link_id}")
+    async def delete_memory_link(capsule_id: str, link_id: str):
+        """Delete a memory link (moves to trash)."""
+        tl = get_threadlight()
+
+        success = tl.delete_memory_link(link_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Link not found")
+
+        return {"status": "deleted", "id": link_id}
+
+    @app.put("/api/memories/{capsule_id}/links/{link_id}")
+    async def update_memory_link(
+        capsule_id: str,
+        link_id: str,
+        request: MemoryLinkUpdateRequest,
+    ):
+        """Update a memory link."""
+        tl = get_threadlight()
+
+        link = tl.storage.get_link(link_id)
+        if link is None:
+            raise HTTPException(status_code=404, detail="Link not found")
+
+        # Apply updates
+        if request.link_type is not None:
+            link.link_type = request.link_type
+        if request.strength is not None:
+            link.strength = request.strength
+        if request.bidirectional is not None:
+            link.bidirectional = request.bidirectional
+        if request.notes is not None:
+            link.notes = request.notes
+
+        success = tl.storage.update_link(link)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update link")
+
+        return _link_to_dict(link)
+
+    @app.get("/api/memory-link-types")
+    async def list_memory_link_types():
+        """List all link types currently in use."""
+        tl = get_threadlight()
+
+        types = tl.storage.list_link_types()
+        return {"link_types": types}
+
+    # ========================================================================
+    # Trash / Deleted Items Endpoints
+    # ========================================================================
+
+    @app.get("/api/deleted-items")
+    async def list_deleted_items(
+        item_type: Optional[str] = None,
+        limit: int = 50,
+    ):
+        """List recently deleted items."""
+        tl = get_threadlight()
+
+        items = tl.list_deleted_items(item_type, limit)
+        return {
+            "deleted_items": [item.to_dict() for item in items],
+            "count": len(items),
+        }
+
+    @app.post("/api/deleted-items/{deleted_item_id}/restore")
+    async def restore_deleted_item(deleted_item_id: str):
+        """Restore a deleted item from trash."""
+        tl = get_threadlight()
+
+        success = tl.restore_deleted_item(deleted_item_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Deleted item not found or could not be restored")
+
+        return {"status": "restored", "id": deleted_item_id}
+
+    @app.delete("/api/deleted-items/{deleted_item_id}")
+    async def permanently_delete_item(deleted_item_id: str):
+        """Permanently delete an item from trash (no restore possible)."""
+        tl = get_threadlight()
+
+        success = tl.storage.permanently_delete_trash_item(deleted_item_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Deleted item not found")
+
+        return {"status": "permanently_deleted", "id": deleted_item_id}
+
     return app
 
 
@@ -5302,6 +5481,11 @@ def _get_capsule_preview(capsule) -> str:
     else:
         content_str = str(capsule.content)
         return content_str[:80] + ("..." if len(content_str) > 80 else "")
+
+
+def _link_to_dict(link) -> dict[str, Any]:
+    """Convert a MemoryLink to a dictionary for API responses."""
+    return link.to_dict()
 
 
 def _extract_cue_phrases(text: str, max_phrases: int = 5) -> list[str]:
