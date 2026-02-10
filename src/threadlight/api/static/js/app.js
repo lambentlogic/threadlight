@@ -1,10 +1,10 @@
 /**
  * Threadlight Web UI - Alpine.js Application
- * Version: 2026-02-09-quality-variants-model-persist
+ * Version: 2026-02-09-memory-links-ui
  */
 
 // Log when script loads to verify we're running the updated version
-console.log('[app.js] Loading Threadlight app version 2026-02-09-quality-variants-model-persist');
+console.log('[app.js] Loading Threadlight app version 2026-02-09-memory-links-ui');
 
 function threadlightApp() {
     return {
@@ -79,6 +79,32 @@ function threadlightApp() {
 
         // Archive state
         showArchived: false,
+
+        // Memory links state
+        showLinkCreationModal: false,
+        linkCreationSource: null,  // Source capsule being linked from
+        linkCreationForm: {
+            target_capsule_id: '',
+            link_type: 'clarifies',
+            strength: 1.0,
+            bidirectional: false,
+            notes: '',
+        },
+        linkSearchQuery: '',
+        linkSearchResults: [],
+        selectedMemoryForLink: null,
+
+        // Common link types (user can also type custom)
+        linkTypeOptions: [
+            { value: 'clarifies', label: 'Clarifies', description: 'Target clarifies the source' },
+            { value: 'elaborates', label: 'Elaborates', description: 'Target adds detail to source' },
+            { value: 'contradicts', label: 'Contradicts', description: 'Target conflicts with source' },
+            { value: 'contextualizes', label: 'Contextualizes', description: 'Target provides background' },
+            { value: 'deepens', label: 'Deepens', description: 'Target adds emotional depth' },
+            { value: 'precedes', label: 'Precedes', description: 'Target happened before source' },
+            { value: 'echoes', label: 'Echoes', description: 'Target resonates thematically' },
+            { value: 'supports', label: 'Supports', description: 'Target reinforces source' },
+        ],
 
         // Embeddings state
         embeddingsEnabled: false,
@@ -2296,6 +2322,153 @@ function threadlightApp() {
                 await this.loadMemories();
             } catch (error) {
                 this.showToast('Failed to reinforce memory: ' + error.message, 'error');
+            }
+        },
+
+        // --- Memory Links Methods ---
+
+        // Open link creation modal
+        showLinkModal(sourceCapsuleId) {
+            this.linkCreationSource = sourceCapsuleId;
+            this.linkCreationForm = {
+                target_capsule_id: '',
+                link_type: 'clarifies',
+                strength: 1.0,
+                bidirectional: false,
+                notes: '',
+            };
+            this.linkSearchQuery = '';
+            this.linkSearchResults = [];
+            this.selectedMemoryForLink = null;
+            this.showLinkCreationModal = true;
+        },
+
+        // Search for memories to link to (exclude source)
+        async searchMemoriesForLink() {
+            if (!this.linkSearchQuery || this.linkSearchQuery.length < 2) {
+                this.linkSearchResults = [];
+                return;
+            }
+
+            try {
+                const params = new URLSearchParams({
+                    search: this.linkSearchQuery,
+                    limit: '10',
+                });
+                const response = await fetch(`/api/memories?${params}`);
+                const data = await response.json();
+
+                // Exclude the source capsule from results
+                this.linkSearchResults = (data.memories || []).filter(
+                    m => m.id !== this.linkCreationSource
+                );
+            } catch (error) {
+                console.error('Failed to search memories:', error);
+            }
+        },
+
+        // Select a memory as link target
+        selectMemoryForLink(memory) {
+            this.selectedMemoryForLink = memory;
+            this.linkCreationForm.target_capsule_id = memory.id;
+            this.linkSearchQuery = '';
+            this.linkSearchResults = [];
+        },
+
+        // Create the link
+        async createMemoryLink() {
+            if (!this.linkCreationForm.target_capsule_id) {
+                this.showToast('Please select a memory to link to', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(
+                    `/api/memories/${this.linkCreationSource}/links`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.linkCreationForm),
+                    }
+                );
+
+                if (!response.ok) {
+                    const error = await response.text();
+                    throw new Error(error);
+                }
+
+                const sourceCapsuleId = this.linkCreationSource;
+
+                // Close modal and reload links
+                this.showLinkCreationModal = false;
+                this.showToast('Memory link created');
+
+                // Reload links on the source memory
+                await this.loadMemoryLinks(sourceCapsuleId);
+
+                // Refresh the memory detail view if open
+                if (this.selectedMemory?.id === sourceCapsuleId) {
+                    this.selectedMemory = { ...this.selectedMemory };
+                }
+            } catch (error) {
+                console.error('Failed to create link:', error);
+                this.showToast('Failed to create link: ' + error.message, 'error');
+            }
+        },
+
+        // Load links for a memory (uses linked-capsules endpoint for preview data)
+        async loadMemoryLinks(capsuleId) {
+            try {
+                const response = await fetch(`/api/memories/${capsuleId}/linked-capsules`);
+                const data = await response.json();
+
+                // Transform into a flat list with link + target capsule info
+                const links = (data.linked_capsules || []).map(item => ({
+                    ...item.link,
+                    target_preview: item.capsule?.preview || 'Linked memory',
+                    target_type: item.capsule?.type || '',
+                    target_id: item.capsule?.id || item.link.target_capsule_id,
+                }));
+
+                // Attach to the memory object in the list
+                const memory = this.memories.find(m => m.id === capsuleId);
+                if (memory) {
+                    memory.links = links;
+                    memory.link_count = links.length;
+                }
+
+                // Also update selectedMemory if it matches
+                if (this.selectedMemory?.id === capsuleId) {
+                    this.selectedMemory.links = links;
+                    this.selectedMemory.link_count = links.length;
+                }
+
+                return links;
+            } catch (error) {
+                console.error('Failed to load links:', error);
+                return [];
+            }
+        },
+
+        // Delete a link
+        async deleteMemoryLink(capsuleId, linkId) {
+            if (!confirm('Delete this memory link?')) return;
+
+            try {
+                const response = await fetch(
+                    `/api/memories/${capsuleId}/links/${linkId}`,
+                    { method: 'DELETE' }
+                );
+
+                if (!response.ok) throw new Error('Failed to delete link');
+
+                this.showToast('Memory link deleted');
+
+                // Reload links
+                await this.loadMemoryLinks(capsuleId);
+            } catch (error) {
+                console.error('Failed to delete link:', error);
+                this.showToast('Failed to delete link', 'error');
             }
         },
 
