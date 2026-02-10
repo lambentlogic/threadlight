@@ -249,6 +249,8 @@ class ToolExecutor:
         cue = arguments.get("cue")
         memory_types = arguments.get("memory_types")
         limit = arguments.get("limit", 5)
+        include_linked = arguments.get("include_linked", False)
+        link_depth = arguments.get("link_depth")
 
         if not cue:
             return ToolResult(
@@ -269,8 +271,14 @@ class ToolExecutor:
                     error=f"Invalid memory type: {e}",
                 )
 
-        # Recall memories
-        capsules = self.memory.recall(cue, types=types, limit=limit)
+        # Recall memories with optional linked capsule inclusion
+        capsules = self.memory.recall(
+            cue,
+            types=types,
+            limit=limit,
+            include_linked=include_linked,
+            link_depth=link_depth,
+        )
 
         # Format results
         memories = []
@@ -299,6 +307,16 @@ class ToolExecutor:
             elif capsule.type == CapsuleType.STYLE:
                 memory_data["style_id"] = getattr(capsule, "style_id", "")
                 memory_data["tone_base"] = getattr(capsule, "tone_base", "")
+
+            # Indicate if this is a linked (vs. directly recalled) memory
+            link_context = getattr(capsule, '_link_context', None)
+            if link_context:
+                link = link_context.get("link")
+                memory_data["linked"] = True
+                memory_data["link_type"] = link.link_type if link else "related"
+                memory_data["link_via"] = link_context.get("via_capsule_id", "")[:8]
+                if link and link.notes:
+                    memory_data["link_notes"] = link.notes
 
             memories.append(memory_data)
 

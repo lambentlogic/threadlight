@@ -456,6 +456,11 @@ class MemoryConfig:
     # anchored_demotion_days: Days of inactivity (with low access count) before demotion consideration
     anchored_demotion_days: int = 90
 
+    # Inter-memory threads (linked memory recall)
+    include_linked_in_recall: bool = False  # Whether to include linked memories during recall
+    max_link_depth: int = 1  # How many hops to traverse (1 = direct links only)
+    max_links_per_capsule: int = 2  # Maximum linked capsules per recalled memory
+
     def __post_init__(self) -> None:
         # Migrate per_model_isolation to per_profile_isolation for backward compatibility
         if self.per_model_isolation and not self.per_profile_isolation:
@@ -784,6 +789,16 @@ class ThreadlightConfig:
             config.memory.anchored_demotion_days = m.get(
                 "anchored_demotion_days", config.memory.anchored_demotion_days
             )
+            # Inter-memory threads
+            config.memory.include_linked_in_recall = m.get(
+                "include_linked_in_recall", config.memory.include_linked_in_recall
+            )
+            config.memory.max_link_depth = m.get(
+                "max_link_depth", config.memory.max_link_depth
+            )
+            config.memory.max_links_per_capsule = m.get(
+                "max_links_per_capsule", config.memory.max_links_per_capsule
+            )
 
         if "style" in data:
             st = data["style"]
@@ -881,6 +896,10 @@ class ThreadlightConfig:
                 "max_anchored_memories": self.memory.max_anchored_memories,
                 "anchored_demotion_threshold": self.memory.anchored_demotion_threshold,
                 "anchored_demotion_days": self.memory.anchored_demotion_days,
+                # Inter-memory threads
+                "include_linked_in_recall": self.memory.include_linked_in_recall,
+                "max_link_depth": self.memory.max_link_depth,
+                "max_links_per_capsule": self.memory.max_links_per_capsule,
             },
             "style": {
                 "default_profile": self.style.default_profile,

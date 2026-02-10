@@ -528,9 +528,12 @@ class MemoryOrchestrator:
         model_scope: Optional[str] = None,
         include_shared: bool = True,
         profile_scope: Optional[str] = None,
+        include_linked: Optional[bool] = None,
+        link_depth: Optional[int] = None,
+        link_limit_per_capsule: Optional[int] = None,
     ) -> list[MemoryCapsule]:
         """
-        Recall memories matching a cue.
+        Recall memories matching a cue, with optional linked capsule inclusion.
 
         This is the primary retrieval method for context injection.
 
@@ -542,9 +545,12 @@ class MemoryOrchestrator:
             model_scope: Deprecated - use profile_scope instead
             include_shared: Whether to include shared (profile_scope=NULL) memories
             profile_scope: Override profile scope for filtering (uses current if None)
+            include_linked: Whether to include linked capsules (None = use config default)
+            link_depth: How many hops to traverse (None = use config default)
+            link_limit_per_capsule: Max linked capsules per recalled memory (None = use config default)
 
         Returns:
-            List of matching capsules, sorted by relevance
+            List of matching capsules (primary + linked if include_linked=True)
         """
         # Determine effective scope for filtering (prefer profile, fall back to model)
         effective_scope = profile_scope or model_scope
@@ -570,8 +576,10 @@ class MemoryOrchestrator:
         # Filter by presence score
         matches = [m for m in matches if m.presence_score >= min_presence]
 
+        primary_capsules = matches[:limit]
+
         # Touch accessed capsules and track in session
-        for capsule in matches[:limit]:
+        for capsule in primary_capsules:
             capsule.touch()
             self.storage.update_capsule(capsule)
 
@@ -579,7 +587,103 @@ class MemoryOrchestrator:
             if self._current_session:
                 self._current_session.record_access(capsule.id)
 
-        return matches[:limit]
+        # Optionally include linked capsules
+        result = list(primary_capsules)
+        result = self._append_linked_capsules(
+            result,
+            primary_capsules,
+            include_linked=include_linked,
+            link_depth=link_depth,
+            link_limit_per_capsule=link_limit_per_capsule,
+        )
+
+        return result
+
+    def _append_linked_capsules(
+        self,
+        result: list[MemoryCapsule],
+        primary_capsules: list[MemoryCapsule],
+        include_linked: Optional[bool] = None,
+        link_depth: Optional[int] = None,
+        link_limit_per_capsule: Optional[int] = None,
+    ) -> list[MemoryCapsule]:
+        """
+        Append linked capsules to a result list based on primary capsules.
+
+        Resolves config defaults for include_linked, link_depth, and
+        link_limit_per_capsule, then traverses links and attaches
+        _link_context metadata to each linked capsule.
+
+        Deduplication: if a capsule already appears as a primary result,
+        it is not duplicated as a linked result.
+
+        Args:
+            result: The result list to append to (modified in place and returned)
+            primary_capsules: The primary recalled capsules to traverse from
+            include_linked: Whether to include linked capsules (None = use config default)
+            link_depth: How many hops to traverse (None = use config default)
+            link_limit_per_capsule: Max linked capsules per primary (None = use config default)
+
+        Returns:
+            The result list (same object, for convenience)
+        """
+        # Resolve config defaults
+        if include_linked is None:
+            include_linked = getattr(
+                getattr(self, '_config_memory', None),
+                'include_linked_in_recall',
+                False,
+            )
+            # Try via threadlight reference
+            if hasattr(self, 'threadlight') and self.threadlight:
+                include_linked = self.threadlight.config.memory.include_linked_in_recall
+
+        if not include_linked:
+            return result
+
+        if link_depth is None:
+            link_depth = 1
+            if hasattr(self, 'threadlight') and self.threadlight:
+                link_depth = self.threadlight.config.memory.max_link_depth
+
+        if link_limit_per_capsule is None:
+            link_limit_per_capsule = 2
+            if hasattr(self, 'threadlight') and self.threadlight:
+                link_limit_per_capsule = self.threadlight.config.memory.max_links_per_capsule
+
+        # Track IDs already in the result to avoid duplicates
+        seen_ids = {c.id for c in result}
+
+        for primary_capsule in primary_capsules:
+            try:
+                linked_results = self.storage.get_linked_capsules(
+                    primary_capsule.id,
+                    direction="both",
+                    depth=link_depth,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to get linked capsules for {primary_capsule.id}: {e}")
+                continue
+
+            added = 0
+            for linked_capsule, link_obj, depth in linked_results:
+                if added >= link_limit_per_capsule:
+                    break
+                if linked_capsule.id in seen_ids:
+                    continue
+
+                # Attach link context metadata so the composer knows this is linked
+                linked_capsule._link_context = {
+                    "via_capsule_id": primary_capsule.id,
+                    "link": link_obj,
+                    "depth": depth,
+                }
+
+                result.append(linked_capsule)
+                seen_ids.add(linked_capsule.id)
+                added += 1
+
+        return result
 
     def recall_for_message(
         self,

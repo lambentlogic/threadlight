@@ -123,6 +123,24 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "description": "Maximum number of memories to return (default: 5).",
                         "default": 5,
                     },
+                    "include_linked": {
+                        "type": "boolean",
+                        "description": (
+                            "Whether to include linked memories (memories related to the "
+                            "recalled ones via inter-memory threads). Default: false."
+                        ),
+                        "default": False,
+                    },
+                    "link_depth": {
+                        "type": "integer",
+                        "description": (
+                            "How many relationship hops to traverse when including linked "
+                            "memories (1 = direct links only). Default: 1. Maximum: 3."
+                        ),
+                        "default": 1,
+                        "minimum": 1,
+                        "maximum": 3,
+                    },
                 },
                 "required": ["cue"],
             },

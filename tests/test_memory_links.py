@@ -1,4 +1,4 @@
-"""Tests for inter-memory links and trash/recycle bin."""
+"""Tests for inter-memory links, trash/recycle bin, and recall integration (Phase 3)."""
 
 import json
 import pytest
@@ -11,7 +11,9 @@ from threadlight.storage.sqlite import SQLiteStorage
 from threadlight.storage.base import MemoryLink, DeletedItem, CapsuleFilter
 from threadlight.capsules.relational import create_relational
 from threadlight.capsules.myth_seed import create_myth_seed
-from threadlight.capsules.base import CapsuleType
+from threadlight.capsules.base import CapsuleType, ContextMode
+from threadlight.memory.orchestrator import MemoryOrchestrator
+from threadlight.context.composer import ContextComposer
 
 
 # ============================================================================
@@ -820,3 +822,557 @@ class TestSQLiteStorageLinks:
 
         results_c2 = sqlite_storage.get_linked_capsules(c2.id, direction="both")
         assert len(results_c2) == 1
+
+
+# ============================================================================
+# Phase 3: Recall Integration Tests (In-Memory)
+# ============================================================================
+
+
+class TestRecallWithLinkedMemories:
+    """Test that recall() can include linked memories."""
+
+    def test_recall_with_include_linked_true(self, memory_storage):
+        """Recall with include_linked=True returns linked capsules."""
+        c1 = create_relational(entity="Alice", summary="A friend who paints")
+        # Use a cue phrase that does NOT overlap with "Alice" so this capsule
+        # won't be found as a primary result for the "Alice" cue.
+        c2 = create_relational(
+            entity="Studio Downtown",
+            summary="An art studio downtown",
+            cue_phrases=["studio", "downtown"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="elaborates",
+        )
+        memory_storage.create_link(link)
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+        results = orch.recall(
+            cue="Alice",
+            include_linked=True,
+            link_limit_per_capsule=5,
+        )
+
+        # Should get both primary and linked
+        assert len(results) == 2
+
+        # First should be primary (no _link_context)
+        assert not hasattr(results[0], '_link_context')
+
+        # Second should be linked (has _link_context)
+        assert hasattr(results[1], '_link_context')
+        assert results[1]._link_context['link'].link_type == "elaborates"
+        assert results[1]._link_context['via_capsule_id'] == c1.id
+        assert results[1]._link_context['depth'] == 1
+
+    def test_recall_without_include_linked(self, memory_storage):
+        """Recall with include_linked=False returns only primary memories."""
+        c1 = create_relational(entity="Bob", summary="A coworker")
+        c2 = create_relational(
+            entity="Design Sprint",
+            summary="Leads the design project",
+            cue_phrases=["design", "sprint"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="contextualizes",
+        )
+        memory_storage.create_link(link)
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+        results = orch.recall(cue="Bob", include_linked=False)
+
+        # Should only get the primary memory
+        assert len(results) == 1
+        assert not hasattr(results[0], '_link_context')
+
+    def test_recall_default_is_no_linked(self, memory_storage):
+        """Default recall() does not include linked memories."""
+        c1 = create_relational(entity="Carol", summary="A neighbor")
+        c2 = create_relational(
+            entity="Garden Plot",
+            summary="A lovely garden next door",
+            cue_phrases=["garden", "plot"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="related",
+        )
+        memory_storage.create_link(link)
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+
+        # Default: include_linked not specified, should be False
+        results = orch.recall(cue="Carol")
+        assert len(results) == 1
+
+    def test_linked_memory_depth_limiting(self, memory_storage):
+        """Link depth limiting works: depth=1 gets only direct links."""
+        ca = create_relational(entity="AlphaNode", summary="First capsule")
+        cb = create_relational(
+            entity="BetaNode",
+            summary="Second capsule",
+            cue_phrases=["betanode"],
+        )
+        cc = create_relational(
+            entity="GammaNode",
+            summary="Third capsule",
+            cue_phrases=["gammanode"],
+        )
+        memory_storage.save_capsule(ca)
+        memory_storage.save_capsule(cb)
+        memory_storage.save_capsule(cc)
+
+        # Chain: A -> B -> C
+        memory_storage.create_link(MemoryLink(
+            source_capsule_id=ca.id,
+            target_capsule_id=cb.id,
+            link_type="related",
+        ))
+        memory_storage.create_link(MemoryLink(
+            source_capsule_id=cb.id,
+            target_capsule_id=cc.id,
+            link_type="related",
+        ))
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+
+        # Depth 1: only direct link (A -> B)
+        results_d1 = orch.recall(
+            cue="AlphaNode",
+            include_linked=True,
+            link_depth=1,
+            link_limit_per_capsule=10,
+        )
+        assert len(results_d1) == 2  # A + B
+
+        # Depth 2: two hops (A -> B -> C)
+        results_d2 = orch.recall(
+            cue="AlphaNode",
+            include_linked=True,
+            link_depth=2,
+            link_limit_per_capsule=10,
+        )
+        assert len(results_d2) == 3  # A + B + C
+
+    def test_linked_memory_limit_per_capsule(self, memory_storage):
+        """Link limit per capsule restricts how many linked capsules are returned."""
+        primary = create_relational(entity="Dave", summary="A friend")
+        linked1 = create_relational(
+            entity="Chess Club", summary="Likes chess",
+            cue_phrases=["chess", "club"],
+        )
+        linked2 = create_relational(
+            entity="Hiking Trail", summary="Likes hiking",
+            cue_phrases=["hiking", "trail"],
+        )
+        linked3 = create_relational(
+            entity="Cooking Class", summary="Likes cooking",
+            cue_phrases=["cooking", "class"],
+        )
+        memory_storage.save_capsule(primary)
+        memory_storage.save_capsule(linked1)
+        memory_storage.save_capsule(linked2)
+        memory_storage.save_capsule(linked3)
+
+        for target in [linked1, linked2, linked3]:
+            memory_storage.create_link(MemoryLink(
+                source_capsule_id=primary.id,
+                target_capsule_id=target.id,
+                link_type="elaborates",
+            ))
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+
+        # Limit to 2 linked per capsule
+        results = orch.recall(
+            cue="Dave",
+            include_linked=True,
+            link_limit_per_capsule=2,
+        )
+        # Should get primary + 2 linked (not all 3)
+        assert len(results) == 3
+
+    def test_deduplication_primary_vs_linked(self, memory_storage):
+        """If a capsule is both primary and linked, it appears only once (as primary)."""
+        c1 = create_relational(entity="Eve", summary="A friend")
+        c2 = create_relational(entity="Eve Project", summary="Eve's project",
+                               cue_phrases=["eve", "eve project"])
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        # c1 -> c2 link
+        memory_storage.create_link(MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="related",
+        ))
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+
+        # Both c1 and c2 match "eve" in cue phrases, so both are primary
+        # c2 is also linked from c1
+        results = orch.recall(
+            cue="eve",
+            include_linked=True,
+            link_limit_per_capsule=5,
+        )
+
+        # c2 should not be duplicated
+        ids = [r.id for r in results]
+        assert len(ids) == len(set(ids)), "No duplicates in results"
+
+    def test_link_context_metadata_structure(self, memory_storage):
+        """Verify the _link_context metadata has the expected structure."""
+        c1 = create_relational(entity="Frank", summary="A colleague")
+        c2 = create_relational(
+            entity="Meeting Minutes",
+            summary="Weekly standup notes",
+            cue_phrases=["meeting", "minutes", "standup"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="supports",
+            notes="Referenced in weekly standup",
+        )
+        memory_storage.create_link(link)
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+        results = orch.recall(
+            cue="Frank",
+            include_linked=True,
+        )
+
+        # Find the linked capsule
+        linked = [r for r in results if hasattr(r, '_link_context')]
+        assert len(linked) == 1
+
+        ctx = linked[0]._link_context
+        assert ctx['via_capsule_id'] == c1.id
+        assert ctx['link'].link_type == "supports"
+        assert ctx['link'].notes == "Referenced in weekly standup"
+        assert ctx['depth'] == 1
+
+
+# ============================================================================
+# Phase 3: Recall Integration Tests (SQLite)
+# ============================================================================
+
+
+class TestRecallWithLinkedMemoriesSQLite:
+    """Test recall with linked memories using SQLite storage."""
+
+    def test_recall_with_linked_sqlite(self, sqlite_storage):
+        """Basic linked recall test with SQLite."""
+        c1 = create_relational(entity="Grace", summary="A mentor")
+        c2 = create_relational(
+            entity="Career Guidance",
+            summary="Helpful tips on job hunting",
+            cue_phrases=["career", "guidance"],
+        )
+        sqlite_storage.save_capsule(c1)
+        sqlite_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="elaborates",
+        )
+        sqlite_storage.create_link(link)
+
+        orch = MemoryOrchestrator(storage=sqlite_storage)
+        results = orch.recall(
+            cue="Grace",
+            include_linked=True,
+            link_limit_per_capsule=5,
+        )
+
+        assert len(results) == 2
+        assert not hasattr(results[0], '_link_context')
+        assert hasattr(results[1], '_link_context')
+        assert results[1]._link_context['link'].link_type == "elaborates"
+
+    def test_depth_traversal_sqlite(self, sqlite_storage):
+        """Multi-hop depth traversal with SQLite."""
+        c1 = create_relational(entity="X-Item", summary="Start")
+        c2 = create_relational(entity="Y-Item", summary="Middle")
+        c3 = create_relational(entity="Z-Item", summary="End")
+        sqlite_storage.save_capsule(c1)
+        sqlite_storage.save_capsule(c2)
+        sqlite_storage.save_capsule(c3)
+
+        sqlite_storage.create_link(MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+        ))
+        sqlite_storage.create_link(MemoryLink(
+            source_capsule_id=c2.id,
+            target_capsule_id=c3.id,
+        ))
+
+        orch = MemoryOrchestrator(storage=sqlite_storage)
+
+        results_d1 = orch.recall(
+            cue="X-Item", include_linked=True, link_depth=1,
+            link_limit_per_capsule=10,
+        )
+        assert len(results_d1) == 2
+
+        results_d2 = orch.recall(
+            cue="X-Item", include_linked=True, link_depth=2,
+            link_limit_per_capsule=10,
+        )
+        assert len(results_d2) == 3
+
+
+# ============================================================================
+# Phase 3: Context Composer Formatting Tests
+# ============================================================================
+
+
+class TestContextComposerLinkedMemories:
+    """Test that the context composer formats linked memories correctly."""
+
+    def test_linked_capsule_formatting(self, memory_storage):
+        """Linked capsules should be formatted with arrow prefix in context."""
+        c1 = create_relational(entity="Sarah", summary="Lead designer on accessibility")
+        c2 = create_relational(
+            entity="Design System",
+            summary="Working on a new design system",
+            cue_phrases=["design", "system"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="elaborates",
+        )
+        memory_storage.create_link(link)
+
+        # Recall with linked capsules
+        orch = MemoryOrchestrator(storage=memory_storage)
+        capsules = orch.recall(
+            cue="Sarah",
+            include_linked=True,
+            link_limit_per_capsule=5,
+        )
+
+        # Compose context
+        composer = ContextComposer()
+        context = composer.compose(capsules=capsules, mode=ContextMode.NARRATIVE)
+
+        # The linked capsule should be formatted with arrow prefix
+        assert "-> elaborates:" in context.memory_context
+
+    def test_linked_capsule_with_notes_in_context(self, memory_storage):
+        """Linked capsule notes should appear in the context."""
+        c1 = create_relational(entity="Tom", summary="A friend")
+        c2 = create_relational(
+            entity="Guitar Sessions",
+            summary="Tom plays guitar",
+            cue_phrases=["guitar", "sessions"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="contextualizes",
+            notes="Mentioned during jam session",
+        )
+        memory_storage.create_link(link)
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+        capsules = orch.recall(
+            cue="Tom",
+            include_linked=True,
+        )
+
+        composer = ContextComposer()
+        context = composer.compose(capsules=capsules, mode=ContextMode.NARRATIVE)
+
+        assert "-> contextualizes" in context.memory_context
+        assert "Mentioned during jam session" in context.memory_context
+
+    def test_primary_capsules_not_affected(self, memory_storage):
+        """Primary capsules should be composed normally, unaffected by linked logic."""
+        c1 = create_relational(entity="Uma", summary="A colleague")
+        memory_storage.save_capsule(c1)
+
+        # No links, no linked capsules
+        orch = MemoryOrchestrator(storage=memory_storage)
+        capsules = orch.recall(cue="Uma", include_linked=False)
+
+        composer = ContextComposer()
+        context = composer.compose(capsules=capsules, mode=ContextMode.NARRATIVE)
+
+        # Should not have arrow prefix
+        assert "->" not in context.memory_context
+        # Should have normal capsule content
+        assert "Uma" in context.memory_context
+
+    def test_mixed_primary_and_linked_ordering(self, memory_storage):
+        """Primary capsules should appear before their linked capsules."""
+        c1 = create_relational(entity="Vera", summary="A photographer")
+        c2 = create_relational(
+            entity="Photo Exhibition",
+            summary="Vera's upcoming exhibit",
+            cue_phrases=["photo", "exhibition"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="supports",
+        )
+        memory_storage.create_link(link)
+
+        orch = MemoryOrchestrator(storage=memory_storage)
+        capsules = orch.recall(
+            cue="Vera",
+            include_linked=True,
+        )
+
+        composer = ContextComposer()
+        context = composer.compose(capsules=capsules, mode=ContextMode.NARRATIVE)
+
+        mc = context.memory_context
+        # Primary should appear before linked
+        primary_pos = mc.find("Vera")
+        arrow_pos = mc.find("-> supports:")
+        assert primary_pos < arrow_pos, "Primary capsule should appear before linked"
+
+
+# ============================================================================
+# Phase 3: Config Integration Tests
+# ============================================================================
+
+
+class TestLinkedRecallConfig:
+    """Test that config defaults are respected."""
+
+    def test_config_defaults(self):
+        """Default config has linked recall disabled."""
+        from threadlight.config import MemoryConfig
+        config = MemoryConfig()
+        assert config.include_linked_in_recall is False
+        assert config.max_link_depth == 1
+        assert config.max_links_per_capsule == 2
+
+    def test_config_serialization_roundtrip(self):
+        """Config with linked recall settings survives to_dict/from_dict."""
+        from threadlight.config import ThreadlightConfig
+        config = ThreadlightConfig()
+        config.memory.include_linked_in_recall = True
+        config.memory.max_link_depth = 3
+        config.memory.max_links_per_capsule = 5
+
+        data = config.to_dict()
+        assert data["memory"]["include_linked_in_recall"] is True
+        assert data["memory"]["max_link_depth"] == 3
+        assert data["memory"]["max_links_per_capsule"] == 5
+
+        restored = ThreadlightConfig._from_dict(data)
+        assert restored.memory.include_linked_in_recall is True
+        assert restored.memory.max_link_depth == 3
+        assert restored.memory.max_links_per_capsule == 5
+
+
+# ============================================================================
+# Phase 3: Tool Executor Recall Integration Tests
+# ============================================================================
+
+
+class TestToolExecutorLinkedRecall:
+    """Test that the tool executor passes linked parameters through."""
+
+    def test_recall_tool_with_include_linked(self, memory_storage):
+        """The recall_memory tool should support include_linked parameter."""
+        c1 = create_relational(entity="Wendy", summary="A designer")
+        c2 = create_relational(
+            entity="Portfolio Showcase",
+            summary="Wendy's portfolio",
+            cue_phrases=["portfolio", "showcase"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        link = MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+            link_type="elaborates",
+        )
+        memory_storage.create_link(link)
+
+        from threadlight.tools.executor import ToolExecutor
+        orch = MemoryOrchestrator(storage=memory_storage)
+        executor = ToolExecutor(orch, require_consent_for_memories=False)
+
+        # Without include_linked
+        result_no_link = executor.execute("recall_memory", {
+            "cue": "Wendy",
+            "include_linked": False,
+        })
+        assert result_no_link.success
+        assert result_no_link.result["count"] == 1
+
+        # With include_linked
+        result_with_link = executor.execute("recall_memory", {
+            "cue": "Wendy",
+            "include_linked": True,
+        })
+        assert result_with_link.success
+        assert result_with_link.result["count"] == 2
+
+        # The linked memory should have link metadata
+        memories = result_with_link.result["memories"]
+        linked_memories = [m for m in memories if m.get("linked")]
+        assert len(linked_memories) == 1
+        assert linked_memories[0]["link_type"] == "elaborates"
+
+    def test_recall_tool_default_no_linked(self, memory_storage):
+        """The recall_memory tool should not include linked by default."""
+        c1 = create_relational(entity="Xavier", summary="A teacher")
+        c2 = create_relational(
+            entity="Math Curriculum",
+            summary="Xavier teaches math",
+            cue_phrases=["math", "curriculum"],
+        )
+        memory_storage.save_capsule(c1)
+        memory_storage.save_capsule(c2)
+
+        memory_storage.create_link(MemoryLink(
+            source_capsule_id=c1.id,
+            target_capsule_id=c2.id,
+        ))
+
+        from threadlight.tools.executor import ToolExecutor
+        orch = MemoryOrchestrator(storage=memory_storage)
+        executor = ToolExecutor(orch, require_consent_for_memories=False)
+
+        result = executor.execute("recall_memory", {"cue": "Xavier"})
+        assert result.success
+        assert result.result["count"] == 1  # Only primary

@@ -302,17 +302,28 @@ class ContextComposer:
         per_capsule_modes: dict[str, ContextMode],
         result: ComposedContext,
     ) -> tuple[list[str], int, bool]:
-        """Compose memory context from capsules with token budget."""
+        """Compose memory context from capsules with token budget.
+
+        Handles both primary capsules and linked capsules. Linked capsules
+        (those with a _link_context attribute) are formatted with an arrow
+        prefix and their link type instead of the normal capsule framing.
+        """
         memory_parts = []
         token_count = 0
         truncated = False
 
         for capsule in capsules:
-            # Determine mode for this capsule
-            capsule_mode = per_capsule_modes.get(capsule.id, default_mode)
+            # Check if this is a linked memory
+            link_context = getattr(capsule, '_link_context', None)
 
-            # Check token budget
-            context_text = self._compose_capsule(capsule, capsule_mode)
+            if link_context:
+                # Format as linked memory with arrow prefix
+                context_text = self._compose_linked_capsule(capsule, link_context)
+            else:
+                # Determine mode for this capsule
+                capsule_mode = per_capsule_modes.get(capsule.id, default_mode)
+                context_text = self._compose_capsule(capsule, capsule_mode)
+
             estimated_tokens = estimate_tokens(context_text)
 
             if token_count + estimated_tokens > self.max_memory_tokens:
@@ -321,7 +332,10 @@ class ContextComposer:
 
             memory_parts.append(context_text)
             result.capsules_used.append(capsule.id)
-            result.capsule_modes[capsule.id] = capsule_mode.value
+            if not link_context:
+                capsule_mode = per_capsule_modes.get(capsule.id, default_mode)
+                result.capsule_modes[capsule.id] = capsule_mode.value
+
             token_count += estimated_tokens
 
             # Track rituals
@@ -329,6 +343,60 @@ class ContextComposer:
                 result.active_rituals.append(capsule.id)
 
         return memory_parts, token_count, truncated
+
+    def _compose_linked_capsule(
+        self,
+        capsule: MemoryCapsule,
+        link_context: dict,
+    ) -> str:
+        """
+        Compose a linked capsule with arrow-prefix formatting.
+
+        Linked capsules are formatted differently from primary capsules
+        to make it clear they are related context, not directly recalled.
+
+        Format: "  -> [link_type]: [capsule text]"
+        With notes: "  -> [link_type] ([notes]): [capsule text]"
+        """
+        link = link_context.get("link")
+        link_type = link.link_type if link else "related"
+        notes = link.notes if link and link.notes else ""
+
+        # Get the capsule text
+        text = self._get_capsule_text(capsule)
+
+        # Build the prefix
+        prefix = f"  -> {link_type}"
+        if notes:
+            prefix += f" ({notes})"
+
+        return f"{prefix}: {text}"
+
+    def _get_capsule_text(self, capsule: MemoryCapsule) -> str:
+        """
+        Extract a text representation from a capsule for linked memory display.
+
+        Prefers the text field, then falls back to to_context() in DIRECT mode,
+        then to content-based extraction.
+        """
+        # Prefer the text field if available
+        text = getattr(capsule, 'text', None)
+        if text:
+            return text
+
+        # Try to_context in direct mode for a clean representation
+        try:
+            return capsule.to_context(ContextMode.DIRECT)
+        except Exception:
+            pass
+
+        # Fall back to content-based extraction
+        if isinstance(capsule.content, dict):
+            for key in ('summary', 'text', 'content', 'seed', 'moment', 'entity'):
+                if key in capsule.content:
+                    return str(capsule.content[key])
+
+        return str(capsule.content)[:200] if capsule.content else "(linked memory)"
 
     def _compose_capsule(
         self,

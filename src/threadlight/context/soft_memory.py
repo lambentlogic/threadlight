@@ -339,6 +339,9 @@ class SoftMemory:
         orchestrator: 'MemoryOrchestrator',
         soft_memory_limit: int = 5,
         capsules_per_entity: int = 2,
+        include_linked: Optional[bool] = None,
+        link_depth: Optional[int] = None,
+        link_limit_per_capsule: Optional[int] = None,
     ) -> WovenMemory:
         """
         Recall past conversations and cross-reference with memory capsules.
@@ -352,6 +355,9 @@ class SoftMemory:
             orchestrator: Memory orchestrator for capsule queries
             soft_memory_limit: Maximum past conversations to return
             capsules_per_entity: Maximum capsules to fetch per entity
+            include_linked: Whether to include linked capsules (None = use config default)
+            link_depth: How many hops to traverse (None = use config default)
+            link_limit_per_capsule: Max linked capsules per primary (None = use config default)
 
         Returns:
             WovenMemory combining soft and hard memory results
@@ -385,6 +391,9 @@ class SoftMemory:
                     cue=entity.name,
                     limit=capsules_per_entity,
                     min_presence=0.2,  # Lower threshold for related context
+                    include_linked=include_linked,
+                    link_depth=link_depth,
+                    link_limit_per_capsule=link_limit_per_capsule,
                 )
 
                 # Filter for relational capsules (primary match for entities)
