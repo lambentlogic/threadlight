@@ -23,7 +23,7 @@ Threadlight enables AI companions to:
 - **Remember your relationship** - Track your evolving bond, not just facts about you
 - **Maintain personality** - Keep a consistent voice and character across conversations
 - **Grow with you** - Build on shared history, inside jokes, and meaningful moments
-- **Use custom commands** - Create shortcuts like `/checkin` or `/brainstorm` with consistent responses
+- **Use custom invocations** - Create shortcuts like `/checkin` or `/brainstorm` with consistent responses
 - **Store identity phrases** - Anchor personality with key phrases the companion remembers and references
 - **Manage multiple companions** - Create distinct personas, each with isolated memory and unique personality
 - **Use multiple providers** - Route requests to different providers (Anthropic, OpenAI, Ollama) based on model
@@ -96,7 +96,7 @@ Memory is stored as **capsules** - structured records that preserve content, con
 |------|---------|-------------|
 | **Relational** | Track bonds with people or entities | Remember friends, family, recurring topics |
 | **Identity Phrase** | Core phrases that anchor personality | Key quotes, mantras, defining statements |
-| **Custom Command** | Repeated interactions with consistent responses | `/checkin`, `/brainstorm`, `/reflect` |
+| **Custom Invocation** | Repeated interactions with consistent responses | `/checkin`, `/brainstorm`, `/reflect` |
 | **Style Profile** | Voice coherence and expression rules | Tone, vocabulary, response patterns |
 | **Witness Moment** | Memories of meaningful exchanges | Times you truly connected |
 
@@ -127,12 +127,6 @@ The system uses templates to frame memories naturally. Different composition mod
 ## Group Chat
 
 Create conversations with multiple companions responding to the same messages. Set this up in the web UI by creating a group conversation and selecting which companions participate.
-
-## Documentation
-
-- [Architecture Overview](docs/ARCHITECTURE.md)
-- [Architectural Decisions](docs/DECISIONS.md)
-- [Examples](examples/)
 
 ## Contributing
 
@@ -323,7 +317,7 @@ tl.remember(
     cue_phrases=["Jamie", "hiking buddy"]
 )
 
-# Create a custom command
+# Create a custom invocation
 tl.remember(
     type="ritual",
     content={
@@ -484,7 +478,7 @@ Threadlight uses accessible terminology by default. Some companions prefer more 
 
 | Everyday Term | Ceremonial Term | Meaning |
 |--------------|-----------------|---------|
-| **Custom Commands** | **Ritual Hooks** | Repeated interactions that shape response patterns |
+| **Custom Invocations** | **Ritual Hooks** | Repeated interactions that shape response patterns |
 | **Identity Phrases** | **Myth-Seeds** | Symbolic phrases that anchor personality and identity |
 | **Relationship Memory** | **Relational Threads** | Memories tracking evolving bonds, not just facts |
 | **Meaningful Moments** | **Witness Capsules** | Memories of deep connection or recognition |

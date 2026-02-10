@@ -138,3 +138,15 @@ dreams-continued/
 check_*.py
 .claude/
 TODO.md
+
+# === Internal/debug files ===
+RITUAL_VISION_REVIEW.md
+TIER_REVIEW_DEBUG_LOG.md
+*-this-session-is-being-continued-from-a-previous-co.txt
+
+# === Personal examples and seeds ===
+examples/
+seeds/
+
+# === Internal implementation docs ===
+docs/
