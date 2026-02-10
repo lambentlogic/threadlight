@@ -868,3 +868,32 @@ class StorageBackend(ABC):
             Number of items permanently purged
         """
         pass
+
+    @abstractmethod
+    def move_capsule_to_trash(self, capsule_id: str) -> bool:
+        """
+        Move a capsule and its associated links to trash before deletion.
+
+        The capsule data and related links are serialized into a DeletedItem
+        entry so they can be restored later if needed.
+
+        Args:
+            capsule_id: The ID of the capsule to move to trash
+
+        Returns:
+            True if moved to trash, False if capsule not found
+        """
+        pass
+
+    @abstractmethod
+    def permanently_delete_trash_item(self, deleted_item_id: str) -> bool:
+        """
+        Permanently delete a single item from the trash (no restore possible).
+
+        Args:
+            deleted_item_id: The trash entry ID to permanently remove
+
+        Returns:
+            True if deleted, False if not found
+        """
+        pass

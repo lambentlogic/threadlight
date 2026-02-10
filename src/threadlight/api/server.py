@@ -435,7 +435,10 @@ class MemoryLinkRequest(BaseModel):
     def link_type_non_empty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("link_type must be a non-empty string")
-        return v.strip()
+        v = v.strip()
+        if len(v) > 50:
+            raise ValueError("link_type must be 50 characters or fewer")
+        return v
 
 
 class MemoryLinkUpdateRequest(BaseModel):
@@ -450,7 +453,11 @@ class MemoryLinkUpdateRequest(BaseModel):
     def link_type_non_empty(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and (not v or not v.strip()):
             raise ValueError("link_type must be a non-empty string")
-        return v.strip() if v is not None else v
+        if v is not None:
+            v = v.strip()
+            if len(v) > 50:
+                raise ValueError("link_type must be 50 characters or fewer")
+        return v
 
 
 # ============================================================================

@@ -171,6 +171,14 @@ class Threadlight:
         )
         self.storage.initialize()
 
+        # Auto-purge expired trash items to prevent unbounded growth
+        try:
+            purged = self.storage.purge_old_deleted_items()
+            if purged > 0:
+                logger.info(f"Auto-purged {purged} expired trash items on startup")
+        except Exception as e:
+            logger.warning(f"Failed to auto-purge trash items: {e}")
+
     def _init_provider(self) -> None:
         """Initialize inference provider(s).
 

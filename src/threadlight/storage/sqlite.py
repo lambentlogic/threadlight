@@ -2856,6 +2856,13 @@ class SQLiteStorage(StorageBackend):
         """Create a link between two memory capsules."""
         conn = self._ensure_connected()
 
+        # Validate link_type
+        if not link.link_type or not link.link_type.strip():
+            raise ValueError("link_type must be a non-empty string")
+        if len(link.link_type) > 50:
+            raise ValueError("link_type must be 50 characters or fewer")
+        link.link_type = link.link_type.strip()
+
         # Reject self-links
         if link.source_capsule_id == link.target_capsule_id:
             raise ValueError("Cannot create a link from a capsule to itself")
