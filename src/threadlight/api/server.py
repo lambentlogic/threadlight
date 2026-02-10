@@ -859,12 +859,35 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     ritual_name = data.get("name", "")
                     initiated_by = data.get("initiated_by", "user")
                     ritual_context = data.get("context")
+                    profile_id = data.get("profile_id")
+                    conversation_id = data.get("conversation_id")
+
+                    # Activate profile if specified
+                    _ensure_profile_active(tl, profile_id)
+
                     try:
                         response = tl.invoke_ritual(
                             ritual_name,
                             initiated_by=initiated_by,
                             context=ritual_context,
                         )
+
+                        # Update history
+                        history.append({"role": "user", "content": ritual_name})
+                        history.append({"role": "assistant", "content": response})
+
+                        # Keep history manageable
+                        if len(history) > 20:
+                            history = history[-20:]
+
+                        # Save messages to database
+                        if conversation_id:
+                            tl.memory.save_message_pair(
+                                user_message=ritual_name,
+                                assistant_response=response,
+                                conversation_id=conversation_id
+                            )
+
                         await websocket.send_json({
                             "type": "ritual_response",
                             "ritual": ritual_name,

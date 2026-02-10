@@ -627,6 +627,8 @@ function threadlightApp() {
                 this.ws.send(JSON.stringify({
                     type: 'ritual',
                     name: name,
+                    conversation_id: this.currentConversationId,
+                    profile_id: this.activeProfileId,
                 }));
             } else {
                 try {
