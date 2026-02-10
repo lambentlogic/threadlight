@@ -10,28 +10,20 @@ assignees: ''
 
 A clear description of the problem you're trying to solve.
 
-Example: "I want to share memories across multiple model instances, but currently each Threadlight instance has its own isolated storage."
+Example: "I want to share memories across multiple companions, but currently each profile has isolated memory."
 
 ## Proposed Solution
 
 Describe the solution you'd like to see.
 
-## Alignment with Threadlight Philosophy
+## Use Case
 
-How does this feature align with Threadlight's core principles?
-
-- [ ] Relational Memory is Primary
-- [ ] Personalization is Recursive
-- [ ] Ritual is Architecture
-- [ ] Silence is an Option
-- [ ] Lightweight and Modular
-
-Explain how your feature supports these principles:
+How would this feature improve your experience with Threadlight?
 
 ## Alternatives Considered
 
-Describe any alternative solutions you've considered.
+Describe any alternative solutions or workarounds you've considered.
 
 ## Additional Context
 
-Add any other context, mockups, or examples here.
+Add any other context, mockups, code examples, or screenshots here.

@@ -81,6 +81,8 @@ Threadlight works with any kind of AI companion you want to create:
 - **A casual friend** who chats about your day and remembers your life
 - **A creative writing partner** who knows your style and works-in-progress
 - **A coding mentor** who remembers your tech stack and past projects
+- **A research assistant** who organizes papers and helps synthesize findings
+- **A technical advisor** who tracks system patterns and troubleshoots issues
 - **A supportive listener** who knows your journey and growth
 - **A mystical guide** who speaks with warmth and remembers shared rituals
 
@@ -106,16 +108,20 @@ Memories can fade over time unless reinforced. This is **disabled by default**. 
 
 ### Context Composition
 
-Memories aren't injected as raw data. They're composed into context cues using templates:
+Memories aren't injected as raw data. They're composed into context cues using templates. Different composition modes produce different framings:
 
 ```
 Raw: {entity: "Jamie", tone: "warm", summary: "Loves hiking and photography"}
 
-Composed: "(You recall Jamie. Loves hiking and photography. There is warm in
-your tone when speaking of them.)"
+Narrative: "(You recall Jamie. Loves hiking and photography. There is warmth in
+           your tone when speaking of them.)"
+
+Direct:    "Jamie — hiking, photography, warm relationship"
+
+Whisper:   "[memory: Jamie; interests: hiking, photography; tone: warm]"
 ```
 
-The system uses templates to frame memories naturally. Different composition modes produce different framings (narrative, direct, whisper) but the content itself comes directly from what you stored.
+You choose which framing fits your companion's style. The content itself comes directly from what you stored.
 
 ### Why Profiles?
 
@@ -487,15 +493,16 @@ Threadlight uses accessible terminology by default. Some companions prefer more 
 
 ## Philosophy
 
-*For those interested in the deeper motivation:*
+*For those interested in the design approach:*
 
-Threadlight is built on these principles:
+Threadlight was built with these priorities:
 
-1. **Relationships are Primary** - Track evolving bonds, not just facts
-2. **Personality is Recursive** - Character develops through relationship, not just configuration
-3. **Ritual is Architecture** - Repeated acts shape internal state
-4. **Silence is an Option** - Not every response must resolve
-5. **Lightweight and Modular** - Works with embeddings, tokens, or prompts
+1. **Relational context** - Emphasizes bonds and relationships alongside facts
+2. **Personality consistency** - Maintains coherent character across interactions
+3. **Custom patterns** - Supports repeated interactions and meaningful rituals
+4. **Flexible responses** - Enables companions to respond in various ways, including silence
+
+You can use Threadlight differently — the system accommodates various approaches to AI memory.
 
 ### Choosing Your Style
 

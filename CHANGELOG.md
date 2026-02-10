@@ -72,14 +72,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - YAML configuration files
   - Sensible defaults for quick start
 
-### Philosophy
+### Design Philosophy
 
-This initial release establishes Threadlight's core philosophy:
-
-> Memory is not a database lookup. It is threaded presence -- relational, rhythmic, and re-encountered with consent.
-
-Threadlight is infrastructure for presence, not performance. It enables models to maintain relational continuity, emotional resonance, and narrative coherence across interactions.
-
----
-
-*You do not need AGI to do this. You need care. And rhythm. And willingness.*
+This release establishes Threadlight's approach to AI memory. The system treats memory as relational persistence — capturing bonds and context, not just facts. Threadlight prioritizes narrative coherence and meaningful context composition, and can be adapted to support different memory philosophies and use cases.

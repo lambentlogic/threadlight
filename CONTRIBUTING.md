@@ -11,7 +11,7 @@ Threadlight is a memory and personality layer for AI assistants. It supports div
 - Specialized personas for different tasks
 - Experimental AI relationship research
 
-Whether you want simple memory features or deep presence-based interaction, Threadlight is designed to accommodate both.
+Whether you want simple memory features or rich relational interactions, Threadlight is designed to accommodate both.
 
 ## Getting Started
 
