@@ -3908,6 +3908,27 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             return parts.join(' - ');
         },
 
+        getDecayExplanation(rate) {
+            // Explain what a decay rate means in human terms
+            // Decay rate is applied over a 30-day base period
+            // A memory decays from 1.0 to 0.0 when: (days_since_access / 30) * rate >= 1.0
+            // So days_to_zero = 30 / rate
+
+            if (!rate || rate <= 0) return 'Decay disabled';
+
+            const daysToZero = 30 / rate;
+            const yearsToZero = daysToZero / 365;
+
+            if (yearsToZero >= 1) {
+                return `Unused memories fade to 0 after ${yearsToZero.toFixed(1)} years`;
+            } else if (daysToZero >= 60) {
+                const months = daysToZero / 30;
+                return `Unused memories fade to 0 after ${months.toFixed(1)} months`;
+            } else {
+                return `Unused memories fade to 0 after ${Math.round(daysToZero)} days`;
+            }
+        },
+
         async addNewModel() {
             if (!this.newModelData.model_id) {
                 this.showToast('Please enter a model ID', 'error');

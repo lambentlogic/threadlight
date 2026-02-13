@@ -387,7 +387,7 @@ class DecayConfig:
 
     enabled: bool = True
     interval_seconds: int = 3600  # 1 hour
-    default_rate: float = 0.1
+    default_rate: float = 0.01  # More conservative: memories fade over ~8 years
     minimum_presence: float = 0.1  # Below this, capsule becomes dormant
 
 
