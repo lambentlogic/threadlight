@@ -1935,7 +1935,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    @app.get("/api/models/{model_id}/config")
+    @app.get("/api/models/{model_id:path}/config")
     async def get_model_config(model_id: str):
         """Get config for specific model."""
         tl = get_threadlight()
@@ -1949,7 +1949,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "config": config.to_dict(),
         }
 
-    @app.put("/api/models/{model_id}/config")
+    @app.put("/api/models/{model_id:path}/config")
     async def update_model_config(model_id: str, request: ModelConfigRequest):
         """Update config for specific model (auto-saves)."""
         tl = get_threadlight()
@@ -1984,7 +1984,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "config": config.to_dict(),
         }
 
-    @app.post("/api/models/{model_id}/create")
+    @app.post("/api/models/{model_id:path}/create")
     async def create_model_config(model_id: str, request: ModelConfigRequest):
         """Create a new model configuration."""
         tl = get_threadlight()
@@ -2006,7 +2006,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "config": config.to_dict(),
         }
 
-    @app.delete("/api/models/{model_id}/config")
+    @app.delete("/api/models/{model_id:path}/config")
     async def delete_model_config(model_id: str):
         """Delete a model configuration."""
         tl = get_threadlight()
@@ -2023,7 +2023,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         return {"status": "deleted", "model_id": model_id}
 
-    @app.post("/api/models/{model_id}/copy-to/{target_model_id}")
+    @app.post("/api/models/{model_id:path}/copy-to/{target_model_id:path}")
     async def copy_model_config(model_id: str, target_model_id: str):
         """Copy settings from one model to another."""
         tl = get_threadlight()
@@ -2039,7 +2039,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    @app.post("/api/models/{model_id}/set-as-default")
+    @app.post("/api/models/{model_id:path}/set-as-default")
     async def set_model_as_default(model_id: str):
         """Set a model's config as the default for new models."""
         tl = get_threadlight()
@@ -3438,7 +3438,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         except Exception as e:
             return {"status": "error", "message": str(e), "models": []}
 
-    @app.get("/api/models/{model_id}/provider")
+    @app.get("/api/models/{model_id:path}/provider")
     async def get_model_provider(model_id: str):
         """Get which provider is configured for a specific model."""
         tl = get_threadlight()
@@ -3463,7 +3463,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "uses_default": True,
         }
 
-    @app.put("/api/models/{model_id}/provider")
+    @app.put("/api/models/{model_id:path}/provider")
     async def set_model_provider(model_id: str, request: ModelProviderRequest):
         """Set which provider a model should use."""
         tl = get_threadlight()

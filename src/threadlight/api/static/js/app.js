@@ -3826,7 +3826,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
 
         async updateCurrentModelConfig(updates) {
             try {
-                const response = await fetch(`/api/models/${encodeURIComponent(this.currentModelId)}/config`, {
+                const response = await fetch(`/api/models/${this.currentModelId}/config`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(updates),
@@ -3855,7 +3855,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             }
 
             try {
-                const response = await fetch(`/api/models/${encodeURIComponent(this.currentModelId)}/provider`);
+                const response = await fetch(`/api/models/${this.currentModelId}/provider`);
                 const data = await response.json();
                 // provider_id is null if using default provider
                 this.currentModelProviderId = data.provider_id || '';
@@ -3870,7 +3870,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             if (!this.currentModelId) return;
 
             try {
-                const response = await fetch(`/api/models/${encodeURIComponent(this.currentModelId)}/provider`, {
+                const response = await fetch(`/api/models/${this.currentModelId}/provider`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ provider_id: providerId || null }),
@@ -3971,7 +3971,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 // Get all model IDs
                 for (const model of this.availableModels) {
                     if (model.model_id !== this.currentModelId && model.model_id !== 'default') {
-                        await fetch(`/api/models/${encodeURIComponent(this.currentModelId)}/copy-to/${encodeURIComponent(model.model_id)}`, {
+                        await fetch(`/api/models/${this.currentModelId}/copy-to/${model.model_id}`, {
                             method: 'POST',
                         });
                     }
@@ -3986,7 +3986,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
 
         async setAsDefaultSettings() {
             try {
-                await fetch(`/api/models/${encodeURIComponent(this.currentModelId)}/set-as-default`, {
+                await fetch(`/api/models/${this.currentModelId}/set-as-default`, {
                     method: 'POST',
                 });
 
@@ -4933,7 +4933,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 if (this.newProfile.primary_model && this.newProfile.selectedProviderId) {
                     try {
                         console.log('[saveProfile] Setting provider for model:', this.newProfile.primary_model, '->', this.newProfile.selectedProviderId);
-                        const providerResponse = await fetch(`/api/models/${encodeURIComponent(this.newProfile.primary_model)}/provider`, {
+                        const providerResponse = await fetch(`/api/models/${this.newProfile.primary_model}/provider`, {
                             method: 'PUT',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ provider_id: this.newProfile.selectedProviderId }),
