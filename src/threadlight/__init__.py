@@ -126,7 +126,7 @@ from threadlight.tools import (
 # Provider extras
 from threadlight.providers.base import ToolCall
 
-__version__ = "0.1.3-alpha"
+__version__ = "0.1.4-alpha"
 
 __all__ = [
     # Main interface
