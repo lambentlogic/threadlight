@@ -118,7 +118,9 @@ class LinearDecayStrategy(DecayStrategy):
         decay_amount = max(0, decay_amount - access_bonus)
 
         # Calculate new score
-        new_score = capsule.presence_score - decay_amount
+        # Decay linearly from 1.0 (full strength when last accessed)
+        # rather than compounding from current score
+        new_score = 1.0 - decay_amount
 
         # Clamp to valid range
         return max(0.0, min(1.0, new_score))
