@@ -543,6 +543,7 @@ class Threadlight:
         load_history: bool = False,
         auto_save: Optional[bool] = None,
         tools: Optional[list[dict[str, Any]]] = None,
+        images: Optional[list[str]] = None,
         **kwargs: Any
     ) -> ProviderResponse:
         """
@@ -552,7 +553,7 @@ class Threadlight:
         and continues the conversation until a text response is generated.
 
         Args:
-            message: User message
+            message: User message (text portion, used for memory recall)
             history: Previous messages (overrides load_history if provided)
             memory_filter: Filter for memory retrieval
             include_memory: Override default memory inclusion
@@ -561,6 +562,7 @@ class Threadlight:
             load_history: Load recent messages from current conversation
             auto_save: Override auto_save_messages setting
             tools: Override tool definitions (None uses default, [] disables tools)
+            images: Optional list of base64 data URLs for image attachments
             **kwargs: Additional provider options
 
         Returns ProviderResponse with content, token usage, and metadata.
@@ -637,8 +639,9 @@ class Threadlight:
                     content=msg["content"]
                 ))
 
-        # 3. Current message
-        messages.append(ProviderMessage(role="user", content=message))
+        # 3. Current message (multimodal if images are attached)
+        user_content = ProviderMessage.build_multimodal_content(message, images or [])
+        messages.append(ProviderMessage(role="user", content=user_content))
 
         # Determine if we should use tools
         # If tools_override is provided, use it (even if empty list to disable tools)
@@ -727,6 +730,7 @@ class Threadlight:
         history: Optional[list[dict[str, str]]] = None,
         context_mode: Optional[ContextMode] = None,
         model_id: Optional[str] = None,
+        images: Optional[list[str]] = None,
         **kwargs: Any
     ) -> Iterator[str]:
         """Stream a response token by token.
@@ -736,10 +740,11 @@ class Threadlight:
             history: Conversation history
             context_mode: Context composition mode
             model_id: Model ID for multi-provider routing
+            images: Optional list of base64 data URLs for image attachments
             **kwargs: Additional provider options
         """
         yield from self._chat_manager.stream(
-            message, history, context_mode, model_id=model_id, **kwargs
+            message, history, context_mode, model_id=model_id, images=images, **kwargs
         )
 
     def stream_with_tools(

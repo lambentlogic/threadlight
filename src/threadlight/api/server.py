@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional
 from pathlib import Path
 import asyncio
+import base64
 import json
 import logging
 import sys
@@ -719,6 +720,171 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         )
 
     # ========================================================================
+    # Multimodal Chat Endpoints (image + text)
+    # ========================================================================
+
+    # Allowed image MIME types and max file size (10 MB)
+    _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    _MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+    async def _process_chat_images(
+        images: list[UploadFile],
+    ) -> list[str]:
+        """Read uploaded image files and convert to base64 data URLs.
+
+        Args:
+            images: List of uploaded image files.
+
+        Returns:
+            List of data URL strings (e.g. "data:image/jpeg;base64,...").
+
+        Raises:
+            HTTPException: If any image is invalid or too large.
+        """
+        data_urls: list[str] = []
+        for img in images:
+            # Validate content type
+            content_type = img.content_type or ""
+            if content_type not in _ALLOWED_IMAGE_TYPES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported image type: {content_type}. "
+                           f"Allowed: {', '.join(sorted(_ALLOWED_IMAGE_TYPES))}",
+                )
+
+            # Read and validate size
+            img_bytes = await img.read()
+            if len(img_bytes) > _MAX_IMAGE_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Image '{img.filename}' exceeds maximum size of "
+                           f"{_MAX_IMAGE_SIZE // (1024 * 1024)} MB",
+                )
+
+            # Convert to base64 data URL
+            b64 = base64.b64encode(img_bytes).decode("utf-8")
+            data_urls.append(f"data:{content_type};base64,{b64}")
+
+        return data_urls
+
+    @app.post("/api/chat/image")
+    async def web_chat_with_image(
+        message: str = Form(...),
+        history: str = Form("[]"),
+        profile_id: str = Form(None),
+        images: list[UploadFile] = File(None),
+    ):
+        """Web UI chat endpoint with optional image attachments.
+
+        Accepts multipart/form-data with text message and optional images.
+        Falls back gracefully to text-only if no images are provided.
+        """
+        tl = get_threadlight()
+
+        # Activate the profile if specified
+        if profile_id:
+            _ensure_profile_active(tl, profile_id)
+
+        # Parse history from JSON string
+        try:
+            parsed_history = json.loads(history) if history else []
+        except json.JSONDecodeError:
+            parsed_history = []
+
+        # Process images if provided
+        image_data_urls: list[str] = []
+        if images:
+            image_data_urls = await _process_chat_images(images)
+
+        try:
+            # Get memories that will be recalled for context
+            recalled_memories = tl.memory.recall_for_message(
+                message,
+                limit=5,
+            )
+
+            # Chat with context (text used for memory recall, images for provider)
+            response = tl.chat_with_context(
+                message,
+                history=parsed_history,
+                images=image_data_urls if image_data_urls else None,
+            )
+
+            # Format recalled memories for the response
+            memories_used = [
+                {
+                    "id": c.id,
+                    "type": c.type.value,
+                    "preview": _get_capsule_preview(c),
+                    "presence_score": c.presence_score,
+                }
+                for c in recalled_memories
+            ]
+
+            return {
+                "content": response.content,
+                "memories_recalled": memories_used,
+                "finish_reason": response.finish_reason,
+                "usage": {
+                    "prompt_tokens": response.prompt_tokens,
+                    "completion_tokens": response.completion_tokens,
+                    "total_tokens": response.total_tokens,
+                },
+            }
+        except Exception as e:
+            logger.error(f"Multimodal chat error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/chat/image/stream")
+    async def web_chat_stream_with_image(
+        message: str = Form(...),
+        history: str = Form("[]"),
+        profile_id: str = Form(None),
+        images: list[UploadFile] = File(None),
+    ):
+        """Streaming chat endpoint with optional image attachments.
+
+        Accepts multipart/form-data with text message and optional images.
+        """
+        tl = get_threadlight()
+
+        # Activate the profile if specified
+        if profile_id:
+            _ensure_profile_active(tl, profile_id)
+
+        # Parse history from JSON string
+        try:
+            parsed_history = json.loads(history) if history else []
+        except json.JSONDecodeError:
+            parsed_history = []
+
+        # Process images (must be done before the generator since generators are lazy)
+        image_data_urls: list[str] = []
+        if images:
+            image_data_urls = await _process_chat_images(images)
+
+        async def generate():
+            try:
+                for chunk in tl.stream(
+                    message,
+                    history=parsed_history,
+                    images=image_data_urls if image_data_urls else None,
+                ):
+                    yield f"data: {json.dumps({'content': chunk})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+
+    # ========================================================================
     # WebSocket Endpoint
     # ========================================================================
 
@@ -740,8 +906,10 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     message = data.get("message", "")
                     profile_id = data.get("profile_id")
                     conversation_id = data.get("conversation_id")
+                    # Optional image attachments as base64 data URLs
+                    ws_images = data.get("images") or []
 
-                    logger.info(f"[WebSocket] Chat message received. profile_id={profile_id}, conv_id={conversation_id}, msg_len={len(message)}")
+                    logger.info(f"[WebSocket] Chat message received. profile_id={profile_id}, conv_id={conversation_id}, msg_len={len(message)}, images={len(ws_images)}")
 
                     # Activate profile if specified
                     _ensure_profile_active(tl, profile_id)
@@ -810,7 +978,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
                     # Get complete response (no streaming - simpler and avoids UI reactivity issues)
                     try:
-                        response = tl.chat_with_context(message, history=history, model_id=model_id, tools=contextual_tools)
+                        response = tl.chat_with_context(message, history=history, model_id=model_id, tools=contextual_tools, images=ws_images if ws_images else None)
                         full_response = response.content
 
                         # Update history

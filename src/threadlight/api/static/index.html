@@ -764,6 +764,17 @@
                                                     <span class="text-xs font-medium text-threadlight-muted" x-text="msg.profile_name"></span>
                                                 </div>
 
+                                                <!-- Attached images (user messages with images) -->
+                                                <template x-if="msg.images && msg.images.length > 0">
+                                                    <div class="flex flex-wrap gap-2 mb-2">
+                                                        <template x-for="(imgUrl, imgIdx) in msg.images" :key="imgIdx">
+                                                            <img :src="imgUrl" alt="Attached image"
+                                                                class="max-w-[200px] max-h-[200px] rounded-lg border border-threadlight-border/50 cursor-pointer hover:opacity-90 transition-opacity"
+                                                                @click="window.open(imgUrl, '_blank')">
+                                                        </template>
+                                                    </div>
+                                                </template>
+
                                                 <div class="message-content" x-html="renderMarkdown(msg.content)"></div>
 
                                                 <!-- Variant Navigation (persistent, below message) -->
@@ -914,10 +925,46 @@
                                 Apply & Finish
                             </button>
                         </div>
-                        <form @submit.prevent="sendMessage()" class="flex gap-4">
+                        <!-- Image Previews -->
+                        <div x-show="pendingImages.length > 0" class="mb-2 flex flex-wrap gap-2">
+                            <template x-for="(img, index) in pendingImages" :key="index">
+                                <div class="relative group/img">
+                                    <img :src="img.preview" :alt="img.name"
+                                        class="w-16 h-16 object-cover rounded-lg border border-threadlight-border">
+                                    <button @click="removeImage(index)"
+                                        class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover/img:opacity-100 transition-opacity"
+                                        title="Remove image">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                        </svg>
+                                    </button>
+                                    <div class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] px-1 py-0.5 rounded-b-lg truncate"
+                                        x-text="img.name"></div>
+                                </div>
+                            </template>
+                        </div>
+                        <form @submit.prevent="sendMessage()" class="flex gap-2 items-end">
+                            <!-- Hidden file input for images -->
+                            <input type="file"
+                                x-ref="imageInput"
+                                @change="handleImageSelect($event)"
+                                accept="image/jpeg,image/png,image/gif,image/webp"
+                                multiple
+                                class="hidden">
+                            <!-- Image attach button -->
+                            <button type="button"
+                                @click="$refs.imageInput.click()"
+                                class="px-3 py-3 text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated rounded-xl transition-colors"
+                                :class="pendingImages.length > 0 ? 'text-threadlight-accent' : ''"
+                                title="Attach images"
+                                :disabled="isTyping">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                                </svg>
+                            </button>
                             <textarea
                                 x-model="inputMessage"
-                                @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); if (inputMessage.trim() && !isTyping) sendMessage(); }"
+                                @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); if ((inputMessage.trim() || pendingImages.length > 0) && !isTyping) sendMessage(); }"
                                 placeholder="Type a message or use /glimmer, /snuggle..."
                                 rows="1"
                                 class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-xl px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-none"
@@ -926,7 +973,7 @@
                                 :disabled="isTyping"></textarea>
                             <button type="submit"
                                 class="px-6 py-3 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-xl font-medium transition-colors disabled:opacity-50"
-                                :disabled="isTyping || !inputMessage.trim()">
+                                :disabled="isTyping || (!inputMessage.trim() && pendingImages.length === 0)">
                                 Send
                             </button>
                         </form>
@@ -4856,6 +4903,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260213-4"></script>
+    <script src="/static/js/app.js?v=20260213-6"></script>
 </body>
 </html>

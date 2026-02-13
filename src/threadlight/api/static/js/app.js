@@ -1,10 +1,10 @@
 /**
  * Threadlight Web UI - Alpine.js Application
- * Version: 2026-02-09-memory-links-ui
+ * Version: 2026-02-13-multimodal-images
  */
 
 // Log when script loads to verify we're running the updated version
-console.log('[app.js] Loading Threadlight app version 2026-02-09-memory-links-ui');
+console.log('[app.js] Loading Threadlight app version 2026-02-13-multimodal-images');
 
 function threadlightApp() {
     return {
@@ -35,6 +35,11 @@ function threadlightApp() {
         selectedGroupProfiles: [],  // Profile IDs for new group chat
         showGroupChatModal: false,  // Modal for creating group chat
         groupChatResponding: false,  // Currently getting group responses
+
+        // Image attachment state
+        pendingImages: [],       // Array of {file: File, preview: string (data URL)}
+        maxImageSize: 10 * 1024 * 1024,  // 10 MB
+        allowedImageTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
 
         // Message editing state
         editingMessageId: null,
@@ -384,6 +389,37 @@ function threadlightApp() {
                 }
             });
 
+            // Listen for paste events to handle image pasting
+            document.addEventListener('paste', (e) => {
+                // Only handle paste if we're focused on the chat interface
+                const activeElement = document.activeElement;
+                const isInChat = activeElement && (
+                    activeElement.id === 'message-input' ||
+                    activeElement.closest('.chat-interface')
+                );
+
+                if (!isInChat) return;
+
+                const items = e.clipboardData?.items;
+                if (!items) return;
+
+                let hasImage = false;
+                for (let item of items) {
+                    if (item.type.startsWith('image/')) {
+                        hasImage = true;
+                        const file = item.getAsFile();
+                        if (file) {
+                            this.processImageFile(file);
+                        }
+                    }
+                }
+
+                // If we handled an image, prevent default paste behavior
+                if (hasImage) {
+                    e.preventDefault();
+                }
+            });
+
             // Watch currentModelId and force select element to sync
             // This fixes Alpine.js x-model desync with dynamically-populated select options
             this.$watch('currentModelId', (newValue) => {
@@ -511,10 +547,10 @@ function threadlightApp() {
         // Chat functions
         async sendMessage(options = {}) {
             const message = this.inputMessage.trim();
-            if (!message) return;
+            if (!message && this.pendingImages.length === 0) return;
 
-            // Check for ritual invocation
-            if (message.startsWith('/')) {
+            // Check for ritual invocation (only if no images attached)
+            if (message.startsWith('/') && this.pendingImages.length === 0) {
                 this.inputMessage = '';
                 await this.invokeRitual(message);
                 return;
@@ -526,13 +562,30 @@ function threadlightApp() {
                 return;
             }
 
+            // Capture current images and clear state
+            const attachedImages = [...this.pendingImages];
+            const imageDataUrls = attachedImages.map(img => img.preview);
+
             // Add user message to display - use immutable update for Alpine reactivity
-            this.messages = [...this.messages, {
+            const displayMsg = {
                 role: 'user',
                 content: message,
-            }];
+            };
+            // Attach image previews for display in chat
+            if (attachedImages.length > 0) {
+                displayMsg.images = attachedImages.map(img => img.preview);
+            }
+            this.messages = [...this.messages, displayMsg];
             this.inputMessage = '';
+            this.pendingImages = [];
             this.scrollToBottom();
+
+            // If images are attached, always use HTTP (WebSocket can't send files via FormData)
+            if (attachedImages.length > 0) {
+                console.log('[sendMessage] Images attached, using HTTP multipart');
+                await this.sendMessageWithImages(message, attachedImages);
+                return;
+            }
 
             // Send via WebSocket if connected
             console.log('[sendMessage] WebSocket state check:', {
@@ -600,6 +653,93 @@ function threadlightApp() {
                 }];
 
                 // Update history
+                this.chatHistory.push({ role: 'user', content: message });
+                this.chatHistory.push({ role: 'assistant', content: data.content });
+
+                // Keep history manageable
+                if (this.chatHistory.length > 20) {
+                    this.chatHistory = this.chatHistory.slice(-20);
+                }
+
+            } catch (error) {
+                this.showToast('Failed to send message: ' + error.message, 'error');
+            } finally {
+                this.isTyping = false;
+                this.scrollToBottom();
+            }
+        },
+
+        // Image attachment methods
+        processImageFile(file) {
+            // Validate image type
+            if (!this.allowedImageTypes.includes(file.type)) {
+                this.showToast(`Unsupported image type: ${file.type}. Use JPEG, PNG, GIF, or WebP.`, 'error');
+                return;
+            }
+            // Validate image size
+            if (file.size > this.maxImageSize) {
+                this.showToast(`Image "${file.name}" exceeds 10 MB limit.`, 'error');
+                return;
+            }
+            // Read as data URL for preview and sending
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this.pendingImages = [...this.pendingImages, {
+                    file: file,
+                    preview: e.target.result,
+                    name: file.name,
+                }];
+            };
+            reader.readAsDataURL(file);
+        },
+
+        handleImageSelect(event) {
+            const files = Array.from(event.target.files || []);
+            for (const file of files) {
+                this.processImageFile(file);
+            }
+            // Reset the file input so the same file can be re-selected
+            event.target.value = '';
+        },
+
+        removeImage(index) {
+            this.pendingImages = this.pendingImages.filter((_, i) => i !== index);
+        },
+
+        async sendMessageWithImages(message, attachedImages) {
+            this.isTyping = true;
+
+            try {
+                const formData = new FormData();
+                formData.append('message', message);
+                formData.append('history', JSON.stringify(this.chatHistory));
+                if (this.activeProfileId) {
+                    formData.append('profile_id', this.activeProfileId);
+                }
+                // Append each image file
+                for (const img of attachedImages) {
+                    formData.append('images', img.file);
+                }
+
+                const response = await fetch('/api/chat/image', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                this.messages = [...this.messages, {
+                    role: 'assistant',
+                    content: data.content,
+                    memories: data.memories_recalled || [],
+                }];
+
+                // Update history (text only for history, images are one-shot)
                 this.chatHistory.push({ role: 'user', content: message });
                 this.chatHistory.push({ role: 'assistant', content: data.content });
 

@@ -6,7 +6,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Optional, Union
+
+
+# Type alias for multimodal content: either a plain string or a list of content parts.
+# Content parts follow the OpenAI format:
+#   {"type": "text", "text": "..."}
+#   {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
+MultimodalContent = Union[str, list[dict[str, Any]]]
 
 
 @dataclass
@@ -14,7 +21,7 @@ class ProviderMessage:
     """A message in a conversation."""
 
     role: str  # system, user, assistant, tool
-    content: str
+    content: MultimodalContent = ""
     name: Optional[str] = None
 
     # For assistant messages with tool calls
@@ -32,6 +39,49 @@ class ProviderMessage:
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
         return d
+
+    @property
+    def text_content(self) -> str:
+        """Extract the text portion of content, whether str or multimodal list.
+
+        For multimodal content (list of parts), concatenates all text parts.
+        For plain string content, returns it directly.
+        """
+        if isinstance(self.content, str):
+            return self.content
+        # Extract text from multimodal content parts
+        texts = []
+        for part in self.content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                texts.append(part.get("text", ""))
+        return " ".join(texts)
+
+    @staticmethod
+    def build_multimodal_content(
+        text: str,
+        image_data_urls: list[str],
+    ) -> MultimodalContent:
+        """Build multimodal content from text and base64 image data URLs.
+
+        Args:
+            text: The text message content.
+            image_data_urls: List of data URLs like "data:image/jpeg;base64,...".
+
+        Returns:
+            Plain string if no images, or list of content parts if images present.
+        """
+        if not image_data_urls:
+            return text
+
+        parts: list[dict[str, Any]] = []
+        if text:
+            parts.append({"type": "text", "text": text})
+        for url in image_data_urls:
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": url},
+            })
+        return parts
 
     @classmethod
     def tool_response(

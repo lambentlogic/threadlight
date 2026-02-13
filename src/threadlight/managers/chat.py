@@ -323,6 +323,7 @@ class ChatManager:
         history: Optional[list[dict[str, str]]] = None,
         context_mode: Optional['ContextMode'] = None,
         model_id: Optional[str] = None,
+        images: Optional[list[str]] = None,
         **kwargs: Any
     ) -> Iterator[str]:
         """
@@ -336,6 +337,7 @@ class ChatManager:
             history: Conversation history
             context_mode: Context composition mode
             model_id: Model to use (for multi-provider routing)
+            images: Optional list of base64 data URLs for image attachments
             **kwargs: Additional provider options
 
         Yields:
@@ -355,7 +357,9 @@ class ChatManager:
             for msg in history:
                 messages.append(ProviderMessage(role=msg["role"], content=msg["content"]))
 
-        messages.append(ProviderMessage(role="user", content=message))
+        # Build user message (multimodal if images are attached)
+        user_content = ProviderMessage.build_multimodal_content(message, images or [])
+        messages.append(ProviderMessage(role="user", content=user_content))
 
         # Determine which provider to use
         use_provider_manager = (
