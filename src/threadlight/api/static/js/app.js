@@ -3887,6 +3887,9 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     : 'Default Provider';
                 this.showToast(`Provider set to: ${providerName}`);
                 this.showConfigSaved();
+
+                // Reload model config to pick up provider change
+                await this.loadCurrentModelConfig();
             } catch (error) {
                 this.showToast('Failed to update model provider: ' + error.message, 'error');
             }

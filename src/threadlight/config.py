@@ -977,6 +977,7 @@ class ThreadlightConfig:
                 temperature=default_config.temperature,
                 max_tokens=default_config.max_tokens,
                 top_p=default_config.top_p,
+                provider_id=default_config.provider_id,  # Inherit provider from default
             )
 
         # Return a new default config
