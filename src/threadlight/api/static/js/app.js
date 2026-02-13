@@ -391,14 +391,8 @@ function threadlightApp() {
 
             // Listen for paste events to handle image pasting
             document.addEventListener('paste', (e) => {
-                // Only handle paste if we're focused on the chat interface
-                const activeElement = document.activeElement;
-                const isInChat = activeElement && (
-                    activeElement.id === 'message-input' ||
-                    activeElement.closest('.chat-interface')
-                );
-
-                if (!isInChat) return;
+                // Only handle paste if we're in the chat view
+                if (this.currentView !== 'chat') return;
 
                 const items = e.clipboardData?.items;
                 if (!items) return;
