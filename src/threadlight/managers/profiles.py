@@ -11,7 +11,9 @@ This module handles profile-related operations including:
 from __future__ import annotations
 
 from typing import Any, Optional, TYPE_CHECKING
+import json
 import logging
+from pathlib import Path
 
 if TYPE_CHECKING:
     from threadlight.core import Threadlight
@@ -61,6 +63,7 @@ class ProfileInterface:
         from threadlight.profiles import Profile
         profile = self.tl.profile_manager.switch_to(profile_id)
         self.apply(profile)
+        self._persist_active_profile(profile_id)
         return profile
 
     def apply(self, profile: 'Profile') -> None:
@@ -104,6 +107,31 @@ class ProfileInterface:
         self.tl.memory.current_model = profile.primary_model
 
         logger.info(f"Switched to profile: {profile.name} ({profile.id[:8]}...)")
+
+    _STATE_PATH = Path.home() / ".config" / "threadlight" / "state.json"
+
+    def _persist_active_profile(self, profile_id: str) -> None:
+        """Save the active profile ID to disk so it survives server restarts."""
+        try:
+            self._STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            state = {}
+            if self._STATE_PATH.exists():
+                state = json.loads(self._STATE_PATH.read_text())
+            state["active_profile_id"] = profile_id
+            self._STATE_PATH.write_text(json.dumps(state))
+        except Exception as e:
+            logger.warning(f"Failed to persist active profile: {e}")
+
+    @classmethod
+    def load_persisted_profile_id(cls) -> Optional[str]:
+        """Return the last active profile ID saved to disk, or None."""
+        try:
+            if cls._STATE_PATH.exists():
+                state = json.loads(cls._STATE_PATH.read_text())
+                return state.get("active_profile_id")
+        except Exception:
+            pass
+        return None
 
     def clear(self) -> None:
         """Clear the active profile and revert to default settings."""

@@ -31,7 +31,12 @@ class ProviderMessage:
     tool_call_id: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"role": self.role, "content": self.content}
+        # Some providers (e.g. GLM-5 via OpenRouter) reject content="" on assistant
+        # messages that contain tool_calls. Use None (JSON null) instead.
+        content = self.content
+        if self.tool_calls and content == "":
+            content = None
+        d: dict[str, Any] = {"role": self.role, "content": content}
         if self.name:
             d["name"] = self.name
         if self.tool_calls:
@@ -144,6 +149,9 @@ class ProviderResponse:
 
     # Tool calls (if any)
     tool_calls: list[ToolCall] = field(default_factory=list)
+
+    # Reasoning/thinking trace (from models that expose it, e.g. GLM-5, DeepSeek-R1)
+    reasoning: Optional[str] = None
 
     # Raw response for debugging
     raw: Optional[dict[str, Any]] = None

@@ -238,6 +238,11 @@ class OpenAIProvider(BaseProvider):
         if "frequency_penalty" in kwargs:
             payload["frequency_penalty"] = kwargs["frequency_penalty"]
 
+        # Enable thinking mode (OpenRouter format for GLM-5 and other thinking models)
+        if kwargs.get("thinking"):
+            payload["thinking"] = {"type": "enabled"}
+            logger.info(f"[OpenAI] Thinking mode ENABLED for model {payload.get('model')}")
+
         # Try request with fallback across endpoints
         endpoints = self._get_endpoint_urls()
         last_error = None
@@ -298,8 +303,13 @@ class OpenAIProvider(BaseProvider):
         usage = data.get("usage", {})
 
         # Log response details for debugging tool calling
-        logger.info(f"[OpenAI DEBUG] Response finish_reason: {choice.get('finish_reason')}")
+        finish_reason = choice.get('finish_reason')
+        logger.info(f"[OpenAI DEBUG] Response finish_reason: {finish_reason}")
         logger.info(f"[OpenAI DEBUG] Response has tool_calls: {'tool_calls' in message}")
+        if finish_reason == "error":
+            # Log the full response for debugging upstream model errors
+            logger.error(f"[OpenAI DEBUG] Upstream model returned finish_reason=error. Full choice: {choice}")
+            logger.error(f"[OpenAI DEBUG] Full response data: {data}")
         if 'tool_calls' in message and message['tool_calls']:
             logger.info(f"[OpenAI DEBUG] Tool calls in response: {len(message['tool_calls'])}")
             for tc in message['tool_calls']:
@@ -317,14 +327,30 @@ class OpenAIProvider(BaseProvider):
                     arguments=tc["function"]["arguments"],
                 ))
 
+        # Extract reasoning trace (GLM-5, DeepSeek-R1 style: separate field)
+        # Also handle <think>...</think> tags embedded in content
+        import re as _re
+        reasoning_content_raw = message.get("reasoning_content")
+        logger.info(f"[OpenAI DEBUG] reasoning_content field present: {reasoning_content_raw is not None}, value_len={len(reasoning_content_raw) if reasoning_content_raw else 0}")
+        reasoning = reasoning_content_raw or None
+        content = message.get("content") or ""
+        if not reasoning and content:
+            think_match = _re.search(r'<think>(.*?)</think>', content, _re.DOTALL)
+            if think_match:
+                reasoning = think_match.group(1).strip()
+                content = _re.sub(r'<think>.*?</think>\s*', '', content, flags=_re.DOTALL).strip()
+        if reasoning:
+            logger.info(f"[OpenAI DEBUG] Extracted reasoning, length={len(reasoning)}")
+
         response_obj = ProviderResponse(
-            content=message.get("content") or "",
+            content=content,
             finish_reason=choice.get("finish_reason", "stop"),
             model=data.get("model", self.model),
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
             tool_calls=tool_calls,
+            reasoning=reasoning,
             raw=data,
         )
 

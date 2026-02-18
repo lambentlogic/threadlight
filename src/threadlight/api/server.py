@@ -89,6 +89,7 @@ class WebChatRequest(BaseModel):
     history: Optional[list[dict[str, str]]] = None
     stream: Optional[bool] = False
     profile_id: Optional[str] = None  # Profile to activate for this chat
+    thinking: Optional[bool] = None  # Enable thinking mode (OpenRouter format)
 
 
 class Choice(BaseModel):
@@ -474,6 +475,15 @@ def get_threadlight() -> Threadlight:
     global _tl
     if _tl is None:
         _tl = Threadlight()
+        # Restore the last active profile across server restarts
+        from threadlight.managers.profiles import ProfileInterface
+        last_profile_id = ProfileInterface.load_persisted_profile_id()
+        if last_profile_id:
+            try:
+                _tl.switch_profile(last_profile_id)
+                logger.info(f"Restored active profile: {last_profile_id}")
+            except Exception as e:
+                logger.warning(f"Failed to restore last active profile {last_profile_id}: {e}")
     return _tl
 
 
@@ -667,6 +677,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             response = tl.chat_with_context(
                 request.message,
                 history=request.history,
+                thinking=request.thinking,
             )
 
             # Format recalled memories for the response
@@ -680,7 +691,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 for c in recalled_memories
             ]
 
-            return {
+            result = {
                 "content": response.content,
                 "memories_recalled": memories_used,
                 "finish_reason": response.finish_reason,
@@ -690,6 +701,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     "total_tokens": response.total_tokens,
                 }
             }
+            if response.reasoning:
+                result["reasoning"] = response.reasoning
+            return result
         except Exception as e:
             logger.error(f"Chat error: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -772,6 +786,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         message: str = Form(...),
         history: str = Form("[]"),
         profile_id: str = Form(None),
+        thinking: str = Form(None),
         images: list[UploadFile] = File(None),
     ):
         """Web UI chat endpoint with optional image attachments.
@@ -804,10 +819,12 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             )
 
             # Chat with context (text used for memory recall, images for provider)
+            thinking_enabled = thinking and thinking.lower() in ("true", "1", "yes")
             response = tl.chat_with_context(
                 message,
                 history=parsed_history,
                 images=image_data_urls if image_data_urls else None,
+                thinking=thinking_enabled or None,
             )
 
             # Format recalled memories for the response
@@ -908,8 +925,10 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     conversation_id = data.get("conversation_id")
                     # Optional image attachments as base64 data URLs
                     ws_images = data.get("images") or []
+                    # Optional thinking mode toggle
+                    thinking = data.get("thinking", False)
 
-                    logger.info(f"[WebSocket] Chat message received. profile_id={profile_id}, conv_id={conversation_id}, msg_len={len(message)}, images={len(ws_images)}")
+                    logger.info(f"[WebSocket] Chat message received. profile_id={profile_id}, conv_id={conversation_id}, msg_len={len(message)}, images={len(ws_images)}, thinking={thinking}")
 
                     # Activate profile if specified
                     _ensure_profile_active(tl, profile_id)
@@ -978,7 +997,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
                     # Get complete response (no streaming - simpler and avoids UI reactivity issues)
                     try:
-                        response = tl.chat_with_context(message, history=history, model_id=model_id, tools=contextual_tools, images=ws_images if ws_images else None)
+                        response = tl.chat_with_context(message, history=history, model_id=model_id, tools=contextual_tools, images=ws_images if ws_images else None, thinking=thinking)
                         full_response = response.content
 
                         # Update history
@@ -1013,12 +1032,15 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                             }
 
                         # Send completion with metadata
-                        await websocket.send_json({
+                        complete_payload = {
                             "type": "complete",
                             "content": full_response,
                             "tool_results": tool_results,
                             "usage": usage,
-                        })
+                        }
+                        if response.reasoning:
+                            complete_payload["reasoning"] = response.reasoning
+                        await websocket.send_json(complete_payload)
                     except Exception as e:
                         error_msg = str(e)
                         is_rate_limit = "rate limit" in error_msg.lower() or "429" in error_msg

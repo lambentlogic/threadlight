@@ -859,6 +859,10 @@
                                                                                     <span class="text-threadlight-accent">Reason:</span>
                                                                                     <span x-text="tool.result.reason"></span>
                                                                                 </div>
+                                                                                <div x-show="tool.result.text_preview || tool.result.text">
+                                                                                    <span class="text-threadlight-accent">Text:</span>
+                                                                                    <pre class="text-xs mt-1 p-2 bg-threadlight-surface rounded overflow-auto whitespace-pre-wrap" x-text="tool.result.text_preview || tool.result.text"></pre>
+                                                                                </div>
                                                                                 <div x-show="tool.result.content">
                                                                                     <span class="text-threadlight-accent">Content:</span>
                                                                                     <pre class="text-xs mt-1 p-2 bg-threadlight-surface rounded overflow-auto" x-text="JSON.stringify(tool.result.content, null, 2)"></pre>
@@ -869,6 +873,21 @@
                                                                 </div>
                                                             </template>
                                                         </div>
+                                                    </div>
+                                                </template>
+
+                                                <!-- Reasoning Trace -->
+                                                <template x-if="msg.reasoning && msg.role === 'assistant'">
+                                                    <div class="mt-3 pt-3 border-t border-threadlight-border/50">
+                                                        <details class="text-xs">
+                                                            <summary class="cursor-pointer text-threadlight-muted hover:text-threadlight-text select-none flex items-center gap-1">
+                                                                <svg class="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.276A3.897 3.897 0 0112 15.9a3.897 3.897 0 01-2.788-1.183l-.347-.276z"/>
+                                                                </svg>
+                                                                <span class="opacity-60">Reasoning</span>
+                                                            </summary>
+                                                            <div class="mt-2 pl-3 border-l-2 border-threadlight-border/40 text-threadlight-muted whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-64 overflow-y-auto" x-text="msg.reasoning"></div>
+                                                        </details>
                                                     </div>
                                                 </template>
 
@@ -960,6 +979,18 @@
                                 :disabled="isTyping">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                                </svg>
+                            </button>
+                            <!-- Thinking mode toggle -->
+                            <button type="button"
+                                @click="thinkingEnabled = !thinkingEnabled"
+                                class="px-3 py-3 rounded-xl transition-colors"
+                                :class="thinkingEnabled ? 'text-purple-400 bg-purple-400/10' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated'"
+                                :title="thinkingEnabled ? 'Thinking mode ON (click to disable)' : 'Enable thinking mode'"
+                                :aria-label="thinkingEnabled ? 'Thinking mode ON (click to disable)' : 'Enable thinking mode'"
+                                :disabled="isTyping">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
                                 </svg>
                             </button>
                             <textarea
@@ -4903,6 +4934,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260213-8"></script>
+    <script src="/static/js/app.js?v=20260218-4"></script>
 </body>
 </html>

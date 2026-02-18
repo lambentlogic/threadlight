@@ -38,6 +38,7 @@ function threadlightApp() {
 
         // Image attachment state
         pendingImages: [],       // Array of {file: File, preview: string (data URL)}
+        thinkingEnabled: false,  // Per-message thinking toggle (stays on until user turns off)
         maxImageSize: 10 * 1024 * 1024,  // 10 MB
         allowedImageTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
 
@@ -492,6 +493,7 @@ function threadlightApp() {
                         memories: data.memories_recalled || [],
                         tool_results: data.tool_results || null,
                         usage: data.usage || null,
+                        reasoning: data.reasoning || null,
                     }];
                     this.isTyping = false;
                     this.scrollToBottom();
@@ -598,6 +600,10 @@ function threadlightApp() {
                         profile_id: this.activeProfileId,
                         conversation_id: this.currentConversationId,
                     };
+                    // Pass thinking toggle state
+                    if (this.thinkingEnabled) {
+                        payload.thinking = true;
+                    }
                     // Conditionally enable tools when explicitly requested
                     if (options.enableTools) {
                         payload.enable_tools = options.enableTools;
@@ -635,6 +641,7 @@ function threadlightApp() {
                         message: message,
                         history: this.chatHistory,
                         profile_id: this.activeProfileId,
+                        thinking: this.thinkingEnabled || undefined,
                     }),
                 });
 
@@ -644,6 +651,7 @@ function threadlightApp() {
                     role: 'assistant',
                     content: data.content,
                     memories: data.memories_recalled || [],
+                    reasoning: data.reasoning || null,
                 }];
 
                 // Update history
@@ -710,6 +718,9 @@ function threadlightApp() {
                 if (this.activeProfileId) {
                     formData.append('profile_id', this.activeProfileId);
                 }
+                if (this.thinkingEnabled) {
+                    formData.append('thinking', 'true');
+                }
                 // Append each image file
                 for (const img of attachedImages) {
                     formData.append('images', img.file);
@@ -731,6 +742,7 @@ function threadlightApp() {
                     role: 'assistant',
                     content: data.content,
                     memories: data.memories_recalled || [],
+                    reasoning: data.reasoning || null,
                 }];
 
                 // Update history (text only for history, images are one-shot)
@@ -865,7 +877,7 @@ function threadlightApp() {
                 const response = await fetch('/api/conversations', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: 'New Chat' }),
+                    body: JSON.stringify({ name: 'New Chat', model: this.currentModelId || null }),
                 });
 
                 if (!response.ok) throw new Error('Failed to create conversation');
@@ -952,7 +964,9 @@ function threadlightApp() {
                     this.isTierReviewConversation = purpose === 'tier_review' || convData.name === 'Memory Tier Review';
                     this.isTypeClassificationConversation = purpose === 'type_classification' || convData.name === 'Memory Type Classification';
 
-                    // Update current model to match conversation's model
+                    // Update current model to match conversation's model —
+                    // but only if the active profile doesn't already dictate the model.
+                    // Profiles take priority over per-conversation stored model labels.
                     if (convData.model) {
                         // Check if this model exists in availableModels
                         const modelExists = this.availableModels.some(m => m.model_id === convData.model);
@@ -961,7 +975,12 @@ function threadlightApp() {
                             console.log('[loadConversation] Model not in availableModels, adding:', convData.model);
                             this.availableModels = [...this.availableModels, { model_id: convData.model, is_current: false }];
                         }
-                        if (convData.model !== this.currentModelId) {
+                        // Only follow the conversation's stored model if there's no active profile
+                        // with its own primary_model set. This prevents loading an old "Hermes"
+                        // conversation from clobbering the active profile's model selection.
+                        const activeProfile = this.getActiveProfile();
+                        const profileHasModel = activeProfile && activeProfile.primary_model;
+                        if (!profileHasModel && convData.model !== this.currentModelId) {
                             console.log('[loadConversation] Updating currentModelId from', this.currentModelId, 'to', convData.model);
                             this.currentModelId = convData.model;
                         }
@@ -4894,6 +4913,14 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     });
                     this.profiles = data.profiles || [];
                     this.activeProfileId = data.active_profile_id;
+                    // Sync currentModelId to active profile's primary_model on initial load
+                    if (this.activeProfileId) {
+                        const activeProfile = this.profiles.find(p => p.id === this.activeProfileId);
+                        if (activeProfile && activeProfile.primary_model) {
+                            this.currentModelId = activeProfile.primary_model;
+                            console.log('[loadProfiles] Synced currentModelId to active profile model:', this.currentModelId);
+                        }
+                    }
                 } else {
                     console.error('[loadProfiles] Response not ok:', response.status);
                 }
