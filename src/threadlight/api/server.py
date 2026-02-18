@@ -850,7 +850,15 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             }
         except Exception as e:
             logger.error(f"Multimodal chat error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            err_str = str(e)
+            # Surface a friendly message when the model rejects image input
+            if "400" in err_str or "Bad Request" in err_str:
+                model_name = tl.active_profile.primary_model if tl.active_profile else tl.provider.model
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"The model '{model_name}' does not support image input. Switch to a vision-capable model to send images."
+                )
+            raise HTTPException(status_code=500, detail=err_str)
 
     @app.post("/api/chat/image/stream")
     async def web_chat_stream_with_image(
@@ -913,6 +921,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         tl = get_threadlight()
         history = []
+        current_conv_id: Optional[str] = None  # track which conversation history belongs to
 
         try:
             while True:
@@ -929,6 +938,14 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     thinking = data.get("thinking", False)
 
                     logger.info(f"[WebSocket] Chat message received. profile_id={profile_id}, conv_id={conversation_id}, msg_len={len(message)}, images={len(ws_images)}, thinking={thinking}")
+
+                    # Reset history when switching conversations so stale context
+                    # from a previous conversation is never sent to a different one.
+                    if conversation_id != current_conv_id:
+                        if history:
+                            logger.info(f"[WebSocket] Conversation changed ({current_conv_id} -> {conversation_id}), resetting in-memory history")
+                        history = []
+                        current_conv_id = conversation_id
 
                     # Activate profile if specified
                     _ensure_profile_active(tl, profile_id)
