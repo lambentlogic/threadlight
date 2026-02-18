@@ -4912,6 +4912,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     this.activeProfileId = data.profile.id;
                     this.showToast(`Switched to profile: ${data.profile.name}`);
                     await this.loadConfig();  // Reload config to reflect profile changes
+                    await this.loadModels();  // Reload models to sync chat header selector
                 } else {
                     const data = await response.json();
                     throw new Error(data.detail || 'Failed to switch profile');
