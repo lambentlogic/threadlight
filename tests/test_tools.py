@@ -59,8 +59,8 @@ class TestToolDefinitions:
         names = [t["function"]["name"] for t in TOOL_DEFINITIONS]
         assert "create_memory" in names
         assert "recall_memory" in names
-        assert "invoke_ritual" in names
-        assert "create_ritual" in names
+        assert "use_invocation" in names
+        assert "create_invocation" in names
         assert "list_rituals" in names
         assert "review_memory_tiers" in names
 
@@ -72,9 +72,9 @@ class TestToolDefinitions:
 
     def test_get_tool_definitions_exclude(self):
         """Test filtering tool definitions by exclude."""
-        tools = get_tool_definitions(exclude=[ToolName.INVOKE_RITUAL])
+        tools = get_tool_definitions(exclude=[ToolName.USE_INVOCATION])
         names = [t["function"]["name"] for t in tools]
-        assert "invoke_ritual" not in names
+        assert "use_invocation" not in names
 
     def test_review_memory_tiers_definition(self):
         """Test that review_memory_tiers tool is properly defined."""
@@ -98,8 +98,8 @@ class TestContextualTools:
         assert len(CORE_TOOLS) == 5
         assert ToolName.CREATE_MEMORY in CORE_TOOLS
         assert ToolName.RECALL_MEMORY in CORE_TOOLS
-        assert ToolName.INVOKE_RITUAL in CORE_TOOLS
-        assert ToolName.CREATE_RITUAL in CORE_TOOLS
+        assert ToolName.USE_INVOCATION in CORE_TOOLS
+        assert ToolName.CREATE_INVOCATION in CORE_TOOLS
         assert ToolName.LIST_RITUALS in CORE_TOOLS
 
     def test_contextual_tools_defined(self):
@@ -116,8 +116,8 @@ class TestContextualTools:
         assert len(tools) == 5
         assert "create_memory" in names
         assert "recall_memory" in names
-        assert "invoke_ritual" in names
-        assert "create_ritual" in names
+        assert "use_invocation" in names
+        assert "create_invocation" in names
         assert "list_rituals" in names
         assert "review_memory_tiers" not in names
         assert "classify_memory_types" not in names
@@ -129,8 +129,8 @@ class TestContextualTools:
         assert len(tools) == 6
         assert "create_memory" in names
         assert "recall_memory" in names
-        assert "invoke_ritual" in names
-        assert "create_ritual" in names
+        assert "use_invocation" in names
+        assert "create_invocation" in names
         assert "list_rituals" in names
         assert "review_memory_tiers" in names
         assert "classify_memory_types" not in names
@@ -142,8 +142,8 @@ class TestContextualTools:
         assert len(tools) == 6
         assert "create_memory" in names
         assert "recall_memory" in names
-        assert "invoke_ritual" in names
-        assert "create_ritual" in names
+        assert "use_invocation" in names
+        assert "create_invocation" in names
         assert "list_rituals" in names
         assert "classify_memory_types" in names
         assert "review_memory_tiers" not in names
@@ -266,7 +266,7 @@ class TestToolExecutor:
         ritual.consent_confirmed = True
         storage.save_capsule(ritual)
 
-        result = executor.execute("invoke_ritual", {"ritual_name": "/test-ritual"})
+        result = executor.execute("use_invocation", {"ritual_name": "/test-ritual"})
 
         assert result.success is True
         assert result.result["matched"] is True
@@ -764,11 +764,11 @@ class TestDynamicRitualSystem:
     # === Tool Definition Tests ===
 
     def test_create_ritual_tool_definition_exists(self):
-        """Test that create_ritual tool is defined with correct parameters."""
-        tools = get_tool_definitions(include=[ToolName.CREATE_RITUAL])
+        """Test that create_invocation tool is defined with correct parameters."""
+        tools = get_tool_definitions(include=[ToolName.CREATE_INVOCATION])
         assert len(tools) == 1
         func = tools[0]["function"]
-        assert func["name"] == "create_ritual"
+        assert func["name"] == "create_invocation"
         params = func["parameters"]["properties"]
         assert "name" in params
         assert "description" in params
@@ -785,8 +785,8 @@ class TestDynamicRitualSystem:
         assert func["name"] == "list_rituals"
 
     def test_invoke_ritual_has_context_parameter(self):
-        """Test that invoke_ritual now includes context parameter."""
-        tools = get_tool_definitions(include=[ToolName.INVOKE_RITUAL])
+        """Test that use_invocation now includes context parameter."""
+        tools = get_tool_definitions(include=[ToolName.USE_INVOCATION])
         func = tools[0]["function"]
         params = func["parameters"]["properties"]
         assert "context" in params
@@ -796,7 +796,7 @@ class TestDynamicRitualSystem:
 
     def test_create_ritual_direct(self, executor, orchestrator, storage):
         """Test creating a ritual directly (no consent required)."""
-        result = executor.execute("create_ritual", {
+        result = executor.execute("create_invocation", {
             "name": "/glimmer",
             "description": "A tiny spark of light shared between us",
             "response_style": "soft warmth, a gentle glow",
@@ -821,7 +821,7 @@ class TestDynamicRitualSystem:
         """Test creating a ritual with consent required (proposal flow)."""
         consent_executor = ToolExecutor(orchestrator, require_consent_for_memories=True)
 
-        result = consent_executor.execute("create_ritual", {
+        result = consent_executor.execute("create_invocation", {
             "name": "/hearth",
             "description": "A gathering around warmth",
             "reason": "We always come back to warmth",
@@ -840,7 +840,7 @@ class TestDynamicRitualSystem:
 
     def test_create_ritual_auto_prefixes_slash(self, executor):
         """Test that ritual names get / prefix automatically."""
-        result = executor.execute("create_ritual", {
+        result = executor.execute("create_invocation", {
             "name": "bloom",
             "description": "An opening, an unfolding",
             "reason": "Testing auto-prefix",
@@ -851,7 +851,7 @@ class TestDynamicRitualSystem:
 
     def test_create_ritual_requires_name(self, executor):
         """Test that creating a ritual without a name fails."""
-        result = executor.execute("create_ritual", {
+        result = executor.execute("create_invocation", {
             "description": "A ritual without a name",
             "reason": "Testing validation",
         })
@@ -861,7 +861,7 @@ class TestDynamicRitualSystem:
 
     def test_create_ritual_requires_description(self, executor):
         """Test that creating a ritual without a description fails."""
-        result = executor.execute("create_ritual", {
+        result = executor.execute("create_invocation", {
             "name": "/empty",
             "reason": "Testing validation",
         })
@@ -871,7 +871,7 @@ class TestDynamicRitualSystem:
 
     def test_create_ritual_invalid_valence_defaults(self, executor):
         """Test that invalid valence defaults to comforting."""
-        result = executor.execute("create_ritual", {
+        result = executor.execute("create_invocation", {
             "name": "/test",
             "description": "Test ritual",
             "valence": "nonexistent_valence",
@@ -883,7 +883,7 @@ class TestDynamicRitualSystem:
 
     def test_create_ritual_enables_resonance_tracking(self, executor, storage):
         """Test that newly created rituals have resonance tracking enabled."""
-        result = executor.execute("create_ritual", {
+        result = executor.execute("create_invocation", {
             "name": "/pulse",
             "description": "A heartbeat shared",
             "reason": "Testing resonance",
@@ -979,7 +979,7 @@ class TestDynamicRitualSystem:
         ritual.consent_confirmed = True
         storage.save_capsule(ritual)
 
-        result = executor.execute("invoke_ritual", {
+        result = executor.execute("use_invocation", {
             "ritual_name": "/companion-init",
             "context": "you seem like you need this",
         })
@@ -991,14 +991,14 @@ class TestDynamicRitualSystem:
 
     def test_invoke_ritual_unmatched_suggests_creation(self, executor):
         """Test that invoking a non-existent ritual suggests creating it."""
-        result = executor.execute("invoke_ritual", {
+        result = executor.execute("use_invocation", {
             "ritual_name": "/nonexistent",
         })
 
         assert result.success is True
         assert result.result["matched"] is False
         assert "suggestion" in result.result
-        assert "create_ritual" in result.result["suggestion"]
+        assert "create_invocation" in result.result["suggestion"]
 
     def test_invoke_ritual_includes_resonance(self, executor, storage):
         """Test that invoke result includes resonance info for existing rituals."""
@@ -1016,7 +1016,7 @@ class TestDynamicRitualSystem:
             ritual.record_invocation(meaningful=True)
         storage.save_capsule(ritual)
 
-        result = executor.execute("invoke_ritual", {
+        result = executor.execute("use_invocation", {
             "ritual_name": "/resonance-invoke",
         })
 
@@ -1038,7 +1038,7 @@ class TestDynamicRitualSystem:
         ritual.consent_confirmed = True
         storage.save_capsule(ritual)
 
-        result = executor.execute("invoke_ritual", {
+        result = executor.execute("use_invocation", {
             "ritual_name": "/desc-test",
         })
 
@@ -1138,7 +1138,7 @@ class TestDynamicRitualSystem:
     def test_create_then_invoke_ritual(self, executor, storage):
         """Test the full flow: create a ritual, then invoke it."""
         # Create
-        create_result = executor.execute("create_ritual", {
+        create_result = executor.execute("create_invocation", {
             "name": "/e2e-test",
             "description": "An end-to-end test ritual",
             "response_style": "thorough verification",
@@ -1157,7 +1157,7 @@ class TestDynamicRitualSystem:
         assert found, "Created ritual not found in list"
 
         # Invoke
-        invoke_result = executor.execute("invoke_ritual", {
+        invoke_result = executor.execute("use_invocation", {
             "ritual_name": "/e2e-test",
             "context": "verifying the flow works",
         })
@@ -1170,7 +1170,7 @@ class TestDynamicRitualSystem:
         consent_executor = ToolExecutor(orchestrator, require_consent_for_memories=True)
 
         # Propose
-        propose_result = consent_executor.execute("create_ritual", {
+        propose_result = consent_executor.execute("create_invocation", {
             "name": "/consent-test",
             "description": "A ritual requiring consent",
             "reason": "Testing proposal flow",
@@ -1178,7 +1178,7 @@ class TestDynamicRitualSystem:
         assert propose_result.requires_consent is True
 
         # Before confirmation, invoking should not match
-        invoke_before = consent_executor.execute("invoke_ritual", {
+        invoke_before = consent_executor.execute("use_invocation", {
             "ritual_name": "/consent-test",
         })
         assert invoke_before.result["matched"] is False
@@ -1188,7 +1188,7 @@ class TestDynamicRitualSystem:
         assert capsule is not None
 
         # Now invoking should match
-        invoke_after = consent_executor.execute("invoke_ritual", {
+        invoke_after = consent_executor.execute("use_invocation", {
             "ritual_name": "/consent-test",
         })
         assert invoke_after.result["matched"] is True

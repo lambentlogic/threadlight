@@ -920,8 +920,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         _active_connections.append(websocket)
 
         tl = get_threadlight()
-        history = []
-        current_conv_id: Optional[str] = None  # track which conversation history belongs to
 
         try:
             while True:
@@ -938,14 +936,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     thinking = data.get("thinking", False)
 
                     logger.info(f"[WebSocket] Chat message received. profile_id={profile_id}, conv_id={conversation_id}, msg_len={len(message)}, images={len(ws_images)}, thinking={thinking}")
-
-                    # Reset history when switching conversations so stale context
-                    # from a previous conversation is never sent to a different one.
-                    if conversation_id != current_conv_id:
-                        if history:
-                            logger.info(f"[WebSocket] Conversation changed ({current_conv_id} -> {conversation_id}), resetting in-memory history")
-                        history = []
-                        current_conv_id = conversation_id
 
                     # Activate profile if specified
                     _ensure_profile_active(tl, profile_id)
@@ -968,9 +958,10 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                         except Exception as e:
                             logger.warning(f"[WebSocket] Failed to get conversation purpose: {e}")
 
-                    # Load conversation history from database if we have a conversation_id
-                    # This ensures context is preserved across page refreshes
-                    if conversation_id and not history:
+                    # Always load conversation history fresh from database to ensure perfect
+                    # consistency (handles deletes, regenerates, and edits correctly)
+                    history = []
+                    if conversation_id:
                         try:
                             conv_messages = tl.storage.get_messages(conversation_id)
                             for msg in conv_messages:
@@ -1017,27 +1008,25 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                         response = tl.chat_with_context(message, history=history, model_id=model_id, tools=contextual_tools, images=ws_images if ws_images else None, thinking=thinking)
                         full_response = response.content
 
-                        # Update history
-                        history.append({"role": "user", "content": message})
-                        history.append({"role": "assistant", "content": full_response})
-
-                        # Keep history manageable
-                        if len(history) > 20:
-                            history = history[-20:]
-
-                        # Save messages to database
-                        if conversation_id:
-                            # Save to the specified conversation
-                            tl.memory.save_message_pair(
-                                user_message=message,
-                                assistant_response=full_response,
-                                conversation_id=conversation_id
-                            )
-
                         # Extract tool results if any
                         tool_results = None
                         if response.raw and "tool_results" in response.raw:
                             tool_results = response.raw["tool_results"]
+
+                        # Save messages to database (with tool_results and reasoning in metadata so they persist on reload)
+                        if conversation_id:
+                            assistant_metadata = {}
+                            if tool_results:
+                                assistant_metadata["tool_results"] = tool_results
+                            if response.reasoning:
+                                assistant_metadata["reasoning"] = response.reasoning
+                            # Save to the specified conversation
+                            tl.memory.save_message_pair(
+                                user_message=message,
+                                assistant_response=full_response,
+                                conversation_id=conversation_id,
+                                assistant_metadata=assistant_metadata if assistant_metadata else None
+                            )
 
                         # Extract token usage
                         usage = None
@@ -1086,14 +1075,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                             context=ritual_context,
                         )
 
-                        # Update history
-                        history.append({"role": "user", "content": ritual_name})
-                        history.append({"role": "assistant", "content": response})
-
-                        # Keep history manageable
-                        if len(history) > 20:
-                            history = history[-20:]
-
                         # Save messages to database
                         if conversation_id:
                             tl.memory.save_message_pair(
@@ -1135,8 +1116,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     if tl.active_profile and tl.active_profile.primary_model:
                         model_id = tl.active_profile.primary_model
 
-                    # Load conversation history if needed
-                    if conversation_id and not history:
+                    # Always load conversation history fresh from database
+                    history = []
+                    if conversation_id:
                         try:
                             conv_messages = tl.storage.get_messages(conversation_id)
                             for msg in conv_messages:
@@ -1153,14 +1135,6 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
                     try:
                         full_response = tl.chat(continue_prompt, history=history, model_id=model_id)
-
-                        # Update history
-                        history.append({"role": "user", "content": continue_prompt})
-                        history.append({"role": "assistant", "content": full_response})
-
-                        # Keep history manageable
-                        if len(history) > 20:
-                            history = history[-20:]
 
                         # Save to database
                         if conversation_id:

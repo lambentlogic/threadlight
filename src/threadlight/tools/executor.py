@@ -114,10 +114,10 @@ class ToolExecutor:
                 return self._execute_create_memory(arguments)
             elif tool_name == ToolName.RECALL_MEMORY.value:
                 return self._execute_recall_memory(arguments)
-            elif tool_name == ToolName.INVOKE_RITUAL.value:
-                return self._execute_invoke_ritual(arguments)
-            elif tool_name == ToolName.CREATE_RITUAL.value:
-                return self._execute_create_ritual(arguments)
+            elif tool_name == ToolName.USE_INVOCATION.value:
+                return self._execute_use_invocation(arguments)
+            elif tool_name == ToolName.CREATE_INVOCATION.value:
+                return self._execute_create_invocation(arguments)
             elif tool_name == ToolName.LIST_RITUALS.value:
                 return self._execute_list_rituals(arguments)
             elif tool_name == ToolName.REVIEW_MEMORY_TIERS.value:
@@ -335,11 +335,11 @@ class ToolExecutor:
             display_message=f"Recalled {len(memories)} memories for '{cue}'",
         )
 
-    def _execute_invoke_ritual(self, arguments: dict[str, Any]) -> ToolResult:
-        """Execute invoke_ritual tool call.
+    def _execute_use_invocation(self, arguments: dict[str, Any]) -> ToolResult:
+        """Execute use_invocation tool call.
 
-        When the AI companion calls this tool, it is initiating a ritual
-        (initiated_by="companion"). When the user types a ritual trigger
+        When the AI companion calls this tool, it is initiating an invocation
+        (initiated_by="companion"). When the user types an invocation trigger
         in chat, it flows through the websocket handler instead.
         """
         ritual_name = arguments.get("ritual_name")
@@ -347,7 +347,7 @@ class ToolExecutor:
 
         if not ritual_name:
             return ToolResult(
-                tool_name=ToolName.INVOKE_RITUAL.value,
+                tool_name=ToolName.USE_INVOCATION.value,
                 success=False,
                 error="ritual_name is required",
             )
@@ -390,22 +390,22 @@ class ToolExecutor:
         else:
             result["suggestion"] = (
                 f"No ritual named '{ritual_name}' exists yet. "
-                "You could propose creating it with create_ritual."
+                "You could propose creating it with create_invocation."
             )
 
         return ToolResult(
-            tool_name=ToolName.INVOKE_RITUAL.value,
+            tool_name=ToolName.USE_INVOCATION.value,
             success=True,
             result=result,
             display_message=invocation.response_template or f"Ritual invoked: {ritual_name}",
         )
 
-    def _execute_create_ritual(self, arguments: dict[str, Any]) -> ToolResult:
-        """Execute create_ritual tool call.
+    def _execute_create_invocation(self, arguments: dict[str, Any]) -> ToolResult:
+        """Execute create_invocation tool call.
 
-        Creates a ritual proposal that the user must approve. This follows
+        Creates an invocation proposal that the user must approve. This follows
         the same consent pattern as create_memory -- the AI proposes, the
-        user confirms. Rituals are stored as capsules with type=ritual.
+        user confirms. Invocations are stored as capsules with type=ritual.
         """
         name = arguments.get("name", "")
         description = arguments.get("description", "")
@@ -415,14 +415,14 @@ class ToolExecutor:
 
         if not name:
             return ToolResult(
-                tool_name=ToolName.CREATE_RITUAL.value,
+                tool_name=ToolName.CREATE_INVOCATION.value,
                 success=False,
                 error="name is required (e.g., '/glimmer')",
             )
 
         if not description:
             return ToolResult(
-                tool_name=ToolName.CREATE_RITUAL.value,
+                tool_name=ToolName.CREATE_INVOCATION.value,
                 success=False,
                 error="description is required -- what does this ritual mean?",
             )
@@ -453,16 +453,16 @@ class ToolExecutor:
         content["text"] = text
 
         if self.require_consent:
-            # Create a proposal -- user must approve the ritual
+            # Create a proposal -- user must approve the invocation
             proposal = self.memory.propose(
                 type="ritual",
                 content=content,
                 source_message=reason,
-                memory_tier="anchored_decaying",  # Rituals should persist
+                memory_tier="anchored_decaying",  # Invocations should persist
             )
 
             return ToolResult(
-                tool_name=ToolName.CREATE_RITUAL.value,
+                tool_name=ToolName.CREATE_INVOCATION.value,
                 success=True,
                 result={
                     "name": name,
@@ -472,13 +472,13 @@ class ToolExecutor:
                     "reason": reason,
                     "status": "proposed",
                     "message": (
-                        f"Ritual '{name}' has been proposed. "
+                        f"Invocation '{name}' has been proposed. "
                         "The user will be asked to approve it."
                     ),
                 },
                 requires_consent=True,
                 proposal_id=proposal.id,
-                display_message=f"Proposing new ritual: {name}",
+                display_message=f"Proposing new invocation: {name}",
             )
         else:
             # Direct creation (trusted context)
@@ -496,7 +496,7 @@ class ToolExecutor:
                 self.memory.storage.update_capsule(capsule)
 
             return ToolResult(
-                tool_name=ToolName.CREATE_RITUAL.value,
+                tool_name=ToolName.CREATE_INVOCATION.value,
                 success=True,
                 result={
                     "name": name,

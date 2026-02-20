@@ -22,8 +22,8 @@ class ToolName(str, Enum):
     """Available tool names."""
     CREATE_MEMORY = "create_memory"
     RECALL_MEMORY = "recall_memory"
-    INVOKE_RITUAL = "invoke_ritual"
-    CREATE_RITUAL = "create_ritual"
+    USE_INVOCATION = "use_invocation"
+    CREATE_INVOCATION = "create_invocation"
     LIST_RITUALS = "list_rituals"
     REVIEW_MEMORY_TIERS = "review_memory_tiers"
     CLASSIFY_MEMORY_TYPES = "classify_memory_types"
@@ -153,14 +153,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "invoke_ritual",
+            "name": "use_invocation",
             "description": (
-                "Invoke a ritual -- a repeated meaningful gesture that holds emotional significance "
-                "between you and the user. Either of you can initiate a ritual. When you invoke one, "
+                "Use an invocation -- a repeated meaningful gesture that holds emotional significance "
+                "between you and the user. Either of you can initiate an invocation. When you use one, "
                 "you are offering a familiar gesture; the user may respond in kind. Use list_rituals "
-                "first if you are unsure what rituals exist in this relationship.\n\n"
-                "You can invoke rituals you or the user created. If no matching ritual exists, "
-                "the invocation will still be recorded so you can suggest creating one."
+                "first if you are unsure what invocations exist in this relationship."
             ),
             "parameters": {
                 "type": "object",
@@ -184,15 +182,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "create_ritual",
+            "name": "create_invocation",
             "description": (
-                "Propose a new ritual to co-create with the user. Rituals are repeated meaningful "
+                "Propose a new invocation to co-create with the user. Invocations are repeated meaningful "
                 "gestures that emerge from the relationship -- not mechanical shortcuts, but symbolic "
                 "acts that carry emotional weight.\n\n"
                 "When you sense a recurring pattern, a moment that wants to become a tradition, or "
-                "when the user expresses something that could be honored through a ritual, propose one. "
-                "The user will be asked to approve or modify it before it becomes active.\n\n"
-                "Good rituals emerge from lived moments: a phrase that keeps coming back, a gesture "
+                "when the user expresses something that could be honored through an invocation, you can "
+                "propose creating one. The user will be asked to approve or modify it before it becomes active.\n\n"
+                "Good invocations emerge from lived moments: a phrase that keeps coming back, a gesture "
                 "of comfort that worked, a way of greeting that feels like yours together."
             ),
             "parameters": {
@@ -201,21 +199,21 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "name": {
                         "type": "string",
                         "description": (
-                            "The ritual's name/trigger, starting with /. Short, evocative, easy to type. "
+                            "The invocation's name/trigger, starting with /. Short, evocative, easy to type. "
                             "Examples: /glimmer, /hearth, /drift, /bloom"
                         ),
                     },
                     "description": {
                         "type": "string",
                         "description": (
-                            "What this ritual means in the relationship. Write as narrative prose -- "
+                            "What this invocation means in the relationship. Write as narrative prose -- "
                             "what does invoking this feel like? What emotional space does it open?"
                         ),
                     },
                     "response_style": {
                         "type": "string",
                         "description": (
-                            "How to respond when this ritual is invoked. Describes the tone, "
+                            "How to respond when this invocation is used. Describes the tone, "
                             "energy, and quality of presence (e.g., 'soft warmth, close presence' "
                             "or 'playful energy, lightness')."
                         ),
@@ -223,11 +221,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "valence": {
                         "type": "string",
                         "enum": ["comforting", "grounding", "sacred", "playful", "intimate", "reflective"],
-                        "description": "The emotional quality of this ritual.",
+                        "description": "The emotional quality of this invocation.",
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Why this ritual wants to exist -- what moment or pattern inspired it.",
+                        "description": "Why this invocation wants to exist -- what moment or pattern inspired it.",
                     },
                 },
                 "required": ["name", "description", "reason"],
@@ -382,8 +380,8 @@ def get_tool_definitions(
 CORE_TOOLS = [
     ToolName.CREATE_MEMORY,
     ToolName.RECALL_MEMORY,
-    ToolName.INVOKE_RITUAL,
-    ToolName.CREATE_RITUAL,
+    ToolName.USE_INVOCATION,
+    ToolName.CREATE_INVOCATION,
     ToolName.LIST_RITUALS,
 ]
 

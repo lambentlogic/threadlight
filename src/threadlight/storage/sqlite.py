@@ -772,6 +772,7 @@ class SQLiteStorage(StorageBackend):
             SELECT * FROM capsules
             WHERE (LOWER(cue_phrases) LIKE ? OR LOWER(content) LIKE ? OR LOWER(text) LIKE ?)
             AND presence_score > 0.1
+            AND (archived = 0 OR archived IS NULL)
         """
         params: list[Any] = [f"%{cue_lower}%", f"%{cue_lower}%", f"%{cue_lower}%"]
 
@@ -884,6 +885,7 @@ class SQLiteStorage(StorageBackend):
             SELECT * FROM capsules
             WHERE last_accessed < ?
             AND presence_score > 0.0
+            AND (archived = 0 OR archived IS NULL)
         """
         params: list[Any] = [before.isoformat()]
 
@@ -1780,6 +1782,7 @@ class SQLiteStorage(StorageBackend):
             SELECT * FROM capsules
             WHERE embedding IS NOT NULL
             AND presence_score > 0.1
+            AND (archived = 0 OR archived IS NULL)
         """).fetchall()
 
         # Calculate similarities
@@ -1805,6 +1808,7 @@ class SQLiteStorage(StorageBackend):
         rows = conn.execute("""
             SELECT * FROM capsules
             WHERE embedding IS NULL
+            AND (archived = 0 OR archived IS NULL)
             ORDER BY created_at DESC
             LIMIT ?
         """, (limit,)).fetchall()
@@ -2420,6 +2424,7 @@ class SQLiteStorage(StorageBackend):
             query = """
                 SELECT * FROM capsules
                 WHERE (model_scope = ? OR model_scope IS NULL)
+                AND (archived = 0 OR archived IS NULL)
                 ORDER BY last_accessed DESC
                 LIMIT ?
             """
@@ -2428,6 +2433,7 @@ class SQLiteStorage(StorageBackend):
             query = """
                 SELECT * FROM capsules
                 WHERE model_scope = ?
+                AND (archived = 0 OR archived IS NULL)
                 ORDER BY last_accessed DESC
                 LIMIT ?
             """
@@ -2601,6 +2607,7 @@ class SQLiteStorage(StorageBackend):
             SELECT * FROM capsules
             WHERE embedding IS NOT NULL
             AND presence_score > 0.1
+            AND (archived = 0 OR archived IS NULL)
         """
         params: list[Any] = []
 

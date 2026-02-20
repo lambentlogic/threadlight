@@ -461,11 +461,24 @@ function threadlightApp() {
                 this.ws.onclose = () => {
                     this.wsConnected = false;
                     console.log('WebSocket disconnected, reconnecting...');
+
+                    // If we were waiting for a response, show an error
+                    if (this.isTyping) {
+                        this.isTyping = false;
+                        this.showToast('Connection lost while waiting for response. Please try again.', 'error');
+                    }
+
                     setTimeout(() => this.connectWebSocket(), 3000);
                 };
 
                 this.ws.onerror = (error) => {
                     console.error('WebSocket error:', error);
+
+                    // Show error to user if we're waiting for a response
+                    if (this.isTyping) {
+                        this.isTyping = false;
+                        this.showToast('Connection error. Please check your network and try again.', 'error');
+                    }
                 };
 
                 this.ws.onmessage = (event) => {
@@ -792,7 +805,7 @@ function threadlightApp() {
                         content: data.response,
                     }];
                 } catch (error) {
-                    this.showToast('Failed to invoke ritual: ' + error.message, 'error');
+                    this.showToast('Invocation failed: ' + error.message, 'error');
                 }
                 this.scrollToBottom();
             }
@@ -1003,6 +1016,8 @@ function threadlightApp() {
                     memories: [],
                     variant_group_id: msg.variant_group_id || null,
                     variant_index: msg.variant_index || 0,
+                    tool_results: (msg.metadata && msg.metadata.tool_results) || [],
+                    reasoning: (msg.metadata && msg.metadata.reasoning) || null,
                 }));
 
                 // Load variant data for messages that have variant groups
@@ -1742,16 +1757,32 @@ function threadlightApp() {
                 this.editingMessageId = null;
                 this.editedMessageContent = '';
 
-                // Regenerate the response
+                // Regenerate the response using continue (don't send new message - it's already in history)
                 if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
                     this.ws.send(JSON.stringify({
-                        type: 'chat',
-                        message: newContent,
+                        type: 'continue',
                         profile_id: this.activeProfileId,
                         conversation_id: this.currentConversationId,
                     }));
                 } else {
-                    await this.sendMessageHTTP(newContent);
+                    // Fallback: use continue endpoint via HTTP
+                    const response = await fetch('/api/continue', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            conversation_id: this.currentConversationId,
+                            profile_id: this.activeProfileId,
+                        }),
+                    });
+                    if (response.ok) {
+                        const result = await response.json();
+                        this.messages.push({
+                            role: 'assistant',
+                            content: result.response,
+                            timestamp: new Date().toISOString(),
+                        });
+                        this.scrollToBottom();
+                    }
                 }
 
             } catch (error) {
@@ -2226,7 +2257,14 @@ function threadlightApp() {
                 tool.requires_consent = false;
                 tool.success = true;
 
-                this.showToast('Memory approved');
+                // Check if this is an invocation proposal and reload rituals if so
+                if (tool.tool_name === 'create_invocation') {
+                    this.showToast('Invocation approved');
+                    await this.loadRituals();
+                } else {
+                    this.showToast('Memory approved');
+                }
+
                 await this.loadStats();
             } catch (error) {
                 console.error('Failed to approve proposal:', error);

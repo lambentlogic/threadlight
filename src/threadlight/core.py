@@ -833,7 +833,8 @@ class Threadlight:
         )
 
         if not result.matched:
-            return f"No ritual found for '{ritual_name}'"
+            # No ritual defined - treat as normal conversation
+            return self.chat(ritual_name)
 
         # === Gather relational context for the ritual ===
         # Rituals should feel continuous with the relationship, not isolated

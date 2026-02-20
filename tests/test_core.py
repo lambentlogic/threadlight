@@ -170,8 +170,9 @@ class TestThreadlightRituals:
         """Test invoking an unknown ritual."""
         response = threadlight.invoke_ritual("/unknown")
 
-        # Should get a generic response
-        assert "/unknown" in response or "ritual" in response.lower()
+        # Unknown rituals fall through to normal conversation
+        assert isinstance(response, str)
+        assert len(response) > 0
 
     def test_clear_ritual(self, threadlight):
         """Test clearing ritual state."""
