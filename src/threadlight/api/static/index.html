@@ -815,11 +815,11 @@
                                                 </template>
 
                                                 <!-- Tool Results -->
-                                                <template x-if="msg.tool_results && msg.tool_results.length > 0">
+                                                <template x-if="msg.tool_results && Array.isArray(msg.tool_results) && msg.tool_results.length > 0">
                                                     <div class="mt-3 pt-3 border-t border-threadlight-border/50">
                                                         <p class="text-xs text-threadlight-accent mb-2">Tools used:</p>
                                                         <div class="space-y-2">
-                                                            <template x-for="tool in msg.tool_results" :key="tool.tool_name">
+                                                            <template x-for="(tool, toolIdx) in msg.tool_results" :key="toolIdx">
                                                                 <div class="px-3 py-2 text-xs bg-threadlight-accent/10 text-threadlight-text rounded border border-threadlight-accent/20">
                                                                     <div class="flex items-center justify-between">
                                                                         <div>
@@ -4934,6 +4934,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260219-6"></script>
+    <script src="/static/js/app.js?v=20260311-4"></script>
 </body>
 </html>

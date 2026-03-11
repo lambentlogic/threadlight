@@ -11,6 +11,7 @@ Supports multiple endpoints with automatic fallback on failure.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Iterator, Optional
 
@@ -259,6 +260,14 @@ class OpenAIProvider(BaseProvider):
                 logger.info(f"[OpenAI] Has tools: {'tools' in payload}")
                 if 'tools' in payload:
                     logger.info(f"[OpenAI] Tool count: {len(payload['tools'])}")
+                # Log full payload for local model debugging (helps diagnose parse errors)
+                payload_json = json.dumps(payload, default=str)
+                logger.info(f"[OpenAI] Payload length: {len(payload_json)} chars")
+                if len(payload_json) < 10000:
+                    logger.info(f"[OpenAI] Full payload: {payload_json}")
+                else:
+                    logger.info(f"[OpenAI] Payload (first 5000): {payload_json[:5000]}")
+                    logger.info(f"[OpenAI] Payload (around pos 1388): ...{payload_json[1300:1500]}...")
 
                 with httpx.Client(timeout=self.timeout) as client:
                     response = client.post(url, json=payload, headers=self.headers)
@@ -313,7 +322,10 @@ class OpenAIProvider(BaseProvider):
         if 'tool_calls' in message and message['tool_calls']:
             logger.info(f"[OpenAI DEBUG] Tool calls in response: {len(message['tool_calls'])}")
             for tc in message['tool_calls']:
-                logger.info(f"[OpenAI DEBUG]   Tool: {tc['function']['name']}, args: {tc['function']['arguments'][:100]}...")
+                args_preview = tc['function']['arguments']
+                if not isinstance(args_preview, str):
+                    args_preview = json.dumps(args_preview)
+                logger.info(f"[OpenAI DEBUG]   Tool: {tc['function']['name']}, args: {args_preview[:100]}...")
         else:
             logger.info(f"[OpenAI DEBUG] No tool_calls in response, content preview: {message.get('content', '')[:200]}...")
 
@@ -321,10 +333,14 @@ class OpenAIProvider(BaseProvider):
         tool_calls = []
         if "tool_calls" in message and message["tool_calls"]:
             for tc in message["tool_calls"]:
+                args = tc["function"]["arguments"]
+                # Local models may return arguments as a dict instead of JSON string
+                if not isinstance(args, str):
+                    args = json.dumps(args)
                 tool_calls.append(ToolCall(
                     id=tc["id"],
                     name=tc["function"]["name"],
-                    arguments=tc["function"]["arguments"],
+                    arguments=args,
                 ))
 
         # Extract reasoning trace (GLM-5, DeepSeek-R1 style: separate field)

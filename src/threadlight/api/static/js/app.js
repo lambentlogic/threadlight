@@ -364,6 +364,7 @@ function threadlightApp() {
 
             // Load initial data
             await this.loadConfig();
+            await this.loadProviderModels();  // Load provider models first so chat dropdown includes all models
             await this.loadModels();
             await this.loadStats();
             await this.loadRituals();
@@ -499,12 +500,22 @@ function threadlightApp() {
                     break;
 
                 case 'complete':
-                    // Add complete response as a new message
+                    // Assign saved ID to the user message that was added optimistically
+                    if (data.user_message_id) {
+                        const lastUserIdx = this.messages.map(m => m.role).lastIndexOf('user');
+                        if (lastUserIdx !== -1 && !this.messages[lastUserIdx].id) {
+                            this.messages = this.messages.map((m, i) =>
+                                i === lastUserIdx ? { ...m, id: data.user_message_id } : m
+                            );
+                        }
+                    }
+                    // Add complete response as a new message with its saved ID
                     this.messages = [...this.messages, {
+                        id: data.assistant_message_id || null,
                         role: 'assistant',
                         content: data.content,
                         memories: data.memories_recalled || [],
-                        tool_results: data.tool_results || null,
+                        tool_results: data.tool_results || [],
                         usage: data.usage || null,
                         reasoning: data.reasoning || null,
                     }];
@@ -517,6 +528,7 @@ function threadlightApp() {
                         role: 'assistant',
                         type: 'ritual',
                         content: data.content,
+                        tool_results: [],
                     }];
                     this.scrollToBottom();
                     break;
@@ -546,6 +558,7 @@ function threadlightApp() {
                         role: 'assistant',
                         content: data.content,
                         memories: [],
+                        tool_results: [],
                     }];
                     this.isTyping = false;
                     this.scrollToBottom();
@@ -579,6 +592,7 @@ function threadlightApp() {
             const displayMsg = {
                 role: 'user',
                 content: message,
+                tool_results: [],
             };
             // Attach image previews for display in chat
             if (attachedImages.length > 0) {
@@ -1726,7 +1740,7 @@ function threadlightApp() {
             const newContent = this.editedMessageContent;
 
             try {
-                // Update the message content first
+                // Update the message content on the server
                 const response = await fetch(`/api/messages/${msg.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -1735,7 +1749,7 @@ function threadlightApp() {
 
                 if (!response.ok) throw new Error('Failed to update message');
 
-                // Find the next message (should be assistant response) and delete it and all after
+                // Delete the assistant response and everything after it from the server
                 if (msgIndex + 1 < this.messages.length) {
                     const nextMsgId = this.messages[msgIndex + 1].id;
                     if (nextMsgId) {
@@ -1757,34 +1771,34 @@ function threadlightApp() {
                 this.editingMessageId = null;
                 this.editedMessageContent = '';
 
-                // Regenerate the response using continue (don't send new message - it's already in history)
-                if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({
-                        type: 'continue',
-                        profile_id: this.activeProfileId,
-                        conversation_id: this.currentConversationId,
-                    }));
-                } else {
-                    // Fallback: use continue endpoint via HTTP
-                    const response = await fetch('/api/continue', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            conversation_id: this.currentConversationId,
-                            profile_id: this.activeProfileId,
-                        }),
-                    });
-                    if (response.ok) {
-                        const result = await response.json();
-                        this.messages.push({
-                            role: 'assistant',
-                            content: result.response,
-                            timestamp: new Date().toISOString(),
-                        });
-                        this.scrollToBottom();
+                // Delete the edited user message from DB too (it will be re-saved by the chat handler)
+                if (msg.id) {
+                    try {
+                        await fetch(`/api/messages/${msg.id}`, { method: 'DELETE' });
+                    } catch (error) {
+                        console.error('Failed to delete edited user message:', error);
                     }
                 }
 
+                // Remove the edited message from local state too - sendMessage-like flow will re-add it
+                this.messages = this.messages.slice(0, msgIndex);
+
+                // Send the edited content as a fresh chat message
+                if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
+                    // Add user message to display optimistically
+                    this.messages = [...this.messages, { role: 'user', content: newContent }];
+                    this.scrollToBottom();
+
+                    this.ws.send(JSON.stringify({
+                        type: 'chat',
+                        message: newContent,
+                        profile_id: this.activeProfileId,
+                        conversation_id: this.currentConversationId,
+                        ...(this.thinkingEnabled ? { thinking: true } : {}),
+                    }));
+                } else {
+                    this.showToast('WebSocket not connected', 'error');
+                }
             } catch (error) {
                 this.showToast('Failed to edit and regenerate: ' + error.message, 'error');
             }
@@ -3900,6 +3914,22 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 const data = await response.json();
                 this.availableModels = data.models || [];
 
+                // Merge in provider models so all models (including local) appear in chat dropdown
+                if (this.providerModels && this.providerModels.length > 0) {
+                    const existingIds = new Set(this.availableModels.map(m => m.model_id));
+                    for (const pm of this.providerModels) {
+                        if (!existingIds.has(pm.id)) {
+                            this.availableModels.push({
+                                model_id: pm.id,
+                                is_current: false,
+                                provider_id: pm.provider_id,
+                                provider_name: pm.provider_name,
+                            });
+                        }
+                    }
+                    console.log('[loadModels] Merged provider models, total:', this.availableModels.length);
+                }
+
                 // Only update currentModelId if:
                 // 1. Not preserving (explicit request to use server's model)
                 // 2. currentModelId is empty/unset
@@ -4975,9 +5005,13 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 if (response.ok) {
                     const data = await response.json();
                     this.activeProfileId = data.profile.id;
+                    // Set currentModelId from profile's primary_model before reloading
+                    if (data.profile.primary_model) {
+                        this.currentModelId = data.profile.primary_model;
+                    }
                     this.showToast(`Switched to profile: ${data.profile.name}`);
                     await this.loadConfig();  // Reload config to reflect profile changes
-                    await this.loadModels();  // Reload models to sync chat header selector
+                    await this.loadModels(true);  // Reload models, preserving the profile's model selection
                 } else {
                     const data = await response.json();
                     throw new Error(data.detail || 'Failed to switch profile');

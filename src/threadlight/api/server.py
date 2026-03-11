@@ -1014,6 +1014,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                             tool_results = response.raw["tool_results"]
 
                         # Save messages to database (with tool_results and reasoning in metadata so they persist on reload)
+                        user_msg_id = None
+                        assistant_msg_id = None
                         if conversation_id:
                             assistant_metadata = {}
                             if tool_results:
@@ -1021,12 +1023,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                             if response.reasoning:
                                 assistant_metadata["reasoning"] = response.reasoning
                             # Save to the specified conversation
-                            tl.memory.save_message_pair(
+                            user_msg, assistant_msg = tl.memory.save_message_pair(
                                 user_message=message,
                                 assistant_response=full_response,
                                 conversation_id=conversation_id,
                                 assistant_metadata=assistant_metadata if assistant_metadata else None
                             )
+                            if user_msg:
+                                user_msg_id = user_msg.id
+                            if assistant_msg:
+                                assistant_msg_id = assistant_msg.id
 
                         # Extract token usage
                         usage = None
@@ -1037,17 +1043,21 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                                 "total_tokens": response.total_tokens,
                             }
 
-                        # Send completion with metadata
+                        # Send completion with metadata and message IDs
                         complete_payload = {
                             "type": "complete",
                             "content": full_response,
                             "tool_results": tool_results,
                             "usage": usage,
+                            "user_message_id": user_msg_id,
+                            "assistant_message_id": assistant_msg_id,
                         }
                         if response.reasoning:
                             complete_payload["reasoning"] = response.reasoning
                         await websocket.send_json(complete_payload)
                     except Exception as e:
+                        import traceback
+                        logger.error(f"[WebSocket] Chat error: {e}\n{traceback.format_exc()}")
                         error_msg = str(e)
                         is_rate_limit = "rate limit" in error_msg.lower() or "429" in error_msg
                         await websocket.send_json({
