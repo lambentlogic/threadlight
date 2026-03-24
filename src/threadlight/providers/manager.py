@@ -184,22 +184,28 @@ class ProviderManager:
 
         return self._default_provider
 
-    def get_provider_for_model(self, model_id: str) -> BaseProvider:
+    def get_provider_for_model(self, model_id: str, provider_id: Optional[str] = None) -> BaseProvider:
         """
         Get the appropriate provider for a given model.
 
         Resolution order:
-        1. Model's explicit provider_id -> corresponding provider
-        2. Default provider ID from config -> corresponding provider
-        3. Legacy default provider (ProviderConfig)
+        1. Explicit provider_id hint from caller (e.g. from frontend dropdown)
+        2. Model's explicit provider_id from model config
+        3. Default provider ID from config -> corresponding provider
+        4. Legacy default provider (ProviderConfig)
 
         Args:
             model_id: The model identifier
+            provider_id: Optional provider hint from the frontend
 
         Returns:
             BaseProvider instance to use for this model
         """
-        # Check if model has an explicit provider_id
+        # Use explicit provider hint if given
+        if provider_id and provider_id in self.config.providers:
+            return self._get_or_create_provider(provider_id)
+
+        # Check if model has an explicit provider_id in model config
         model_config = self.config.model_configs.get(model_id)
         if model_config and model_config.provider_id:
             return self._get_or_create_provider(model_config.provider_id)
@@ -233,7 +239,8 @@ class ProviderManager:
         Returns:
             ProviderResponse from the appropriate provider
         """
-        provider = self.get_provider_for_model(model_id)
+        provider_id = kwargs.pop("provider_id", None)
+        provider = self.get_provider_for_model(model_id, provider_id=provider_id)
 
         # Ensure model is set (may override provider's default)
         if "model" not in kwargs:

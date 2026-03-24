@@ -630,6 +630,7 @@ function threadlightApp() {
                         profile_id: this.activeProfileId,
                         conversation_id: this.currentConversationId,
                         model_id: this.currentModelId || null,
+                        provider_id: this.getProviderIdForModel(this.currentModelId) || null,
                     };
                     // Pass thinking toggle state
                     if (this.thinkingEnabled) {
@@ -1496,19 +1497,23 @@ function threadlightApp() {
 
         async regenerateResponse(msg) {
             // Create a new variant of this assistant message instead of deleting it
+            console.log('[regenerateResponse] Called with msg:', { id: msg.id, role: msg.role, variant_group_id: msg.variant_group_id });
             if (!msg.id) {
+                console.log('[regenerateResponse] No msg.id, aborting');
                 this.showToast('Cannot regenerate: message has no ID', 'error');
                 return;
             }
 
             try {
                 // Call the regenerate API to set up variant group and get user message
+                console.log('[regenerateResponse] POST /api/messages/' + msg.id + '/regenerate');
                 const response = await fetch(`/api/messages/${msg.id}/regenerate`, {
                     method: 'POST',
                 });
 
                 if (!response.ok) {
                     const err = await response.json();
+                    console.log('[regenerateResponse] API error:', err);
                     this.showToast(err.detail || 'Failed to regenerate', 'error');
                     return;
                 }
@@ -1528,20 +1533,26 @@ function threadlightApp() {
                 }
 
                 // Send regeneration request via WebSocket
+                console.log('[regenerateResponse] Regenerate API success:', { variant_group_id, next_variant_index, user_message: user_message?.substring(0, 50) });
                 if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
                     this.isTyping = true;
-                    this.ws.send(JSON.stringify({
+                    const regenPayload = {
                         type: 'regenerate_variant',
                         user_message: user_message,
                         variant_group_id: variant_group_id,
                         next_variant_index: next_variant_index,
                         profile_id: this.activeProfileId,
                         conversation_id: conversation_id,
-                    }));
+                        model_id: this.currentModelId || null,
+                    };
+                    console.log('[regenerateResponse] Sending WS:', regenPayload);
+                    this.ws.send(JSON.stringify(regenPayload));
                 } else {
+                    console.log('[regenerateResponse] WS not connected');
                     this.showToast('WebSocket not connected. Cannot regenerate.', 'error');
                 }
             } catch (error) {
+                console.error('[regenerateResponse] Error:', error);
                 this.showToast('Failed to regenerate: ' + error.message, 'error');
             }
         },
@@ -1650,6 +1661,9 @@ function threadlightApp() {
         // Handle a completed regeneration with variant data
         handleRegenerateComplete(data) {
             const { content, message_id, variant_group_id, variant_index, usage } = data;
+            console.log('[handleRegenerateComplete]', { message_id, variant_group_id, variant_index });
+            console.log('[handleRegenerateComplete] Current messages:', this.messages.map(m => ({ id: m.id, role: m.role, variant_group_id: m.variant_group_id })));
+            console.log('[handleRegenerateComplete] messageVariantGroups:', JSON.stringify(this.messageVariantGroups));
 
             // Find the message in the display that belongs to this variant group
             const msgIndex = this.messages.findIndex(m =>
@@ -1713,6 +1727,8 @@ function threadlightApp() {
 
             // Force reactivity update
             this.messageVariants = { ...this.messageVariants };
+            console.log('[handleRegenerateComplete] Final variant state:', JSON.stringify(this.messageVariants));
+            console.log('[handleRegenerateComplete] getVariantInfo for updated msg:', this.getVariantInfo(this.messages[msgIndex]));
         },
 
         // Copy assistant message content to clipboard
@@ -1761,7 +1777,7 @@ function threadlightApp() {
             }
         },
 
-        // Edit a user message and regenerate from that point
+        // Edit a user message and regenerate the assistant response as a variant
         async editAndRegenerate(msg) {
             if (!this.editingMessageId || !this.editedMessageContent.trim()) return;
 
@@ -1774,7 +1790,7 @@ function threadlightApp() {
             const newContent = this.editedMessageContent;
 
             try {
-                // Update the message content on the server
+                // Update the user message content on the server
                 const response = await fetch(`/api/messages/${msg.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -1783,53 +1799,67 @@ function threadlightApp() {
 
                 if (!response.ok) throw new Error('Failed to update message');
 
-                // Delete the assistant response and everything after it from the server
-                if (msgIndex + 1 < this.messages.length) {
-                    const nextMsgId = this.messages[msgIndex + 1].id;
-                    if (nextMsgId) {
-                        try {
-                            await fetch(`/api/messages/${nextMsgId}/and-after`, {
-                                method: 'DELETE',
-                            });
-                        } catch (error) {
-                            console.error('Failed to delete messages from server:', error);
-                        }
-                    }
-                }
-
-                // Update local state - keep messages up to and including the edited one
-                const updatedMsg = { ...this.messages[msgIndex], content: newContent };
-                this.messages = [...this.messages.slice(0, msgIndex), updatedMsg];
+                // Update user message in local state
+                this.messages = this.messages.map((m, i) =>
+                    i === msgIndex ? { ...m, content: newContent } : m
+                );
 
                 // Clear edit state
                 this.editingMessageId = null;
                 this.editedMessageContent = '';
 
-                // Delete the edited user message from DB too (it will be re-saved by the chat handler)
-                if (msg.id) {
-                    try {
-                        await fetch(`/api/messages/${msg.id}`, { method: 'DELETE' });
-                    } catch (error) {
-                        console.error('Failed to delete edited user message:', error);
+                // Find the assistant response to regenerate as a variant
+                const assistantMsg = msgIndex + 1 < this.messages.length ? this.messages[msgIndex + 1] : null;
+                if (!assistantMsg || assistantMsg.role !== 'assistant' || !assistantMsg.id) {
+                    // No assistant response to create variant from — send as fresh chat
+                    this.showToast('No response to create variant from, sending fresh', 'info');
+                    // Fall through to fresh chat
+                    if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({
+                            type: 'chat',
+                            message: newContent,
+                            profile_id: this.activeProfileId,
+                            conversation_id: this.currentConversationId,
+                            model_id: this.currentModelId || null,
+                            provider_id: this.getProviderIdForModel(this.currentModelId) || null,
+                            ...(this.thinkingEnabled ? { thinking: true } : {}),
+                        }));
                     }
+                    return;
                 }
 
-                // Remove the edited message from local state too - sendMessage-like flow will re-add it
-                this.messages = this.messages.slice(0, msgIndex);
+                // Use the regenerate API to set up a variant group for the assistant response
+                const regenResponse = await fetch(`/api/messages/${assistantMsg.id}/regenerate`, {
+                    method: 'POST',
+                });
 
-                // Send the edited content as a fresh chat message
+                if (!regenResponse.ok) {
+                    const err = await regenResponse.json();
+                    this.showToast(err.detail || 'Failed to set up regeneration', 'error');
+                    return;
+                }
+
+                const regenData = await regenResponse.json();
+                const { variant_group_id, next_variant_index, conversation_id } = regenData;
+
+                // Update the assistant message's variant_group_id in local state
+                const assistantIndex = msgIndex + 1;
+                this.messages = this.messages.map((m, i) =>
+                    i === assistantIndex ? { ...m, variant_group_id } : m
+                );
+
+                // Send regeneration via WebSocket with the edited user message
                 if (this.wsConnected && this.ws?.readyState === WebSocket.OPEN) {
-                    // Add user message to display optimistically
-                    this.messages = [...this.messages, { role: 'user', content: newContent }];
-                    this.scrollToBottom();
-
+                    this.isTyping = true;
                     this.ws.send(JSON.stringify({
-                        type: 'chat',
-                        message: newContent,
+                        type: 'regenerate_variant',
+                        user_message: newContent,
+                        variant_group_id: variant_group_id,
+                        next_variant_index: next_variant_index,
                         profile_id: this.activeProfileId,
-                        conversation_id: this.currentConversationId,
+                        conversation_id: conversation_id,
                         model_id: this.currentModelId || null,
-                        ...(this.thinkingEnabled ? { thinking: true } : {}),
+                        provider_id: this.getProviderIdForModel(this.currentModelId) || null,
                     }));
                 } else {
                     this.showToast('WebSocket not connected', 'error');
@@ -3432,6 +3462,17 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         },
 
         // Get a display name for a model (includes provider name if available)
+        getProviderIdForModel(modelId) {
+            if (!modelId) return null;
+            // Check availableModels first (has provider_id from merge)
+            const am = this.availableModels.find(m => m.model_id === modelId);
+            if (am && am.provider_id) return am.provider_id;
+            // Check providerModels
+            const pm = this.providerModels.find(m => m.id === modelId);
+            if (pm && pm.provider_id) return pm.provider_id;
+            return null;
+        },
+
         getModelDisplayName(modelId, includeProvider = false) {
             const model = this.providerModels.find(m => m.id === modelId);
             if (!model) return modelId;

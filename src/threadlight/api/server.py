@@ -931,6 +931,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     profile_id = data.get("profile_id")
                     conversation_id = data.get("conversation_id")
                     explicit_model_id = data.get("model_id")
+                    explicit_provider_id = data.get("provider_id")
                     # Optional image attachments as base64 data URLs
                     ws_images = data.get("images") or []
                     # Optional thinking mode toggle
@@ -1006,7 +1007,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
                     # Get complete response (no streaming - simpler and avoids UI reactivity issues)
                     try:
-                        response = tl.chat_with_context(message, history=history, model_id=model_id, tools=contextual_tools, images=ws_images if ws_images else None, thinking=thinking)
+                        response = tl.chat_with_context(message, history=history, model_id=model_id, tools=contextual_tools, images=ws_images if ws_images else None, thinking=thinking, provider_id=explicit_provider_id)
                         full_response = response.content
 
                         # Extract tool results if any
@@ -1175,15 +1176,17 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     user_message = data.get("user_message")
                     variant_group_id = data.get("variant_group_id")
                     next_variant_index = data.get("next_variant_index", 1)
+                    explicit_model_id = data.get("model_id")
+                    explicit_provider_id_regen = data.get("provider_id")
 
-                    logger.info(f"[WebSocket] Regenerate variant request. variant_group={variant_group_id}, conv_id={conversation_id}")
+                    logger.info(f"[WebSocket] Regenerate variant request. variant_group={variant_group_id}, conv_id={conversation_id}, model_id={explicit_model_id}, provider_id={explicit_provider_id_regen}")
 
                     # Activate profile if specified
                     _ensure_profile_active(tl, profile_id)
 
-                    # Determine model_id from active profile
-                    model_id = None
-                    if tl.active_profile and tl.active_profile.primary_model:
+                    # Use explicit model_id from frontend dropdown, fall back to profile default
+                    model_id = explicit_model_id
+                    if not model_id and tl.active_profile and tl.active_profile.primary_model:
                         model_id = tl.active_profile.primary_model
 
                     # Get contextual tools
@@ -1198,20 +1201,25 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
                     contextual_tools = get_contextual_tools(conversation_purpose)
 
-                    # Load full conversation history for context
+                    # Load conversation history up to (but not including) the message being regenerated.
+                    # The user_message will be appended by chat_with_context as the current turn.
                     regen_history = []
                     if conversation_id:
                         try:
                             conv_messages = tl.storage.get_messages(conversation_id)
                             for msg in conv_messages:
+                                # Stop before the user message that triggered this regeneration
+                                if msg.content == user_message and msg.role == "user":
+                                    break
                                 regen_history.append({"role": msg.role, "content": msg.content})
                         except Exception:
                             pass
+                    logger.info(f"[WebSocket] Regenerate variant history: {len(regen_history)} messages (excluding current turn)")
 
                     await websocket.send_json({"type": "typing", "status": True})
 
                     try:
-                        response = tl.chat_with_context(user_message, history=regen_history, model_id=model_id, tools=contextual_tools)
+                        response = tl.chat_with_context(user_message, history=regen_history, model_id=model_id, tools=contextual_tools, provider_id=explicit_provider_id_regen)
                         full_response = response.content
 
                         # Save the new variant to database
