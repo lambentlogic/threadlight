@@ -25,6 +25,9 @@ function threadlightApp() {
         conversationSearchDebounce: null,
         isSearchingConversations: false,
         showArchivedConversations: false,
+        conversationsHasMore: false,
+        conversationsOffset: 0,
+        loadingMoreConversations: false,
         renamingConversationId: null,
         renameConversationName: '',
         openConversationMenu: null,
@@ -626,6 +629,7 @@ function threadlightApp() {
                         message: message,
                         profile_id: this.activeProfileId,
                         conversation_id: this.currentConversationId,
+                        model_id: this.currentModelId || null,
                     };
                     // Pass thinking toggle state
                     if (this.thinkingEnabled) {
@@ -849,6 +853,7 @@ function threadlightApp() {
             try {
                 const params = new URLSearchParams();
                 params.append('limit', '50');
+                params.append('offset', '0');
                 if (this.showArchivedConversations) {
                     params.append('include_archived', 'true');
                 }
@@ -860,6 +865,8 @@ function threadlightApp() {
                 const response = await fetch(`/api/conversations?${params}`);
                 const data = await response.json();
                 this.conversations = data.conversations || [];
+                this.conversationsHasMore = data.has_more || false;
+                this.conversationsOffset = this.conversations.length;
 
                 // Only auto-load most recent conversation if not searching and none selected
                 if (!searchQuery && !this.currentConversationId && this.conversations.length > 0) {
@@ -867,6 +874,33 @@ function threadlightApp() {
                 }
             } catch (error) {
                 console.error('Failed to load conversations:', error);
+            }
+        },
+
+        async loadMoreConversations() {
+            if (this.loadingMoreConversations || !this.conversationsHasMore) return;
+            this.loadingMoreConversations = true;
+            try {
+                const params = new URLSearchParams();
+                params.append('limit', '50');
+                params.append('offset', String(this.conversationsOffset));
+                if (this.showArchivedConversations) {
+                    params.append('include_archived', 'true');
+                }
+                if (this.conversationSearch && this.conversationSearch.trim()) {
+                    params.append('search', this.conversationSearch.trim());
+                }
+
+                const response = await fetch(`/api/conversations?${params}`);
+                const data = await response.json();
+                const newConvs = data.conversations || [];
+                this.conversations = [...this.conversations, ...newConvs];
+                this.conversationsHasMore = data.has_more || false;
+                this.conversationsOffset += newConvs.length;
+            } catch (error) {
+                console.error('Failed to load more conversations:', error);
+            } finally {
+                this.loadingMoreConversations = false;
             }
         },
 
@@ -1794,6 +1828,7 @@ function threadlightApp() {
                         message: newContent,
                         profile_id: this.activeProfileId,
                         conversation_id: this.currentConversationId,
+                        model_id: this.currentModelId || null,
                         ...(this.thinkingEnabled ? { thinking: true } : {}),
                     }));
                 } else {

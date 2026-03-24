@@ -449,6 +449,15 @@
                         <div x-show="filteredConversations.length === 0" class="py-4 text-center text-threadlight-muted text-xs">
                             No conversations
                         </div>
+
+                        <!-- Load More -->
+                        <button x-show="conversationsHasMore"
+                            @click="loadMoreConversations()"
+                            :disabled="loadingMoreConversations"
+                            class="w-full py-2 text-xs text-threadlight-accent hover:text-threadlight-text transition-colors disabled:opacity-50">
+                            <span x-show="!loadingMoreConversations">Load more...</span>
+                            <span x-show="loadingMoreConversations">Loading...</span>
+                        </button>
                     </div>
 
                     <!-- Show Archived Toggle -->
@@ -4934,6 +4943,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260311-4"></script>
+    <script src="/static/js/app.js?v=20260324-2"></script>
 </body>
 </html>

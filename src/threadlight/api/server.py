@@ -930,6 +930,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     message = data.get("message", "")
                     profile_id = data.get("profile_id")
                     conversation_id = data.get("conversation_id")
+                    explicit_model_id = data.get("model_id")
                     # Optional image attachments as base64 data URLs
                     ws_images = data.get("images") or []
                     # Optional thinking mode toggle
@@ -940,9 +941,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     # Activate profile if specified
                     _ensure_profile_active(tl, profile_id)
 
-                    # Determine model_id from active profile
-                    model_id = None
-                    if tl.active_profile and tl.active_profile.primary_model:
+                    # Use explicit model_id from frontend dropdown, fall back to profile default
+                    model_id = explicit_model_id
+                    if not model_id and tl.active_profile and tl.active_profile.primary_model:
                         model_id = tl.active_profile.primary_model
 
                     logger.info(f"[WebSocket] Using model_id={model_id}, active_profile={tl.active_profile.name if tl.active_profile else None}")
@@ -4322,6 +4323,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         return {
             "conversations": [c.to_dict() for c in conversations],
             "count": len(conversations),
+            "has_more": len(conversations) >= limit,
+            "offset": offset,
             "search": search if search else None,
         }
 
