@@ -3204,7 +3204,8 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         // Ritual functions
         async loadRituals() {
             try {
-                const response = await fetch('/api/rituals');
+                const params = this.activeProfileId ? `?profile_id=${this.activeProfileId}` : '';
+                const response = await fetch('/api/rituals' + params);
                 const data = await response.json();
                 this.rituals = data.rituals || [];
                 // Update quick rituals from user-created rituals (first 3)
@@ -3233,7 +3234,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
 
                 if (!response.ok) throw new Error('Failed to create ritual');
 
-                this.showToast('Ritual created successfully');
+                this.showToast('Invocation created successfully');
                 this.newRitual = {
                     name: '',
                     valence: 'comforting',
@@ -3288,7 +3289,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     throw new Error(data.detail || 'Failed to update ritual');
                 }
 
-                this.showToast('Ritual updated successfully');
+                this.showToast('Invocation updated successfully');
                 this.editingRitual = null;
                 this.selectedRitual = null;
                 await this.loadRituals();
@@ -3300,7 +3301,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         async deleteRitual(id) {
             if (!id) return;
             const confirmed = await this.showConfirm({
-                title: 'Delete Ritual',
+                title: 'Delete Invocation',
                 message: 'Delete this ritual? This cannot be undone.',
                 confirmText: 'Delete',
             });
@@ -3316,7 +3317,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     throw new Error(data.detail || 'Failed to delete ritual');
                 }
 
-                this.showToast('Ritual deleted');
+                this.showToast('Invocation deleted');
                 this.selectedRitual = null;
                 this.editingRitual = null;
                 await this.loadRituals();
@@ -5088,6 +5089,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     this.showToast(`Switched to profile: ${data.profile.name}`);
                     await this.loadConfig();  // Reload config to reflect profile changes
                     await this.loadModels(true);  // Reload models, preserving the profile's model selection
+                    await this.loadRituals();  // Reload invocations scoped to new profile
                 } else {
                     const data = await response.json();
                     throw new Error(data.detail || 'Failed to switch profile');

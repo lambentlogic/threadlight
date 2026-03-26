@@ -1839,16 +1839,23 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     # ========================================================================
 
     @app.get("/api/rituals")
-    async def list_rituals():
-        """List available rituals (user-created only, no defaults)."""
+    async def list_rituals(profile_id: Optional[str] = None):
+        """List available rituals, scoped to a profile if specified."""
         tl = get_threadlight()
 
         from threadlight.storage.base import CapsuleFilter
 
-        # Get user-created rituals from storage
+        # Scope to active profile if none specified
+        scope_profile = profile_id
+        if not scope_profile and tl.active_profile:
+            scope_profile = tl.active_profile.id
+
+        # Get rituals for this profile (plus shared ones)
         ritual_filter = CapsuleFilter(
             type=CapsuleType.RITUAL,
             consent_confirmed=True,
+            profile_scope=scope_profile,
+            include_shared=True,
         )
         user_rituals = tl.storage.list_capsules(ritual_filter)
 

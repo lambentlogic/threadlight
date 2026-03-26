@@ -237,9 +237,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "list_rituals",
             "description": (
-                "List the rituals that exist in this relationship. Use this to discover "
-                "what rituals are available before invoking one, or to reflect on the "
-                "rituals you have co-created together. Returns ritual names, descriptions, "
+                "List the invocations that exist in this relationship. Use this to discover "
+                "what invocations are available before using one, or to reflect on the "
+                "invocations you have co-created together. Returns names, descriptions, "
                 "resonance levels, and usage history."
             ),
             "parameters": {
