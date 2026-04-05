@@ -1873,6 +1873,15 @@
                                                 <option :value="model.model_id" x-text="model.model_id"></option>
                                             </template>
                                         </select>
+                                        <button @click="refreshModelsFromProviders()"
+                                            :disabled="providerModelsLoading"
+                                            class="px-3 py-2 bg-threadlight-surface border border-threadlight-border text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated rounded-lg transition-colors disabled:opacity-40"
+                                            title="Refresh models from all providers">
+                                            <span x-show="!providerModelsLoading">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                            </span>
+                                            <span x-show="providerModelsLoading" x-cloak class="text-xs">...</span>
+                                        </button>
                                         <button @click="showAddModelModal = true"
                                             class="px-4 py-2 bg-threadlight-accent/20 text-threadlight-accent hover:bg-threadlight-accent/30 rounded-lg transition-colors">
                                             + Add Model
@@ -3530,10 +3539,40 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
 
                     <form @submit.prevent="addNewModel()" class="space-y-4">
                         <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Provider</label>
+                            <select x-model="newModelData.provider_id"
+                                @change="providerModels = []; newModelData.model_id = ''"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
+                                <option value="">Default Provider</option>
+                                <template x-for="provider in namedProviders" :key="provider.id">
+                                    <option :value="provider.id" x-text="provider.name || provider.id"></option>
+                                </template>
+                            </select>
+                            <p class="text-xs text-threadlight-muted mt-1">Select a provider, then fetch its available models</p>
+                        </div>
+                        <div>
                             <label class="block text-sm text-threadlight-muted mb-1">Model ID</label>
-                            <input type="text" x-model="newModelData.model_id"
-                                placeholder="e.g., gpt-4o, claude-opus-4.5"
-                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                            <div class="flex gap-2">
+                                <input type="text" x-model="newModelData.model_id"
+                                    placeholder="e.g., gpt-4o, claude-opus-4.5"
+                                    class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent">
+                                <button type="button" @click="fetchProviderModels()"
+                                    :disabled="!newModelData.provider_id || providerModelsLoading"
+                                    class="px-3 py-2 bg-threadlight-elevated border border-threadlight-border rounded-lg text-sm text-threadlight-text hover:bg-threadlight-border transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap">
+                                    <span x-show="!providerModelsLoading">Fetch</span>
+                                    <span x-show="providerModelsLoading" x-cloak>...</span>
+                                </button>
+                            </div>
+                            <div x-show="providerModels.length > 0" x-cloak class="mt-2 max-h-40 overflow-y-auto bg-threadlight-elevated border border-threadlight-border rounded-lg">
+                                <template x-for="model in providerModels" :key="model.id">
+                                    <button type="button"
+                                        @click="newModelData.model_id = model.id; providerModels = []"
+                                        class="w-full text-left px-3 py-1.5 text-sm hover:bg-threadlight-border transition-colors"
+                                        :class="newModelData.model_id === model.id ? 'text-threadlight-accent' : 'text-threadlight-text'">
+                                        <span x-text="model.name || model.id"></span>
+                                    </button>
+                                </template>
+                            </div>
                         </div>
                         <div>
                             <label class="block text-sm text-threadlight-muted mb-1">System Prompt</label>
@@ -3559,17 +3598,6 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                     </template>
                                 </select>
                             </div>
-                        </div>
-                        <div>
-                            <label class="block text-sm text-threadlight-muted mb-1">Provider</label>
-                            <select x-model="newModelData.provider_id"
-                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-4 py-2 text-threadlight-text focus:outline-none focus:border-threadlight-accent">
-                                <option value="">Default Provider</option>
-                                <template x-for="provider in namedProviders" :key="provider.id">
-                                    <option :value="provider.id" x-text="provider.name || provider.id"></option>
-                                </template>
-                            </select>
-                            <p class="text-xs text-threadlight-muted mt-1">Which provider to use for API calls</p>
                         </div>
                         <div class="flex items-center gap-4">
                             <label class="flex items-center gap-2 text-sm">
@@ -4943,6 +4971,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260326-1"></script>
+    <script src="/static/js/app.js?v=20260405-3"></script>
 </body>
 </html>

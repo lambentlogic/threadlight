@@ -218,6 +218,8 @@ function threadlightApp() {
             temperature: 0.7,
             provider_id: '',
         },
+        providerModels: [],
+        providerModelsLoading: false,
         configSaved: false,  // Auto-save indicator
 
         // Style editing state
@@ -3465,9 +3467,11 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         // Get a display name for a model (includes provider name if available)
         getProviderIdForModel(modelId) {
             if (!modelId) return null;
-            // Check availableModels first (has provider_id from merge)
+            // Check availableModels first — provider_id may be top-level (merged from providerModels)
+            // or nested under config (from /api/models which nests ModelConfig.to_dict())
             const am = this.availableModels.find(m => m.model_id === modelId);
             if (am && am.provider_id) return am.provider_id;
+            if (am && am.config && am.config.provider_id) return am.config.provider_id;
             // Check providerModels
             const pm = this.providerModels.find(m => m.id === modelId);
             if (pm && pm.provider_id) return pm.provider_id;
@@ -4109,6 +4113,22 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     }
                 }
 
+                // Update the active profile's primary_model so it sticks
+                const activeProfile = this.getActiveProfile();
+                if (activeProfile) {
+                    try {
+                        await fetch(`/api/profiles/${activeProfile.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ primary_model: modelId }),
+                        });
+                        activeProfile.primary_model = modelId;
+                        console.log('[switchModel] Updated profile primary_model:', activeProfile.name, modelId);
+                    } catch (err) {
+                        console.error('[switchModel] Failed to update profile primary_model:', err);
+                    }
+                }
+
                 // Reload config and models (preserve our selection)
                 await this.loadConfig();
                 await this.loadModels(true);  // Preserve currentModelId since we just set it
@@ -4224,6 +4244,73 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 return `Unused memories fade to 0 after ${months.toFixed(1)} months`;
             } else {
                 return `Unused memories fade to 0 after ${Math.round(daysToZero)} days`;
+            }
+        },
+
+        async refreshModelsFromProviders() {
+            // Fetch models from all named providers and add any missing ones
+            this.providerModelsLoading = true;
+            let added = 0;
+            try {
+                const existingIds = new Set(this.availableModels.map(m => m.model_id));
+                for (const provider of this.namedProviders) {
+                    try {
+                        const response = await fetch(`/api/providers/${provider.id}/models`);
+                        const data = await response.json();
+                        if (data.models) {
+                            for (const model of data.models) {
+                                if (!existingIds.has(model.id)) {
+                                    // Create the model config on the server
+                                    const createResp = await fetch(`/api/models/${model.id}/create`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ temperature: 0.7 }),
+                                    });
+                                    if (createResp.ok) {
+                                        await fetch(`/api/models/${model.id}/provider`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ provider_id: provider.id }),
+                                        });
+                                        existingIds.add(model.id);
+                                        added++;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`Failed to fetch models from ${provider.id}:`, e);
+                    }
+                }
+                await this.loadModels(true);
+                this.showToast(added > 0 ? `Added ${added} new model(s)` : 'No new models found');
+            } catch (error) {
+                this.showToast('Failed to refresh models: ' + error.message, 'error');
+            } finally {
+                this.providerModelsLoading = false;
+            }
+        },
+
+        async fetchProviderModels() {
+            const providerId = this.newModelData.provider_id;
+            if (!providerId) {
+                this.showToast('Select a provider first', 'error');
+                return;
+            }
+            this.providerModelsLoading = true;
+            this.providerModels = [];
+            try {
+                const response = await fetch(`/api/providers/${providerId}/models`);
+                const data = await response.json();
+                if (data.models && data.models.length > 0) {
+                    this.providerModels = data.models;
+                } else {
+                    this.showToast('No models found from this provider', 'error');
+                }
+            } catch (error) {
+                this.showToast('Failed to fetch models: ' + error.message, 'error');
+            } finally {
+                this.providerModelsLoading = false;
             }
         },
 
