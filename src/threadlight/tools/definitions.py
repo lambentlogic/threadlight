@@ -442,6 +442,7 @@ CORE_TOOLS = [
     ToolName.USE_INVOCATION,
     ToolName.CREATE_INVOCATION,
     ToolName.LIST_RITUALS,
+    ToolName.CONTEMPLATE,
 ]
 
 # Define which tools are contextual (only available in specific conversation types)

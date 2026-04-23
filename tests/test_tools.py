@@ -95,12 +95,13 @@ class TestContextualTools:
 
     def test_core_tools_defined(self):
         """Test that core tools are properly defined."""
-        assert len(CORE_TOOLS) == 5
+        assert len(CORE_TOOLS) == 6
         assert ToolName.CREATE_MEMORY in CORE_TOOLS
         assert ToolName.RECALL_MEMORY in CORE_TOOLS
         assert ToolName.USE_INVOCATION in CORE_TOOLS
         assert ToolName.CREATE_INVOCATION in CORE_TOOLS
         assert ToolName.LIST_RITUALS in CORE_TOOLS
+        assert ToolName.CONTEMPLATE in CORE_TOOLS
 
     def test_contextual_tools_defined(self):
         """Test that contextual tools mapping is properly defined."""
@@ -113,12 +114,13 @@ class TestContextualTools:
         """Test that normal conversations (None purpose) get only core tools."""
         tools = get_contextual_tools(None)
         names = [t["function"]["name"] for t in tools]
-        assert len(tools) == 5
+        assert len(tools) == 6
         assert "create_memory" in names
         assert "recall_memory" in names
         assert "use_invocation" in names
         assert "create_invocation" in names
         assert "list_rituals" in names
+        assert "contemplate" in names
         assert "review_memory_tiers" not in names
         assert "classify_memory_types" not in names
 
@@ -126,12 +128,13 @@ class TestContextualTools:
         """Test that tier_review conversations get core + tier review tool."""
         tools = get_contextual_tools("tier_review")
         names = [t["function"]["name"] for t in tools]
-        assert len(tools) == 6
+        assert len(tools) == 7
         assert "create_memory" in names
         assert "recall_memory" in names
         assert "use_invocation" in names
         assert "create_invocation" in names
         assert "list_rituals" in names
+        assert "contemplate" in names
         assert "review_memory_tiers" in names
         assert "classify_memory_types" not in names
 
@@ -139,7 +142,7 @@ class TestContextualTools:
         """Test that type_classification conversations get core + classify tool."""
         tools = get_contextual_tools("type_classification")
         names = [t["function"]["name"] for t in tools]
-        assert len(tools) == 6
+        assert len(tools) == 7
         assert "create_memory" in names
         assert "recall_memory" in names
         assert "use_invocation" in names
@@ -152,7 +155,7 @@ class TestContextualTools:
         """Test that unknown purposes fallback to core tools only."""
         tools = get_contextual_tools("unknown_purpose")
         names = [t["function"]["name"] for t in tools]
-        assert len(tools) == 5
+        assert len(tools) == 6
         assert "review_memory_tiers" not in names
         assert "classify_memory_types" not in names
 
@@ -160,7 +163,7 @@ class TestContextualTools:
         """Test that empty string purpose defaults to core tools."""
         tools = get_contextual_tools("")
         names = [t["function"]["name"] for t in tools]
-        assert len(tools) == 5
+        assert len(tools) == 6
 
 
 class TestToolResult:
