@@ -724,6 +724,7 @@ function threadlightApp() {
                     file: file,
                     preview: e.target.result,
                     name: file.name,
+                    _key: crypto.randomUUID(),
                 }];
             };
             reader.readAsDataURL(file);
@@ -4852,7 +4853,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         },
 
         addMemoryTypeField() {
-            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false, help_text: '', output_template: '' });
+            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false, help_text: '', output_template: '', _key: crypto.randomUUID() });
         },
 
         removeMemoryTypeField(index) {
@@ -4974,6 +4975,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     help_text: f.help_text || '',
                     output_template: f.output_template || '',
                     label: f.label || '',
+                    _key: crypto.randomUUID(),
                 })),
             };
             this.showMemoryTypeEditor = true;
@@ -4988,6 +4990,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 help_text: '',
                 output_template: '',
                 label: '',
+                _key: crypto.randomUUID(),
             });
         },
 
@@ -5226,9 +5229,9 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     tags_str: (profile.tags || []).join(', '),
                     philosophy: profile.philosophy || '',
                     approach_to_rituals: profile.approach_to_rituals || '',
-                    system_prompt_sections: profile.system_prompt_sections || [],
+                    system_prompt_sections: (profile.system_prompt_sections || []).map(s => ({ ...s, _key: s._key || crypto.randomUUID() })),
                     use_freeform_prompt: profile.use_freeform_prompt || false,
-                    routing_rules: profile.routing_rules || [],
+                    routing_rules: (profile.routing_rules || []).map(r => ({ ...r, _key: r._key || crypto.randomUUID() })),
                     useManualModelInput: false,  // Start with dropdown if models available
                     knowledge_summary_text: profile.knowledge_summary ? JSON.stringify(profile.knowledge_summary, null, 2) : '',
                     knowledge_summary_expanded: false,
@@ -5502,10 +5505,10 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             // Convert deprecated philosophy/approach fields to sections if present
             const sections = [];
             if (template.philosophy) {
-                sections.push({ name: 'Philosophy', content: template.philosophy });
+                sections.push({ name: 'Philosophy', content: template.philosophy, _key: crypto.randomUUID() });
             }
             if (template.approach_to_rituals) {
-                sections.push({ name: 'Invocation Style', content: template.approach_to_rituals });
+                sections.push({ name: 'Invocation Style', content: template.approach_to_rituals, _key: crypto.randomUUID() });
             }
 
             // Pre-fill the profile editor with template values
@@ -5544,7 +5547,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 s => s.name.toLowerCase() === name.toLowerCase()
             );
             if (!exists) {
-                this.newProfile.system_prompt_sections.push({ name, content });
+                this.newProfile.system_prompt_sections.push({ name, content, _key: crypto.randomUUID() });
             }
         },
 
@@ -5678,10 +5681,12 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             };
 
             if (this.editingRoutingRule !== null) {
-                // Update existing rule
+                // Update existing rule — preserve its stable key so the sort below doesn't remount it
+                rule._key = this.newProfile.routing_rules[this.editingRoutingRule]._key || crypto.randomUUID();
                 this.newProfile.routing_rules[this.editingRoutingRule] = rule;
             } else {
                 // Add new rule
+                rule._key = crypto.randomUUID();
                 this.newProfile.routing_rules.push(rule);
             }
 
@@ -5872,7 +5877,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         },
 
         showToast(message, type = 'success') {
-            const toast = { message, type };
+            const toast = { message, type, _key: crypto.randomUUID() };
             this.toasts.push(toast);
             setTimeout(() => {
                 const index = this.toasts.indexOf(toast);

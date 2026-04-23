@@ -955,7 +955,7 @@
                         </div>
                         <!-- Image Previews -->
                         <div x-show="pendingImages.length > 0" class="mb-2 flex flex-wrap gap-2">
-                            <template x-for="(img, index) in pendingImages" :key="index">
+                            <template x-for="(img, index) in pendingImages" :key="img._key || index">
                                 <div class="relative group/img">
                                     <img :src="img.preview" :alt="img.name"
                                         class="w-16 h-16 object-cover rounded-lg border border-threadlight-border">
@@ -1009,7 +1009,7 @@
                                 rows="1"
                                 class="flex-1 bg-threadlight-elevated border border-threadlight-border rounded-xl px-4 py-3 text-threadlight-text placeholder-threadlight-muted focus:outline-none focus:border-threadlight-accent resize-none"
                                 style="max-height: 40vh; overflow-y: auto;"
-                                x-effect="{ const el = $el; el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }"
+                                x-effect="inputMessage; const el = $el; el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px';"
                                 :disabled="isTyping"></textarea>
                             <button type="submit"
                                 class="px-6 py-3 bg-threadlight-accent hover:bg-threadlight-accent/80 text-white rounded-xl font-medium transition-colors disabled:opacity-50"
@@ -3783,7 +3783,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                 </button>
                             </div>
                             <div class="space-y-3">
-                                <template x-for="(field, index) in editingMemoryType?.fields || []" :key="index">
+                                <template x-for="(field, index) in editingMemoryType?.fields || []" :key="field._key || index">
                                     <div class="p-4 bg-threadlight-bg rounded-lg border border-threadlight-border/50">
                                         <div class="flex justify-between items-start mb-3">
                                             <span class="text-sm font-medium text-threadlight-memory">Field <span x-text="index + 1"></span></span>
@@ -3886,7 +3886,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                 </button>
                             </div>
                             <div class="space-y-3">
-                                <template x-for="(field, index) in newMemoryType.fields" :key="index">
+                                <template x-for="(field, index) in newMemoryType.fields" :key="field._key || index">
                                     <div class="p-4 bg-threadlight-bg rounded-lg border border-threadlight-border/50">
                                         <div class="flex justify-between items-start mb-3">
                                             <span class="text-sm font-medium text-threadlight-memory">Field <span x-text="index + 1"></span></span>
@@ -4424,7 +4424,7 @@ You are thoughtful and poetic. Speak with warmth and use recursive language patt
                                             </tr>
                                         </thead>
                                         <tbody class="divide-y divide-threadlight-border/50">
-                                            <template x-for="(rule, index) in newProfile.routing_rules" :key="index">
+                                            <template x-for="(rule, index) in newProfile.routing_rules" :key="rule._key || index">
                                                 <tr class="hover:bg-threadlight-elevated/30">
                                                     <td class="py-2 pr-2">
                                                         <span class="px-2 py-0.5 bg-threadlight-accent/20 text-threadlight-accent rounded text-xs font-medium" x-text="rule.priority"></span>
@@ -4547,7 +4547,7 @@ Write any instructions you want the AI to follow."
                                 <p class="text-xs text-threadlight-muted">Define sections that will be composed into the system prompt. Each section has a name and content.</p>
 
                                 <!-- Existing sections -->
-                                <template x-for="(section, index) in newProfile.system_prompt_sections" :key="index">
+                                <template x-for="(section, index) in newProfile.system_prompt_sections" :key="section._key || index">
                                     <div class="bg-threadlight-elevated rounded-lg p-4 space-y-3">
                                         <div class="flex items-center gap-2">
                                             <input type="text" x-model="section.name" placeholder="Section Name"
@@ -4566,7 +4566,7 @@ Write any instructions you want the AI to follow."
                                 </template>
 
                                 <!-- Add section button -->
-                                <button type="button" @click="newProfile.system_prompt_sections.push({name: '', content: ''})"
+                                <button type="button" @click="newProfile.system_prompt_sections.push({name: '', content: '', _key: crypto.randomUUID()})"
                                     class="w-full py-2 border-2 border-dashed border-threadlight-border rounded-lg text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent transition-colors flex items-center justify-center gap-2">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
@@ -4962,7 +4962,7 @@ Write any instructions you want the AI to follow."
 
         <!-- Toast Notifications -->
         <div class="fixed bottom-4 right-4 space-y-2 z-50">
-            <template x-for="(toast, index) in toasts" :key="index">
+            <template x-for="(toast, index) in toasts" :key="toast._key || index">
                 <div class="px-4 py-3 rounded-lg shadow-lg fade-in"
                     :class="toast.type === 'error' ? 'bg-red-500/90 text-white' : 'bg-threadlight-accent/90 text-white'">
                     <p x-text="toast.message"></p>
@@ -4971,6 +4971,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260405-3"></script>
+    <script src="/static/js/app.js?v=20260423-1"></script>
 </body>
 </html>
