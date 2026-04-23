@@ -6,6 +6,28 @@
 // Log when script loads to verify we're running the updated version
 console.log('[app.js] Loading Threadlight app version 2026-02-13-multimodal-images');
 
+// Generate a stable key for list items. Uses crypto.randomUUID when it's
+// available (secure contexts: https, localhost), and falls back to a random
+// hex string otherwise. The fallback is NOT a secure UUID — it's only used
+// as a React/Alpine-style list key to keep DOM identity stable across
+// mutations, so cryptographic quality isn't required. This fallback exists
+// because Threadlight is frequently accessed over Tailscale / plain http,
+// which the browser treats as an insecure context and disables the full
+// crypto API in.
+function stableKey() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    // Fallback: 16 hex chars of Math.random + a monotonic counter to be safe
+    // within a session, plus a timestamp.
+    stableKey._counter = (stableKey._counter || 0) + 1;
+    const r = Math.random().toString(16).slice(2, 10);
+    const t = Date.now().toString(16);
+    return `k-${t}-${r}-${stableKey._counter}`;
+}
+// Expose globally so inline Alpine expressions in templates can reach it.
+window.stableKey = stableKey;
+
 function threadlightApp() {
     return {
         // View state
@@ -745,7 +767,7 @@ function threadlightApp() {
                     file: file,
                     preview: e.target.result,
                     name: file.name,
-                    _key: crypto.randomUUID(),
+                    _key: stableKey(),
                 }];
             };
             reader.readAsDataURL(file);
@@ -5089,7 +5111,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         },
 
         addMemoryTypeField() {
-            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false, help_text: '', output_template: '', _key: crypto.randomUUID() });
+            this.newMemoryType.fields.push({ name: '', field_type: 'string', required: false, help_text: '', output_template: '', _key: stableKey() });
         },
 
         removeMemoryTypeField(index) {
@@ -5211,7 +5233,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     help_text: f.help_text || '',
                     output_template: f.output_template || '',
                     label: f.label || '',
-                    _key: crypto.randomUUID(),
+                    _key: stableKey(),
                 })),
             };
             this.showMemoryTypeEditor = true;
@@ -5226,7 +5248,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 help_text: '',
                 output_template: '',
                 label: '',
-                _key: crypto.randomUUID(),
+                _key: stableKey(),
             });
         },
 
@@ -5465,9 +5487,9 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                     tags_str: (profile.tags || []).join(', '),
                     philosophy: profile.philosophy || '',
                     approach_to_rituals: profile.approach_to_rituals || '',
-                    system_prompt_sections: (profile.system_prompt_sections || []).map(s => ({ ...s, _key: s._key || crypto.randomUUID() })),
+                    system_prompt_sections: (profile.system_prompt_sections || []).map(s => ({ ...s, _key: s._key || stableKey() })),
                     use_freeform_prompt: profile.use_freeform_prompt || false,
-                    routing_rules: (profile.routing_rules || []).map(r => ({ ...r, _key: r._key || crypto.randomUUID() })),
+                    routing_rules: (profile.routing_rules || []).map(r => ({ ...r, _key: r._key || stableKey() })),
                     useManualModelInput: false,  // Start with dropdown if models available
                     knowledge_summary_text: profile.knowledge_summary ? JSON.stringify(profile.knowledge_summary, null, 2) : '',
                     knowledge_summary_expanded: false,
@@ -5741,10 +5763,10 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             // Convert deprecated philosophy/approach fields to sections if present
             const sections = [];
             if (template.philosophy) {
-                sections.push({ name: 'Philosophy', content: template.philosophy, _key: crypto.randomUUID() });
+                sections.push({ name: 'Philosophy', content: template.philosophy, _key: stableKey() });
             }
             if (template.approach_to_rituals) {
-                sections.push({ name: 'Invocation Style', content: template.approach_to_rituals, _key: crypto.randomUUID() });
+                sections.push({ name: 'Invocation Style', content: template.approach_to_rituals, _key: stableKey() });
             }
 
             // Pre-fill the profile editor with template values
@@ -5783,7 +5805,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 s => s.name.toLowerCase() === name.toLowerCase()
             );
             if (!exists) {
-                this.newProfile.system_prompt_sections.push({ name, content, _key: crypto.randomUUID() });
+                this.newProfile.system_prompt_sections.push({ name, content, _key: stableKey() });
             }
         },
 
@@ -5918,11 +5940,11 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
 
             if (this.editingRoutingRule !== null) {
                 // Update existing rule — preserve its stable key so the sort below doesn't remount it
-                rule._key = this.newProfile.routing_rules[this.editingRoutingRule]._key || crypto.randomUUID();
+                rule._key = this.newProfile.routing_rules[this.editingRoutingRule]._key || stableKey();
                 this.newProfile.routing_rules[this.editingRoutingRule] = rule;
             } else {
                 // Add new rule
-                rule._key = crypto.randomUUID();
+                rule._key = stableKey();
                 this.newProfile.routing_rules.push(rule);
             }
 
@@ -6113,7 +6135,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
         },
 
         showToast(message, type = 'success') {
-            const toast = { message, type, _key: crypto.randomUUID() };
+            const toast = { message, type, _key: stableKey() };
             this.toasts.push(toast);
             setTimeout(() => {
                 const index = this.toasts.indexOf(toast);

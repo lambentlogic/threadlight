@@ -4836,7 +4836,7 @@ Write any instructions you want the AI to follow."
                                 </template>
 
                                 <!-- Add section button -->
-                                <button type="button" @click="newProfile.system_prompt_sections.push({name: '', content: '', _key: crypto.randomUUID()})"
+                                <button type="button" @click="newProfile.system_prompt_sections.push({name: '', content: '', _key: stableKey()})"
                                     class="w-full py-2 border-2 border-dashed border-threadlight-border rounded-lg text-threadlight-muted hover:text-threadlight-text hover:border-threadlight-accent transition-colors flex items-center justify-center gap-2">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
@@ -5241,6 +5241,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260423-3"></script>
+    <script src="/static/js/app.js?v=20260423-4"></script>
 </body>
 </html>
