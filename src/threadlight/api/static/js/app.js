@@ -143,6 +143,26 @@ function threadlightApp() {
             response: '',
         },
 
+        // Journal / reflection state
+        reflections: [],
+        reflectionsLoading: false,
+        reflectionDetail: {
+            visible: false,
+            data: null,
+            sources: [],
+            editing: false,
+            editBody: '',
+            editThemes: '',
+        },
+        reflectModal: {
+            visible: false,
+            policy: 'juxtaposition',
+            entity: '',
+            themesStr: '',
+            reason: '',
+            submitting: false,
+        },
+
         // Config state
         config: {
             provider: { model: '', api_base: '' },
@@ -3215,6 +3235,211 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 this.quickRituals = this.rituals.slice(0, 3).map(r => r.name);
             } catch (error) {
                 console.error('Failed to load rituals:', error);
+            }
+        },
+
+        // Journal / reflection functions
+        async loadReflections() {
+            this.reflectionsLoading = true;
+            try {
+                const params = this.activeProfileId ? `?profile_id=${this.activeProfileId}` : '';
+                const response = await fetch('/api/reflections' + params);
+                const data = await response.json();
+                this.reflections = data.reflections || [];
+            } catch (error) {
+                console.error('Failed to load reflections:', error);
+                this.showToast('Failed to load journal', 'error');
+            } finally {
+                this.reflectionsLoading = false;
+            }
+        },
+
+        openReflectModal() {
+            this.reflectModal.visible = true;
+            this.reflectModal.submitting = false;
+            // Leave prior values in place so repeat-user doesn't re-type themes/entity
+        },
+
+        closeReflectModal() {
+            this.reflectModal.visible = false;
+        },
+
+        async submitReflect() {
+            if (this.reflectModal.submitting) return;
+            const policy = this.reflectModal.policy;
+            const body = { policy: policy };
+            if (this.activeProfileId) body.profile_id = this.activeProfileId;
+            if (this.reflectModal.reason && this.reflectModal.reason.trim()) {
+                body.reason = this.reflectModal.reason.trim();
+            }
+            if (policy === 'entity_focus') {
+                const entity = (this.reflectModal.entity || '').trim();
+                if (!entity) { this.showToast('Entity required for entity-focus', 'error'); return; }
+                body.entity = entity;
+            }
+            if (policy === 'theme_guided') {
+                const themes = (this.reflectModal.themesStr || '').split(',').map(t => t.trim()).filter(Boolean);
+                if (!themes.length) { this.showToast('At least one theme required', 'error'); return; }
+                body.themes = themes;
+            }
+
+            this.reflectModal.submitting = true;
+            try {
+                const response = await fetch('/api/reflections/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.detail || 'Reflection failed');
+                }
+                const data = await response.json();
+                if (data.reflection) {
+                    this.closeReflectModal();
+                    await this.loadReflections();
+                    this.openReflectionDetail(data.reflection);
+                } else {
+                    this.showToast(data.note || 'No reflection was produced', 'info');
+                }
+            } catch (error) {
+                this.showToast('Reflection failed: ' + error.message, 'error');
+            } finally {
+                this.reflectModal.submitting = false;
+            }
+        },
+
+        async openReflectionDetail(reflection) {
+            this.reflectionDetail.visible = true;
+            this.reflectionDetail.data = reflection;
+            this.reflectionDetail.sources = [];
+            this.reflectionDetail.editing = false;
+            // Best-effort load of source memory previews
+            const ids = reflection.source_capsule_ids || [];
+            if (ids.length === 0) return;
+            try {
+                const results = await Promise.all(ids.map(id =>
+                    fetch(`/api/memories/${id}`).then(r => r.ok ? r.json() : null).catch(() => null)
+                ));
+                this.reflectionDetail.sources = results
+                    .filter(Boolean)
+                    .map(m => ({
+                        id: m.id,
+                        type: m.type,
+                        text: m.text || m.content?.text || m.content?.moment || m.content?.seed || m.content?.summary || '',
+                    }));
+            } catch (error) {
+                console.error('Failed to load source memories:', error);
+            }
+        },
+
+        closeReflectionDetail() {
+            this.reflectionDetail.visible = false;
+            this.reflectionDetail.data = null;
+            this.reflectionDetail.sources = [];
+            this.reflectionDetail.editing = false;
+        },
+
+        async openReflectionById(reflectionId) {
+            // Called from chat when the model invoked the contemplate tool —
+            // fetch the full reflection and open the detail modal over whatever view is active.
+            try {
+                const response = await fetch(`/api/reflections/${reflectionId}`);
+                if (!response.ok) throw new Error('Reflection not found');
+                const r = await response.json();
+                await this.openReflectionDetail(r);
+            } catch (error) {
+                this.showToast('Could not open reflection: ' + error.message, 'error');
+            }
+        },
+
+        async openMemoryFromReflection(source) {
+            // Load the memory's full detail and navigate to the memories view
+            try {
+                const response = await fetch(`/api/memories/${source.id}`);
+                if (!response.ok) throw new Error('Memory not found');
+                const full = await response.json();
+                this.selectedMemory = full;
+                this.currentView = 'memories';
+                this.closeReflectionDetail();
+            } catch (error) {
+                this.showToast('Could not open memory: ' + error.message, 'error');
+            }
+        },
+
+        startEditReflection() {
+            const d = this.reflectionDetail.data;
+            this.reflectionDetail.editBody = d?.reflection || d?.text || '';
+            this.reflectionDetail.editThemes = (d?.themes || []).join(', ');
+            this.reflectionDetail.editing = true;
+        },
+
+        cancelEditReflection() {
+            this.reflectionDetail.editing = false;
+        },
+
+        async saveEditReflection() {
+            const d = this.reflectionDetail.data;
+            if (!d) return;
+            const themes = this.reflectionDetail.editThemes.split(',').map(t => t.trim()).filter(Boolean);
+            try {
+                const response = await fetch(`/api/reflections/${d.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        reflection: this.reflectionDetail.editBody,
+                        themes: themes,
+                    }),
+                });
+                if (!response.ok) throw new Error('Save failed');
+                const updated = await response.json();
+                this.reflectionDetail.data = updated;
+                this.reflectionDetail.editing = false;
+                await this.loadReflections();
+                this.showToast('Reflection saved');
+            } catch (error) {
+                this.showToast('Failed to save: ' + error.message, 'error');
+            }
+        },
+
+        async toggleReflectionTraining() {
+            const d = this.reflectionDetail.data;
+            if (!d) return;
+            const next = !d.mark_for_training;
+            try {
+                const response = await fetch(`/api/reflections/${d.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mark_for_training: next }),
+                });
+                if (!response.ok) throw new Error('Toggle failed');
+                const updated = await response.json();
+                this.reflectionDetail.data = updated;
+                // Update list view too
+                const idx = this.reflections.findIndex(r => r.id === updated.id);
+                if (idx >= 0) this.reflections[idx] = updated;
+            } catch (error) {
+                this.showToast('Failed to update training flag: ' + error.message, 'error');
+            }
+        },
+
+        async deleteReflection() {
+            const d = this.reflectionDetail.data;
+            if (!d) return;
+            const ok = await this.showConfirm({
+                title: 'Delete reflection?',
+                message: 'This removes the journal entry. Source memories are not affected.',
+                confirmText: 'Delete',
+            });
+            if (!ok) return;
+            try {
+                const response = await fetch(`/api/reflections/${d.id}`, { method: 'DELETE' });
+                if (!response.ok) throw new Error('Delete failed');
+                this.closeReflectionDetail();
+                await this.loadReflections();
+                this.showToast('Reflection deleted');
+            } catch (error) {
+                this.showToast('Failed to delete: ' + error.message, 'error');
             }
         },
 

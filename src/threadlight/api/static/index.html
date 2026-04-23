@@ -286,6 +286,17 @@
                             <span x-show="currentView !== 'chat'">Invocations</span>
                         </button>
 
+                        <button @click="currentView = 'reflections'; loadReflections()"
+                            :class="currentView === 'reflections' ? 'bg-threadlight-elevated text-threadlight-memory' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
+                            :title="currentView === 'chat' ? 'Journal' : ''"
+                            class="sidebar-nav-item px-4 py-2 rounded-lg text-left flex items-center gap-3 transition-colors"
+                            :class="currentView === 'chat' ? 'px-3 py-1.5' : 'w-full'">
+                            <svg class="w-5 h-5 flex-shrink-0" :class="currentView === 'chat' ? 'w-4 h-4' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                            </svg>
+                            <span x-show="currentView !== 'chat'">Journal</span>
+                        </button>
+
                         <button @click="currentView = 'settings'"
                             :class="currentView === 'settings' ? 'bg-threadlight-elevated text-threadlight-text' : 'text-threadlight-muted hover:text-threadlight-text hover:bg-threadlight-elevated/50'"
                             :title="currentView === 'chat' ? 'Settings' : ''"
@@ -829,10 +840,15 @@
                                                         <p class="text-xs text-threadlight-accent mb-2">Tools used:</p>
                                                         <div class="space-y-2">
                                                             <template x-for="(tool, toolIdx) in msg.tool_results" :key="toolIdx">
-                                                                <div class="px-3 py-2 text-xs bg-threadlight-accent/10 text-threadlight-text rounded border border-threadlight-accent/20">
+                                                                <div class="px-3 py-2 text-xs text-threadlight-text rounded border"
+                                                                    :class="tool.tool_name === 'contemplate'
+                                                                        ? 'bg-threadlight-memory/10 border-threadlight-memory/30'
+                                                                        : 'bg-threadlight-accent/10 border-threadlight-accent/20'">
                                                                     <div class="flex items-center justify-between">
                                                                         <div>
-                                                                            <span class="font-medium text-threadlight-accent" x-text="tool.tool_name"></span>
+                                                                            <span class="font-medium"
+                                                                                :class="tool.tool_name === 'contemplate' ? 'text-threadlight-memory' : 'text-threadlight-accent'"
+                                                                                x-text="tool.tool_name === 'contemplate' ? 'Reflected' : tool.tool_name"></span>
                                                                             <span x-show="tool.success && !tool.requires_consent" class="ml-2 text-green-400">✓</span>
                                                                             <span x-show="!tool.success" class="ml-2 text-red-400">✗</span>
                                                                             <span x-show="tool.requires_consent && !tool.proposal_id" class="ml-2 text-yellow-400">(pending consent)</span>
@@ -848,6 +864,29 @@
                                                                             </button>
                                                                         </div>
                                                                     </div>
+
+                                                                    <!-- Contemplate-specific display: subtle marker + journal link -->
+                                                                    <template x-if="tool.tool_name === 'contemplate' && tool.success && tool.result && tool.result.reflection_id">
+                                                                        <div class="mt-2 space-y-1.5">
+                                                                            <div class="flex items-center gap-1.5 flex-wrap">
+                                                                                <span class="px-1.5 py-0.5 text-[10px] bg-threadlight-memory/20 text-threadlight-memory rounded" x-text="tool.result.policy"></span>
+                                                                                <template x-for="t in (tool.result.themes || [])" :key="t">
+                                                                                    <span class="px-1.5 py-0.5 text-[10px] bg-threadlight-surface text-threadlight-muted rounded" x-text="t"></span>
+                                                                                </template>
+                                                                                <span class="text-[10px] text-threadlight-muted/70" x-text="'· ' + (tool.result.source_capsule_ids || []).length + ' memories'"></span>
+                                                                            </div>
+                                                                            <p x-show="tool.result.reason" class="text-[11px] text-threadlight-muted italic" x-text="tool.result.reason ? '(Reached because: ' + tool.result.reason + ')' : ''"></p>
+                                                                            <button @click="openReflectionById(tool.result.reflection_id)"
+                                                                                class="text-[11px] text-threadlight-memory hover:text-threadlight-memory/80 underline transition-colors">
+                                                                                Open in journal →
+                                                                            </button>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <!-- Contemplate with no-match result -->
+                                                                    <template x-if="tool.tool_name === 'contemplate' && tool.success && tool.result && !tool.result.reflection_id">
+                                                                        <p class="mt-2 text-[11px] text-threadlight-muted italic" x-text="tool.result.note || 'No matching memories were found.'"></p>
+                                                                    </template>
 
                                                                     <!-- Show proposal details if this is a memory proposal -->
                                                                     <template x-if="tool.requires_consent && tool.result">
@@ -1297,6 +1336,217 @@
                     </div>
                 </div>
             </template>
+
+            <!-- Journal View -->
+            <template x-if="currentView === 'reflections'">
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <header class="px-6 py-4 border-b border-threadlight-border flex items-center justify-between">
+                        <div>
+                            <h2 class="text-lg font-semibold">Journal</h2>
+                            <p class="text-sm text-threadlight-muted">Reflections the companion has written in solitude, linked back to the memories that seeded them.</p>
+                        </div>
+                        <button @click="openReflectModal()"
+                            class="px-4 py-2 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded-lg text-sm transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                            Reflect
+                        </button>
+                    </header>
+
+                    <div class="flex-1 overflow-y-auto p-6 scrollbar-thin">
+                        <div x-show="reflectionsLoading" class="text-center py-12 text-threadlight-muted">Loading journal...</div>
+
+                        <div x-show="!reflectionsLoading && reflections.length === 0" class="text-center py-12">
+                            <svg class="w-16 h-16 mx-auto mb-4 text-threadlight-memory/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                            </svg>
+                            <h3 class="text-lg font-medium text-threadlight-muted mb-2">No reflections yet</h3>
+                            <p class="text-sm text-threadlight-muted/70 max-w-md mx-auto mb-4">
+                                Reflections accumulate here when the companion reaches for a solitude loop — either at your invitation or on its own.
+                            </p>
+                            <button @click="openReflectModal()"
+                                class="px-4 py-2 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded-lg text-sm transition-colors">
+                                Invite a reflection
+                            </button>
+                        </div>
+
+                        <div x-show="!reflectionsLoading && reflections.length > 0" class="space-y-3 max-w-4xl mx-auto">
+                            <template x-for="r in reflections" :key="r.id">
+                                <div @click="openReflectionDetail(r)" class="bg-threadlight-elevated rounded-xl p-5 hover:bg-threadlight-elevated/80 transition-colors cursor-pointer border border-transparent hover:border-threadlight-memory/40">
+                                    <div class="flex items-start justify-between gap-3 mb-2">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <span class="px-2 py-0.5 text-xs bg-threadlight-memory/20 text-threadlight-memory rounded" x-text="r.policy || 'reflection'"></span>
+                                            <template x-for="t in (r.themes || [])" :key="t">
+                                                <span class="px-2 py-0.5 text-xs bg-threadlight-surface text-threadlight-muted rounded" x-text="t"></span>
+                                            </template>
+                                            <span x-show="r.mark_for_training" class="px-2 py-0.5 text-xs bg-threadlight-warm/20 text-threadlight-warm rounded" title="Opted in for future SFT export">training</span>
+                                        </div>
+                                        <span class="text-xs text-threadlight-muted whitespace-nowrap" x-text="formatDate(r.created_at)"></span>
+                                    </div>
+                                    <p x-show="r.reason" class="text-xs text-threadlight-muted/80 italic mb-2" x-text="r.reason ? '(Reached because: ' + r.reason + ')' : ''"></p>
+                                    <p class="text-sm text-threadlight-text leading-relaxed line-clamp-4 whitespace-pre-wrap" x-text="r.reflection || r.text || ''"></p>
+                                    <div class="mt-3 flex items-center justify-between text-xs text-threadlight-muted">
+                                        <span x-text="(r.source_capsule_ids || []).length + ' source memories'"></span>
+                                        <span class="text-threadlight-muted/60">Click to open</span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Reflection Detail Modal -->
+            <div x-show="reflectionDetail.visible" x-cloak @click.self="closeReflectionDetail()" class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-50 p-4">
+                <div class="bg-threadlight-surface rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto scrollbar-thin">
+                    <div class="sticky top-0 bg-threadlight-surface border-b border-threadlight-border px-6 py-4 flex items-center justify-between">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h3 class="text-lg font-semibold">Reflection</h3>
+                            <span class="px-2 py-0.5 text-xs bg-threadlight-memory/20 text-threadlight-memory rounded" x-text="reflectionDetail.data?.policy || ''"></span>
+                        </div>
+                        <button @click="closeReflectionDetail()" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="p-6 space-y-5" x-show="reflectionDetail.data">
+                        <div x-show="reflectionDetail.data?.reason">
+                            <label class="block text-xs text-threadlight-muted mb-1">Why the reach happened</label>
+                            <p class="text-sm text-threadlight-text italic" x-text="reflectionDetail.data?.reason"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-threadlight-muted mb-1">Reflection</label>
+                            <template x-if="!reflectionDetail.editing">
+                                <p class="text-sm text-threadlight-text leading-relaxed whitespace-pre-wrap" x-text="reflectionDetail.data?.reflection || reflectionDetail.data?.text || ''"></p>
+                            </template>
+                            <template x-if="reflectionDetail.editing">
+                                <textarea x-model="reflectionDetail.editBody" rows="10"
+                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-2 text-sm text-threadlight-text focus:outline-none focus:border-threadlight-memory resize-y"></textarea>
+                            </template>
+                        </div>
+
+                        <div x-show="(reflectionDetail.data?.themes || []).length > 0 || reflectionDetail.editing">
+                            <label class="block text-xs text-threadlight-muted mb-1">Themes</label>
+                            <template x-if="!reflectionDetail.editing">
+                                <div class="flex flex-wrap gap-2">
+                                    <template x-for="t in (reflectionDetail.data?.themes || [])" :key="t">
+                                        <span class="px-2 py-0.5 text-xs bg-threadlight-surface text-threadlight-muted rounded border border-threadlight-border" x-text="t"></span>
+                                    </template>
+                                </div>
+                            </template>
+                            <template x-if="reflectionDetail.editing">
+                                <input type="text" x-model="reflectionDetail.editThemes" placeholder="growth, patience, return"
+                                    class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-2 text-sm text-threadlight-text focus:outline-none focus:border-threadlight-memory">
+                            </template>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-threadlight-muted mb-2">Source memories <span class="text-threadlight-muted/60" x-text="'(' + (reflectionDetail.data?.source_capsule_ids || []).length + ')'"></span></label>
+                            <div class="space-y-1.5">
+                                <template x-for="src in reflectionDetail.sources" :key="src.id">
+                                    <button @click="openMemoryFromReflection(src)" class="w-full text-left bg-threadlight-elevated hover:bg-threadlight-elevated/80 rounded-lg px-3 py-2 text-sm transition-colors">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-xs px-1.5 py-0.5 bg-threadlight-surface rounded text-threadlight-muted" x-text="src.type || 'memory'"></span>
+                                            <span class="text-xs text-threadlight-muted/60 truncate" x-text="(src.text || '').slice(0, 80) + ((src.text || '').length > 80 ? '...' : '')"></span>
+                                        </div>
+                                    </button>
+                                </template>
+                                <div x-show="reflectionDetail.sources.length === 0 && (reflectionDetail.data?.source_capsule_ids || []).length > 0" class="text-xs text-threadlight-muted italic">
+                                    Some source memories could not be loaded (they may have been deleted).
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-3 pt-3 border-t border-threadlight-border">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <button type="button" @click="toggleReflectionTraining()"
+                                    :class="reflectionDetail.data?.mark_for_training ? 'bg-threadlight-warm' : 'bg-gray-600'"
+                                    class="relative w-12 h-6 rounded-full transition-colors">
+                                    <span class="absolute left-0 top-1 w-4 h-4 bg-white rounded-full transition-transform"
+                                        :class="reflectionDetail.data?.mark_for_training ? 'translate-x-6' : 'translate-x-1'"></span>
+                                </button>
+                                <span class="text-sm text-threadlight-text">Mark for training</span>
+                                <span class="text-xs text-threadlight-muted/70">(opt-in for future SFT export)</span>
+                            </label>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-3 border-t border-threadlight-border">
+                            <button @click="deleteReflection()" class="px-3 py-1.5 text-sm text-red-400 hover:text-red-300 transition-colors">
+                                Delete
+                            </button>
+                            <div class="flex items-center gap-2">
+                                <template x-if="!reflectionDetail.editing">
+                                    <button @click="startEditReflection()"
+                                        class="px-4 py-1.5 text-sm bg-threadlight-elevated hover:bg-threadlight-elevated/80 rounded-lg transition-colors">
+                                        Edit
+                                    </button>
+                                </template>
+                                <template x-if="reflectionDetail.editing">
+                                    <div class="flex items-center gap-2">
+                                        <button @click="cancelEditReflection()"
+                                            class="px-4 py-1.5 text-sm text-threadlight-muted hover:text-threadlight-text transition-colors">
+                                            Cancel
+                                        </button>
+                                        <button @click="saveEditReflection()"
+                                            class="px-4 py-1.5 text-sm bg-threadlight-memory hover:bg-threadlight-memory/80 text-white rounded-lg transition-colors">
+                                            Save
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Reflect Trigger Modal -->
+            <div x-show="reflectModal.visible" x-cloak @click.self="closeReflectModal()" class="fixed inset-0 bg-black/60 modal-backdrop flex items-center justify-center z-50 p-4">
+                <div class="bg-threadlight-surface rounded-xl max-w-lg w-full">
+                    <div class="px-6 py-4 border-b border-threadlight-border flex items-center justify-between">
+                        <h3 class="text-lg font-semibold">Invite a reflection</h3>
+                        <button @click="closeReflectModal()" class="text-threadlight-muted hover:text-threadlight-text">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-2">Selection policy</label>
+                            <select x-model="reflectModal.policy"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-2 text-sm text-threadlight-text focus:outline-none focus:border-threadlight-memory">
+                                <option value="juxtaposition">Juxtaposition — pair a recent memory with an older one</option>
+                                <option value="entity_focus">Entity focus — gather memories about one person/subject</option>
+                                <option value="theme_guided">Theme-guided — gather memories touching specific themes</option>
+                            </select>
+                        </div>
+                        <div x-show="reflectModal.policy === 'entity_focus'">
+                            <label class="block text-sm text-threadlight-muted mb-1">Entity</label>
+                            <input type="text" x-model="reflectModal.entity" placeholder="e.g., Jamie, the project, Tuesday meetings"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-2 text-sm text-threadlight-text focus:outline-none focus:border-threadlight-memory">
+                        </div>
+                        <div x-show="reflectModal.policy === 'theme_guided'">
+                            <label class="block text-sm text-threadlight-muted mb-1">Themes (comma-separated)</label>
+                            <input type="text" x-model="reflectModal.themesStr" placeholder="patience, returning, the shape of waiting"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-2 text-sm text-threadlight-text focus:outline-none focus:border-threadlight-memory">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-threadlight-muted mb-1">Reason <span class="text-threadlight-muted/60">(optional)</span></label>
+                            <textarea x-model="reflectModal.reason" placeholder="Why this reflection, now?" rows="2"
+                                class="w-full bg-threadlight-elevated border border-threadlight-border rounded-lg px-3 py-2 text-sm text-threadlight-text focus:outline-none focus:border-threadlight-memory resize-none"></textarea>
+                        </div>
+                        <div class="flex items-center justify-end gap-2 pt-2">
+                            <button @click="closeReflectModal()"
+                                class="px-4 py-2 text-sm text-threadlight-muted hover:text-threadlight-text transition-colors">
+                                Cancel
+                            </button>
+                            <button @click="submitReflect()" :disabled="reflectModal.submitting"
+                                class="px-4 py-2 text-sm bg-threadlight-memory hover:bg-threadlight-memory/80 disabled:opacity-50 text-white rounded-lg transition-colors flex items-center gap-2">
+                                <span x-show="!reflectModal.submitting">Reflect</span>
+                                <span x-show="reflectModal.submitting">Sitting with it...</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Settings View -->
             <template x-if="currentView === 'settings'">
@@ -4971,6 +5221,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260423-1"></script>
+    <script src="/static/js/app.js?v=20260423-2"></script>
 </body>
 </html>
