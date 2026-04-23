@@ -1361,7 +1361,7 @@
                             </svg>
                             <h3 class="text-lg font-medium text-threadlight-muted mb-2">No reflections yet</h3>
                             <p class="text-sm text-threadlight-muted/70 max-w-md mx-auto mb-4">
-                                Reflections accumulate here when the companion reaches for a solitude loop — either at your invitation or on its own.
+                                Reflections accumulate here when the companion reaches for a solitude loop — either at your invitation or on their own.
                             </p>
                             <button @click="openReflectModal()"
                                 class="px-4 py-2 bg-threadlight-memory/20 text-threadlight-memory hover:bg-threadlight-memory/30 rounded-lg text-sm transition-colors">
@@ -1375,6 +1375,7 @@
                                     <div class="flex items-start justify-between gap-3 mb-2">
                                         <div class="flex items-center gap-2 flex-wrap">
                                             <span class="px-2 py-0.5 text-xs bg-threadlight-memory/20 text-threadlight-memory rounded" x-text="r.policy || 'reflection'"></span>
+                                            <span x-show="reflectionProfileName(r)" class="text-xs text-threadlight-muted">by <span class="text-threadlight-text" x-text="reflectionProfileName(r)"></span></span>
                                             <template x-for="t in (r.themes || [])" :key="t">
                                                 <span class="px-2 py-0.5 text-xs bg-threadlight-surface text-threadlight-muted rounded" x-text="t"></span>
                                             </template>
@@ -1402,6 +1403,10 @@
                         <div class="flex items-center gap-2 flex-wrap">
                             <h3 class="text-lg font-semibold">Reflection</h3>
                             <span class="px-2 py-0.5 text-xs bg-threadlight-memory/20 text-threadlight-memory rounded" x-text="reflectionDetail.data?.policy || ''"></span>
+                            <span x-show="reflectionProfileName(reflectionDetail.data)" class="text-xs text-threadlight-muted">
+                                by <span class="text-threadlight-text" x-text="reflectionProfileName(reflectionDetail.data)"></span>
+                            </span>
+                            <span class="text-xs text-threadlight-muted/70" x-text="formatDate(reflectionDetail.data?.created_at)"></span>
                         </div>
                         <button @click="closeReflectionDetail()" class="text-threadlight-muted hover:text-threadlight-text">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -1444,12 +1449,27 @@
                             <label class="block text-xs text-threadlight-muted mb-2">Source memories <span class="text-threadlight-muted/60" x-text="'(' + (reflectionDetail.data?.source_capsule_ids || []).length + ')'"></span></label>
                             <div class="space-y-1.5">
                                 <template x-for="src in reflectionDetail.sources" :key="src.id">
-                                    <button @click="openMemoryFromReflection(src)" class="w-full text-left bg-threadlight-elevated hover:bg-threadlight-elevated/80 rounded-lg px-3 py-2 text-sm transition-colors">
-                                        <div class="flex items-center justify-between gap-2">
-                                            <span class="text-xs px-1.5 py-0.5 bg-threadlight-surface rounded text-threadlight-muted" x-text="src.type || 'memory'"></span>
-                                            <span class="text-xs text-threadlight-muted/60 truncate" x-text="(src.text || '').slice(0, 80) + ((src.text || '').length > 80 ? '...' : '')"></span>
+                                    <div class="bg-threadlight-elevated rounded-lg transition-colors">
+                                        <button @click="toggleReflectionSource(src.id)" class="w-full text-left px-3 py-2 text-sm hover:bg-threadlight-elevated/80 rounded-lg transition-colors">
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs px-1.5 py-0.5 bg-threadlight-surface rounded text-threadlight-muted flex-shrink-0" x-text="src.type || 'memory'"></span>
+                                                <span class="text-xs text-threadlight-muted/70 truncate flex-1" x-text="(src.text || '').slice(0, 90) + ((src.text || '').length > 90 ? '...' : '')"></span>
+                                                <svg class="w-3.5 h-3.5 text-threadlight-muted/50 flex-shrink-0 transition-transform"
+                                                    :class="reflectionDetail.expandedSourceId === src.id ? 'rotate-90' : ''"
+                                                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                                </svg>
+                                            </div>
+                                        </button>
+                                        <div x-show="reflectionDetail.expandedSourceId === src.id" x-cloak class="px-3 pb-3 pt-1 border-t border-threadlight-border/40">
+                                            <p class="text-sm text-threadlight-text whitespace-pre-wrap leading-relaxed" x-text="src.text || '(no body)'"></p>
+                                            <div class="mt-2 flex items-center justify-end">
+                                                <button @click="openMemoryFromReflection(src)" class="text-xs text-threadlight-memory hover:text-threadlight-memory/80 underline transition-colors">
+                                                    Open in Memories view →
+                                                </button>
+                                            </div>
                                         </div>
-                                    </button>
+                                    </div>
                                 </template>
                                 <div x-show="reflectionDetail.sources.length === 0 && (reflectionDetail.data?.source_capsule_ids || []).length > 0" class="text-xs text-threadlight-muted italic">
                                     Some source memories could not be loaded (they may have been deleted).
@@ -5221,6 +5241,6 @@ Write any instructions you want the AI to follow."
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=20260423-2"></script>
+    <script src="/static/js/app.js?v=20260423-3"></script>
 </body>
 </html>

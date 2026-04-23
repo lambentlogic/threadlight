@@ -153,6 +153,7 @@ function threadlightApp() {
             editing: false,
             editBody: '',
             editThemes: '',
+            expandedSourceId: null,
         },
         reflectModal: {
             visible: false,
@@ -3314,7 +3315,9 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             this.reflectionDetail.data = reflection;
             this.reflectionDetail.sources = [];
             this.reflectionDetail.editing = false;
-            // Best-effort load of source memory previews
+            this.reflectionDetail.expandedSourceId = null;
+            // Load full source memories so inline-expand has the body available
+            // without a second fetch per click.
             const ids = reflection.source_capsule_ids || [];
             if (ids.length === 0) return;
             try {
@@ -3327,6 +3330,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                         id: m.id,
                         type: m.type,
                         text: m.text || m.content?.text || m.content?.moment || m.content?.seed || m.content?.summary || '',
+                        _full: m,
                     }));
             } catch (error) {
                 console.error('Failed to load source memories:', error);
@@ -3338,6 +3342,18 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             this.reflectionDetail.data = null;
             this.reflectionDetail.sources = [];
             this.reflectionDetail.editing = false;
+            this.reflectionDetail.expandedSourceId = null;
+        },
+
+        toggleReflectionSource(sourceId) {
+            this.reflectionDetail.expandedSourceId =
+                this.reflectionDetail.expandedSourceId === sourceId ? null : sourceId;
+        },
+
+        reflectionProfileName(reflection) {
+            if (!reflection || !reflection.profile_scope) return '';
+            const p = (this.profiles || []).find(pp => pp.id === reflection.profile_scope);
+            return p ? p.name : '';
         },
 
         async openReflectionById(reflectionId) {
@@ -3353,18 +3369,13 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
             }
         },
 
-        async openMemoryFromReflection(source) {
-            // Load the memory's full detail and navigate to the memories view
-            try {
-                const response = await fetch(`/api/memories/${source.id}`);
-                if (!response.ok) throw new Error('Memory not found');
-                const full = await response.json();
-                this.selectedMemory = full;
-                this.currentView = 'memories';
-                this.closeReflectionDetail();
-            } catch (error) {
-                this.showToast('Could not open memory: ' + error.message, 'error');
-            }
+        openMemoryFromReflection(source) {
+            // Explicit deeper navigation into the memories view (from the
+            // expanded source row's "Open in Memories view" button). This IS
+            // a context shift; the reflection modal closes.
+            this.selectedMemory = source._full || source;
+            this.currentView = 'memories';
+            this.closeReflectionDetail();
         },
 
         startEditReflection() {
