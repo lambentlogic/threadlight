@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "threadlight"
-version = "0.1.12-alpha"
+version = "0.1.13-alpha"
 description = "A presence-centered memory framework for AI models"
 readme = "README.md"
 license = "MIT"
