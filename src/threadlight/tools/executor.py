@@ -124,6 +124,8 @@ class ToolExecutor:
                 return self._execute_review_memory_tiers(arguments)
             elif tool_name == ToolName.CLASSIFY_MEMORY_TYPES.value:
                 return self._execute_classify_memory_types(arguments)
+            elif tool_name == ToolName.CONTEMPLATE.value:
+                return self._execute_contemplate(arguments)
             else:
                 return ToolResult(
                     tool_name=tool_name,
@@ -942,6 +944,106 @@ class ToolExecutor:
             success=True,
             result=result,
             display_message=display_msg,
+        )
+
+    def _execute_contemplate(self, arguments: dict[str, Any]) -> ToolResult:
+        """Execute contemplate tool call.
+
+        The model can reach for a solitude loop to reflect on a combination
+        of memories. Returns the reflection text plus the source memory IDs
+        so the model can optionally reference them in the continuing
+        conversation. The full reflection is saved as a journal entry
+        regardless of how the chat response uses it.
+        """
+        policy = arguments.get("policy")
+        entity = arguments.get("entity")
+        themes = arguments.get("themes")
+        reason = arguments.get("reason", "")
+
+        if policy not in ("entity_focus", "theme_guided"):
+            return ToolResult(
+                tool_name=ToolName.CONTEMPLATE.value,
+                success=False,
+                error=(
+                    "policy must be 'entity_focus' or 'theme_guided'. "
+                    "Juxtaposition is a background maintenance policy and is not "
+                    "available as a deliberate tool call."
+                ),
+            )
+
+        if policy == "entity_focus" and not entity:
+            return ToolResult(
+                tool_name=ToolName.CONTEMPLATE.value,
+                success=False,
+                error="policy='entity_focus' requires an 'entity' argument.",
+            )
+
+        if policy == "theme_guided" and not themes:
+            return ToolResult(
+                tool_name=ToolName.CONTEMPLATE.value,
+                success=False,
+                error="policy='theme_guided' requires a non-empty 'themes' list.",
+            )
+
+        tl = getattr(self.memory, "threadlight", None)
+        if tl is None:
+            return ToolResult(
+                tool_name=ToolName.CONTEMPLATE.value,
+                success=False,
+                error=(
+                    "Contemplation requires an active Threadlight context and "
+                    "isn't available from this executor."
+                ),
+            )
+
+        policy_kwargs: dict[str, Any] = {}
+        if entity:
+            policy_kwargs["entity"] = entity
+        if themes:
+            policy_kwargs["themes"] = list(themes)
+
+        try:
+            capsule = tl.contemplate(policy=policy, reason=reason, **policy_kwargs)
+        except Exception as e:
+            logger.exception("Contemplate tool call failed")
+            return ToolResult(
+                tool_name=ToolName.CONTEMPLATE.value,
+                success=False,
+                error=str(e),
+            )
+
+        if capsule is None:
+            return ToolResult(
+                tool_name=ToolName.CONTEMPLATE.value,
+                success=True,
+                result={
+                    "reflection_id": None,
+                    "reflection": None,
+                    "source_capsule_ids": [],
+                    "themes": [],
+                    "note": (
+                        "No matching memories were found for that selection. "
+                        "No reflection was written."
+                    ),
+                },
+                display_message="Contemplation found no matching memories.",
+            )
+
+        return ToolResult(
+            tool_name=ToolName.CONTEMPLATE.value,
+            success=True,
+            result={
+                "reflection_id": capsule.id,
+                "reflection": capsule.reflection or capsule.text or "",
+                "source_capsule_ids": list(capsule.source_capsule_ids),
+                "themes": list(capsule.themes),
+                "policy": capsule.policy,
+                "reason": capsule.reason,
+            },
+            display_message=(
+                f"Reflected on {len(capsule.source_capsule_ids)} memories "
+                f"(policy: {capsule.policy})."
+            ),
         )
 
 

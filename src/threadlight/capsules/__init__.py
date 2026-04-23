@@ -52,6 +52,7 @@ from threadlight.capsules.style import (
     CREATIVE_STYLE,
 )
 from threadlight.capsules.witness import WitnessMoment, create_witness_moment
+from threadlight.capsules.reflection import ReflectionCapsule, create_reflection
 from threadlight.capsules.imported import ImportedMemory, create_imported_memory
 from threadlight.capsules.factory import create_capsule, capsule_from_simple
 
@@ -72,6 +73,7 @@ __all__ = [
     "RitualHook",
     "StyleProfile",
     "WitnessMoment",
+    "ReflectionCapsule",
     "ImportedMemory",
     "CustomTypeCapsule",
     # Custom type system
@@ -95,6 +97,7 @@ __all__ = [
     "create_ritual",
     "create_style_profile",
     "create_witness_moment",
+    "create_reflection",
     "create_imported_memory",
     # Constants and defaults
     "RitualValence",

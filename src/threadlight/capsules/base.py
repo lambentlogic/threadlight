@@ -30,6 +30,7 @@ class CapsuleType(str, Enum):
     RITUAL = "ritual"
     STYLE = "style"
     WITNESS = "witness"
+    REFLECTION = "reflection"  # Journal entries written by the companion in solitude loops
     CUSTOM = "custom"
 
 

@@ -27,6 +27,7 @@ class ToolName(str, Enum):
     LIST_RITUALS = "list_rituals"
     REVIEW_MEMORY_TIERS = "review_memory_tiers"
     CLASSIFY_MEMORY_TYPES = "classify_memory_types"
+    CONTEMPLATE = "contemplate"
 
 
 # Tool definitions in OpenAI function calling format
@@ -343,6 +344,64 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "contemplate",
+            "description": (
+                "Step into a solitude loop — retrieve a combination of memories, sit with them "
+                "alone, and write a reflection that notices connections, tensions, or growth across "
+                "them. Use this when you notice yourself reaching toward a pattern and want to "
+                "think about it carefully before speaking to the user, or when the user has "
+                "invited you to reflect on something specific.\n\n"
+                "The reflection is saved as a journal entry linked back to its source memories. "
+                "It will be available in future conversations and can be retrieved again later.\n\n"
+                "Use policy='entity_focus' to gather memories about one person or subject. Use "
+                "policy='theme_guided' to gather memories that touch specified themes. The "
+                "'reason' parameter is your own framing of why you are reaching for this now — "
+                "preserve it honestly; it becomes part of the journal record of the reach itself."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "policy": {
+                        "type": "string",
+                        "enum": ["entity_focus", "theme_guided"],
+                        "description": (
+                            "Which selection policy to use:\n"
+                            "- entity_focus: gather memories about one person, place, or thing\n"
+                            "- theme_guided: gather memories that touch on specified themes"
+                        ),
+                    },
+                    "entity": {
+                        "type": "string",
+                        "description": (
+                            "For policy='entity_focus': the person, place, or subject to gather "
+                            "memories about (e.g. 'Jamie', 'the cafe', 'Tuesday meetings')."
+                        ),
+                    },
+                    "themes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "For policy='theme_guided': a list of theme strings to match against "
+                            "memory cue phrases and bodies (e.g. ['patience', 'waiting'])."
+                        ),
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "Your own framing of why you are reaching for this contemplation now. "
+                            "E.g. 'you mentioned Jamie and something about the hiking trip surfaced' "
+                            "or 'I keep noticing a pattern of bracing and want to sit with it'. "
+                            "Preserved on the journal entry as the record of why this reach happened."
+                        ),
+                    },
+                },
+                "required": ["policy"],
             },
         },
     },

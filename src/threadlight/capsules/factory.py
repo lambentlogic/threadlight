@@ -24,6 +24,7 @@ from threadlight.capsules.myth_seed import MythSeed
 from threadlight.capsules.ritual import RitualHook
 from threadlight.capsules.style import StyleProfile
 from threadlight.capsules.witness import WitnessMoment
+from threadlight.capsules.reflection import ReflectionCapsule
 from threadlight.capsules.imported import ImportedMemory
 
 
@@ -34,6 +35,7 @@ CAPSULE_TYPES = {
     CapsuleType.RITUAL.value: RitualHook,
     CapsuleType.STYLE.value: StyleProfile,
     CapsuleType.WITNESS.value: WitnessMoment,
+    CapsuleType.REFLECTION.value: ReflectionCapsule,
     CapsuleType.CUSTOM.value: ImportedMemory,  # Legacy "custom" type support
     # Aliases
     "relational": RelationalThread,
@@ -42,6 +44,8 @@ CAPSULE_TYPES = {
     "ritual": RitualHook,
     "style": StyleProfile,
     "witness": WitnessMoment,
+    "reflection": ReflectionCapsule,
+    "journal": ReflectionCapsule,  # User-facing alias for reflection
     "imported": ImportedMemory,
     "note": ImportedMemory,  # New name for general notes/imported content
     "custom": ImportedMemory,  # Keep backward compatibility

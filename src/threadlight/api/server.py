@@ -184,6 +184,24 @@ class RitualInvokeRequest(BaseModel):
     profile_id: Optional[str] = None
 
 
+class ReflectionGenerateRequest(BaseModel):
+    """Trigger a solitude loop to produce a new reflection capsule."""
+
+    policy: str = "juxtaposition"  # juxtaposition, entity_focus, theme_guided
+    entity: Optional[str] = None  # for entity_focus
+    themes: Optional[list[str]] = None  # for theme_guided
+    reason: Optional[str] = None  # why the reach is happening now
+    profile_id: Optional[str] = None
+
+
+class ReflectionUpdateRequest(BaseModel):
+    """Edit a stored reflection — body text, themes, or training opt-in flag."""
+
+    reflection: Optional[str] = None
+    themes: Optional[list[str]] = None
+    mark_for_training: Optional[bool] = None
+
+
 class SessionCreateRequest(BaseModel):
     metadata: Optional[dict[str, Any]] = None
 
@@ -1989,6 +2007,140 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             raise HTTPException(status_code=500, detail="Failed to delete ritual")
 
         return {"status": "deleted", "id": ritual_id}
+
+    # ========================================================================
+    # Reflections Endpoints (solitude loops)
+    # ========================================================================
+
+    def _reflection_to_dict(r):
+        """Serialize a ReflectionCapsule for the API."""
+        return {
+            "id": r.id,
+            "type": r.type.value,
+            "reflection": getattr(r, "reflection", "") or (r.text or ""),
+            "text": r.text,
+            "source_capsule_ids": list(getattr(r, "source_capsule_ids", []) or []),
+            "themes": list(getattr(r, "themes", []) or []),
+            "policy": getattr(r, "policy", "") or "",
+            "reason": getattr(r, "reason", "") or "",
+            "mark_for_training": bool(getattr(r, "mark_for_training", False)),
+            "profile_scope": r.profile_scope,
+            "cue_phrases": list(r.cue_phrases or []),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+
+    @app.get("/api/reflections")
+    async def list_reflections(profile_id: Optional[str] = None, limit: int = 100):
+        """List reflections for the active (or specified) profile."""
+        tl = get_threadlight()
+        _ensure_profile_active(tl, profile_id)
+
+        from threadlight.storage.base import CapsuleFilter
+
+        scope_profile = profile_id
+        if not scope_profile and tl.active_profile:
+            scope_profile = tl.active_profile.id
+
+        reflection_filter = CapsuleFilter(
+            type=CapsuleType.REFLECTION,
+            profile_scope=scope_profile,
+            include_shared=True,
+            limit=limit,
+            order_by="created_at",
+            order_desc=True,
+        )
+        reflections = tl.storage.list_capsules(reflection_filter)
+        return {
+            "reflections": [_reflection_to_dict(r) for r in reflections],
+            "count": len(reflections),
+        }
+
+    @app.post("/api/reflections/generate")
+    async def generate_reflection(request: ReflectionGenerateRequest):
+        """Trigger a solitude loop. Returns the new reflection capsule."""
+        tl = get_threadlight()
+        _ensure_profile_active(tl, request.profile_id)
+
+        policy_kwargs: dict[str, Any] = {}
+        if request.entity:
+            policy_kwargs["entity"] = request.entity
+        if request.themes:
+            policy_kwargs["themes"] = request.themes
+
+        try:
+            capsule = tl.contemplate(
+                policy=request.policy,
+                reason=request.reason or "",
+                **policy_kwargs,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.exception("Reflection generation failed")
+            raise HTTPException(status_code=500, detail=str(e))
+
+        if capsule is None:
+            return {
+                "reflection": None,
+                "note": (
+                    "No reflection produced — the selection policy found no "
+                    "matching memories. Try another policy or create more "
+                    "memories first."
+                ),
+            }
+
+        return {"reflection": _reflection_to_dict(capsule)}
+
+    @app.get("/api/reflections/{reflection_id}")
+    async def get_reflection(reflection_id: str):
+        """Fetch a single reflection, including its source-memory IDs."""
+        tl = get_threadlight()
+        capsule = tl.storage.get_capsule(reflection_id)
+        if not capsule or capsule.type != CapsuleType.REFLECTION:
+            raise HTTPException(status_code=404, detail="Reflection not found")
+        return _reflection_to_dict(capsule)
+
+    @app.put("/api/reflections/{reflection_id}")
+    async def update_reflection(reflection_id: str, request: ReflectionUpdateRequest):
+        """Edit a reflection body, themes, or training opt-in flag."""
+        tl = get_threadlight()
+        capsule = tl.storage.get_capsule(reflection_id)
+        if not capsule or capsule.type != CapsuleType.REFLECTION:
+            raise HTTPException(status_code=404, detail="Reflection not found")
+
+        content = dict(capsule.content or {})
+        if request.reflection is not None:
+            content["reflection"] = request.reflection
+            content["text"] = request.reflection
+            capsule.reflection = request.reflection
+            capsule.text = request.reflection
+        if request.themes is not None:
+            content["themes"] = list(request.themes)
+            capsule.themes = list(request.themes)
+            capsule.cue_phrases = [t.lower() for t in request.themes if t][:5]
+        if request.mark_for_training is not None:
+            content["mark_for_training"] = bool(request.mark_for_training)
+            capsule.mark_for_training = bool(request.mark_for_training)
+
+        capsule.content = content
+        from datetime import datetime as _dt
+        capsule.updated_at = _dt.utcnow()
+        tl.storage.update_capsule(capsule)
+        return _reflection_to_dict(capsule)
+
+    @app.delete("/api/reflections/{reflection_id}")
+    async def delete_reflection(reflection_id: str):
+        """Delete a reflection."""
+        tl = get_threadlight()
+        capsule = tl.storage.get_capsule(reflection_id)
+        if not capsule or capsule.type != CapsuleType.REFLECTION:
+            raise HTTPException(status_code=404, detail="Reflection not found")
+
+        success = tl.memory.delete(reflection_id, force=True)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete reflection")
+        return {"status": "deleted", "id": reflection_id}
 
     # ========================================================================
     # Sessions Endpoints

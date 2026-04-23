@@ -40,6 +40,7 @@ from threadlight.providers import create_provider, BaseProvider, ProviderManager
 from threadlight.providers.base import ProviderMessage, ProviderResponse
 from threadlight.context.composer import ContextComposer, ComposedContext
 from threadlight.context.soft_memory import SoftMemory, SoftMemoryConfig
+from threadlight.capsules.reflection import ReflectionCapsule
 from threadlight.memory.orchestrator import MemoryOrchestrator, RitualInvocation, Session
 from threadlight.decay.engine import DecayEngine
 from threadlight.decay.scheduler import DecayScheduler
@@ -983,6 +984,101 @@ class Threadlight:
     def get_active_ritual(self) -> Optional[str]:
         """Get the currently active ritual, if any."""
         return self.memory.get_active_ritual()
+
+    # === Reflection / Solitude Loops ===
+
+    def contemplate(
+        self,
+        policy: str = "juxtaposition",
+        reason: str = "",
+        **policy_kwargs: Any,
+    ) -> Optional[ReflectionCapsule]:
+        """Run a solitude loop: pick memories, reflect, store the reflection.
+
+        Retrieves a small combination of memories via the named selection
+        policy, composes a prompt in the active profile's voice, sends it to
+        the profile's primary model, and saves the response as a
+        ``ReflectionCapsule`` linked back to the source memories.
+
+        Args:
+            policy: Name of a selection policy (juxtaposition, entity_focus,
+                    theme_guided). See ``threadlight.reflection.SELECTION_POLICIES``.
+            reason: Optional free-form note about why this contemplation is
+                    happening now. Preserved on the capsule alongside the body;
+                    also surfaced to the model in the prompt so the "why" of
+                    the reach shapes what the reflection notices.
+            **policy_kwargs: Passed through to the policy (e.g.
+                    ``entity="Jamie"`` for entity_focus, ``themes=["waiting"]``
+                    for theme_guided).
+
+        Returns:
+            The saved ReflectionCapsule, or None if the selection yielded no
+            usable memories (e.g. empty history, no matching entity).
+        """
+        from threadlight.reflection import (
+            compose_reflection_prompt,
+            select_memories,
+        )
+        from threadlight.reflection.prompts import extract_themes
+
+        selection = select_memories(self.memory, policy=policy, **policy_kwargs)
+        if not selection.capsules:
+            logger.info(
+                f"contemplate: selection policy '{policy}' produced no memories; "
+                "skipping reflection."
+            )
+            return None
+
+        profile_name = None
+        profile_system_prompt = None
+        profile_philosophy = None
+        if self.active_profile:
+            profile_name = self.active_profile.name
+            profile_system_prompt = self.active_profile.get_composed_system_prompt()
+            profile_philosophy = self.active_profile.philosophy
+        elif self.config.identity.system_prompt:
+            profile_system_prompt = self.config.identity.system_prompt
+
+        prompt = compose_reflection_prompt(
+            selection=selection,
+            profile_name=profile_name,
+            profile_system_prompt=profile_system_prompt,
+            profile_philosophy=profile_philosophy,
+            reason=reason,
+        )
+
+        messages = [
+            ProviderMessage(role="system", content=prompt.system),
+            ProviderMessage(role="user", content=prompt.user),
+        ]
+
+        model_id = self.active_profile.primary_model if self.active_profile else None
+        if model_id and hasattr(self, "provider_manager") and self.config.providers:
+            response = self.provider_manager.complete(
+                model_id=model_id,
+                messages=messages,
+            )
+        else:
+            response = self.provider.complete(messages)
+
+        reflection_text = response.content.strip()
+        themes = extract_themes(reflection_text)
+
+        capsule = self.memory.create(
+            type="reflection",
+            content={
+                "reflection": reflection_text,
+                "source_capsule_ids": [c.id for c in selection.capsules],
+                "themes": themes,
+                "policy": selection.policy,
+                "reason": reason,
+                "mark_for_training": False,
+            },
+            cue_phrases=themes or None,
+            consent_confirmed=True,
+            retention="normal",
+        )
+        return capsule
 
     # === Session Management ===
 
