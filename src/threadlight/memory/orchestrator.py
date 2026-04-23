@@ -962,10 +962,16 @@ class MemoryOrchestrator:
             context=context,
         )
 
-        # Find matching ritual capsule
+        # Find matching ritual capsule, scoped to the active profile (plus shared).
+        # Without this, rituals defined for profile A match while profile B is active.
+        scope_profile = None
+        if hasattr(self, 'threadlight') and self.threadlight and self.threadlight.active_profile:
+            scope_profile = self.threadlight.active_profile.id
         ritual_filter = CapsuleFilter(
             type=CapsuleType.RITUAL,
             consent_confirmed=True,
+            profile_scope=scope_profile,
+            include_shared=True,
         )
         rituals = self.storage.list_capsules(ritual_filter)
 

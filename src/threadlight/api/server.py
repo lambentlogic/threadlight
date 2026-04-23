@@ -181,6 +181,7 @@ class RitualInvokeRequest(BaseModel):
     ritual_name: str
     context: Optional[str] = None
     initiated_by: str = "user"  # "user" or "companion"
+    profile_id: Optional[str] = None
 
 
 class SessionCreateRequest(BaseModel):
@@ -1883,14 +1884,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     async def invoke_ritual(request: RitualInvokeRequest):
         """Invoke a ritual. Supports bidirectional invocation."""
         tl = get_threadlight()
+        _ensure_profile_active(tl, request.profile_id)
 
         try:
-            response = tl.invoke_ritual(
+            result = tl.memory.invoke_ritual(
                 request.ritual_name,
                 initiated_by=request.initiated_by,
                 context=request.context,
             )
-            result = tl.memory.invoke_ritual(
+            response = tl._respond_to_ritual(
+                result,
                 request.ritual_name,
                 initiated_by=request.initiated_by,
                 context=request.context,

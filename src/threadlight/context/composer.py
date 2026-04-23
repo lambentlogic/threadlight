@@ -509,7 +509,10 @@ class ContextComposer:
         if active_ritual:
             ritual_section = f"[Active command: {active_ritual}]"
             # Find approach in sections or use deprecated field
-            approach = self._find_section_content(system_prompt_sections, "Approach to Rituals")
+            approach = self._find_section_content(system_prompt_sections, "Invocation Style")
+            if not approach:
+                # Backward compat: older profiles stored the section under the ceremonial name.
+                approach = self._find_section_content(system_prompt_sections, "Approach to Rituals")
             if not approach:
                 approach = approach_to_rituals
             if approach:

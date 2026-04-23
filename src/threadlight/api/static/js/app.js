@@ -5505,7 +5505,7 @@ I can hit "Apply & Continue" to see what's left, or "Apply & Finish" when we're 
                 sections.push({ name: 'Philosophy', content: template.philosophy });
             }
             if (template.approach_to_rituals) {
-                sections.push({ name: 'Approach to Rituals', content: template.approach_to_rituals });
+                sections.push({ name: 'Invocation Style', content: template.approach_to_rituals });
             }
 
             // Pre-fill the profile editor with template values

@@ -40,7 +40,7 @@ from threadlight.providers import create_provider, BaseProvider, ProviderManager
 from threadlight.providers.base import ProviderMessage, ProviderResponse
 from threadlight.context.composer import ContextComposer, ComposedContext
 from threadlight.context.soft_memory import SoftMemory, SoftMemoryConfig
-from threadlight.memory.orchestrator import MemoryOrchestrator, Session
+from threadlight.memory.orchestrator import MemoryOrchestrator, RitualInvocation, Session
 from threadlight.decay.engine import DecayEngine
 from threadlight.decay.scheduler import DecayScheduler
 from threadlight.tools.definitions import get_tool_definitions, ToolName
@@ -832,6 +832,21 @@ class Threadlight:
             initiated_by=initiated_by,
         )
 
+        return self._respond_to_ritual(result, ritual_name, initiated_by, context)
+
+    def _respond_to_ritual(
+        self,
+        result: RitualInvocation,
+        ritual_name: str,
+        initiated_by: str = "user",
+        context: Optional[str] = None,
+    ) -> str:
+        """Generate the model response for an already-invoked ritual.
+
+        Separated from invoke_ritual so callers that need both the invocation
+        state (result.state_effects, result.matched) and the response can
+        obtain them without double-invoking.
+        """
         if not result.matched:
             # No ritual defined - treat as normal conversation
             return self.chat(ritual_name)
@@ -916,7 +931,7 @@ class Threadlight:
         ritual_section += ritual_context.memory_context
 
         if approach_to_rituals:
-            ritual_section += f"\n\n(Your approach to rituals: {approach_to_rituals})"
+            ritual_section += f"\n\n(Your invocation style: {approach_to_rituals})"
 
         system_parts.append(ritual_section)
 

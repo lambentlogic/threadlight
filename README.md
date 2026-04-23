@@ -61,6 +61,20 @@ python --version
 
 That's it! You can now configure your companions through the web interface.
 
+### A note on network exposure
+
+By default, `threadlight serve` binds to `0.0.0.0`, which makes the server reachable on **every network interface** of the machine running it — including LAN, Wi-Fi, and Tailscale/VPN interfaces. **There is no authentication.** Anyone who can reach the port can read your conversations and memories, change settings, and use your configured API keys.
+
+This default exists so Threadlight works out of the box for solo users accessing it from another device on their own network (for example, over Tailscale). Choose the binding that matches your situation:
+
+| Situation | Recommended command |
+|-----------|---------------------|
+| Single machine, local use only | `threadlight serve --host 127.0.0.1` |
+| Accessing from another device on a private Tailscale tailnet you control | `threadlight serve --host 0.0.0.0` (default) or bind to your Tailscale IP specifically |
+| Accessing from a shared/public network | Put Threadlight behind a reverse proxy (nginx, Caddy) that enforces authentication. Do not expose the raw server. |
+
+If your tailnet is shared with other users, bind to your Tailscale IP (`--host 100.x.y.z`) rather than `0.0.0.0` so Threadlight is not reachable from ordinary LAN alongside the tailnet.
+
 ## Using the Web Interface
 
 ### First Time Setup

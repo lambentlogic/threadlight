@@ -1140,7 +1140,7 @@ def main() -> int:
 
     # Serve command
     serve_parser = subparsers.add_parser("serve", help="Start web UI and API server")
-    serve_parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0 for LAN/Tailscale access; there is no auth, so only bind to networks you trust)")
     serve_parser.add_argument("--port", type=int, default=8745, help="Port to bind (default: 8745)")
     serve_parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
 

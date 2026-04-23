@@ -233,7 +233,7 @@ class Profile:
             if philosophy:
                 system_prompt_sections.append({"name": "Philosophy", "content": philosophy})
             if approach:
-                system_prompt_sections.append({"name": "Approach to Rituals", "content": approach})
+                system_prompt_sections.append({"name": "Invocation Style", "content": approach})
 
         return cls(
             id=data["id"],
@@ -279,7 +279,7 @@ class Profile:
             if self.philosophy:
                 parts.append(f"[Philosophy]\n{self.philosophy}")
             if self.approach_to_rituals:
-                parts.append(f"[Approach to Rituals]\n{self.approach_to_rituals}")
+                parts.append(f"[Invocation Style]\n{self.approach_to_rituals}")
             return "\n\n".join(parts)
 
         # Compose from sections

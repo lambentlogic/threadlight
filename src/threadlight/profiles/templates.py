@@ -28,7 +28,7 @@ class ProfileTemplate:
         if self.philosophy:
             sections.append({"name": "Philosophy", "content": self.philosophy})
         if self.approach_to_rituals:
-            sections.append({"name": "Approach to Rituals", "content": self.approach_to_rituals})
+            sections.append({"name": "Invocation Style", "content": self.approach_to_rituals})
 
         return {
             "id": self.id,
